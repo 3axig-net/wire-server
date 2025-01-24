@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,69 +29,76 @@ module Brig.Provider.RPC
 where
 
 import Bilge
+import Bilge.RPC
 import Bilge.Retry (httpHandlers)
 import Brig.App
 import Brig.Provider.DB (ServiceConn (..))
 import Brig.RPC
-import Brig.Types.Provider (HttpsUrl (..))
-import Brig.Types.Provider.External
 import Control.Error
-import Control.Lens (set, view, (^.))
+import Control.Lens (set, (^.))
 import Control.Monad.Catch
 import Control.Retry (recovering)
 import Data.Aeson
 import Data.ByteString.Conversion
 import Data.Id
-import qualified Data.List1 as List1
-import Galley.Types (Event)
-import qualified Galley.Types.Bot as Galley
+import Data.List1 qualified as List1
 import Imports
-import qualified Network.HTTP.Client as Http
+import Network.HTTP.Client qualified as Http
 import Network.HTTP.Types.Method
 import Network.HTTP.Types.Status
 import Ssl.Util (withVerifiedSslConnection)
 import System.Logger.Class (MonadLogger, field, msg, val, (~~))
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 import URI.ByteString
+import Wire.API.Bot qualified as Galley
+import Wire.API.Bot.Service (serviceEnabled)
+import Wire.API.Bot.Service qualified as Galley
+import Wire.API.Event.Conversation qualified as Conv
+import Wire.API.Provider (httpsUrl)
+import Wire.API.Provider.External
+import Wire.API.Provider.Service qualified as Galley
+import Wire.ParseException
+import Wire.Rpc
 
 --------------------------------------------------------------------------------
 -- External RPC
 
 data ServiceError
-  = ServiceUnavailable
+  = ServiceUnavailableWith String
   | ServiceBotConflict
 
 -- | Request a new bot to be created by an external service.
 --
 -- If the external service is unavailable, returns a specific error
 -- or the response body cannot be parsed, a 'ServiceError' is returned.
-createBot :: ServiceConn -> NewBotRequest -> ExceptT ServiceError AppIO NewBotResponse
+createBot :: ServiceConn -> NewBotRequest -> ExceptT ServiceError (AppT r) NewBotResponse
 createBot scon new = do
   let fprs = toList (sconFingerprints scon)
-  (man, verifyFingerprints) <- view extGetManager
+  (man, verifyFingerprints) <- asks (.extGetManager)
   extHandleAll onExc $ do
     rs <- lift $
-      recovering x3 httpHandlers $
-        const $
-          liftIO $
-            withVerifiedSslConnection (verifyFingerprints fprs) man reqBuilder $
-              \req ->
-                Http.httpLbs req man
+      wrapHttp $
+        recovering x3 httpHandlers $
+          const $
+            liftIO $
+              withVerifiedSslConnection (verifyFingerprints fprs) man reqBuilder $
+                \req ->
+                  Http.httpLbs req man
     case Bilge.statusCode rs of
       201 -> decodeBytes "External" (responseBody rs)
       409 -> throwE ServiceBotConflict
-      _ -> extLogError scon rs >> throwE ServiceUnavailable
+      _ -> lift (extLogError scon rs) >> throwE (ServiceUnavailableWith $ show rs)
   where
     -- we can't use 'responseJsonEither' instead, because we have a @Response ByteString@
     -- here, not a @Response (Maybe ByteString)@.
     decodeBytes ctx bs = case eitherDecode' bs of
       Left e -> throwM $ ParseException ctx e
-      Right a -> return a
+      Right a -> pure a
     reqBuilder =
       extReq scon ["bots"]
         . method POST
         . Bilge.json new
-    onExc ex = extLogError scon ex >> throwE ServiceUnavailable
+    onExc ex = lift (extLogError scon ex) >> throwE (ServiceUnavailableWith $ displayException ex)
 
 extReq :: ServiceConn -> [ByteString] -> Request -> Request
 extReq scon ps =
@@ -104,7 +111,7 @@ extReq scon ps =
     url = httpsUrl (sconBaseUrl scon)
     tok = List1.head (sconAuthTokens scon)
 
-extHandleAll :: MonadCatch m => (SomeException -> m a) -> m a -> m a
+extHandleAll :: (MonadCatch m) => (SomeException -> m a) -> m a -> m a
 extHandleAll f ma =
   catches
     ma
@@ -130,14 +137,14 @@ extLogError scon e =
 -- Internal RPC
 
 -- | Set service connection information in galley.
-setServiceConn :: ServiceConn -> AppIO ()
+setServiceConn :: ServiceConn -> AppT r ()
 setServiceConn scon = do
   Log.debug $
     remote "galley"
       . field "provider" (toByteString pid)
       . field "service" (toByteString sid)
       . msg (val "Setting service connection")
-  void $ galleyRequest POST req
+  void $ wrapHttp $ galleyRequest POST req
   where
     pid = sconProvider scon
     sid = sconService scon
@@ -152,10 +159,20 @@ setServiceConn scon = do
         . expect2xx
     svc =
       Galley.newService ref url tok fps
-        & set Galley.serviceEnabled (sconEnabled scon)
+        & set serviceEnabled (sconEnabled scon)
 
 -- | Remove service connection information from galley.
-removeServiceConn :: ProviderId -> ServiceId -> AppIO ()
+removeServiceConn ::
+  ( MonadReader Env m,
+    MonadUnliftIO m,
+    MonadMask m,
+    MonadHttp m,
+    HasRequestId m,
+    MonadLogger m
+  ) =>
+  ProviderId ->
+  ServiceId ->
+  m ()
 removeServiceConn pid sid = do
   Log.debug $
     remote "galley"
@@ -179,7 +196,7 @@ addBotMember ::
   ClientId ->
   ProviderId ->
   ServiceId ->
-  AppIO Event
+  (AppT r) Conv.Event
 addBotMember zusr zcon conv bot clt pid sid = do
   Log.debug $
     remote "galley"
@@ -189,7 +206,7 @@ addBotMember zusr zcon conv bot clt pid sid = do
       . field "user" (toByteString zusr)
       . field "bot" (toByteString bot)
       . msg (val "Adding bot member")
-  decodeBody "galley" =<< galleyRequest POST req
+  decodeBody "galley" =<< wrapHttp (galleyRequest POST req)
   where
     req =
       path "/i/bots"
@@ -201,11 +218,18 @@ addBotMember zusr zcon conv bot clt pid sid = do
 
 -- | Tell galley to remove a service bot from a conversation.
 removeBotMember ::
+  ( MonadHttp m,
+    MonadReader Env m,
+    MonadUnliftIO m,
+    MonadMask m,
+    HasRequestId m,
+    MonadLogger m
+  ) =>
   UserId ->
   Maybe ConnId ->
   ConvId ->
   BotId ->
-  AppIO (Maybe Event)
+  m (Maybe Conv.Event)
 removeBotMember zusr zcon conv bot = do
   Log.debug $
     remote "galley"
@@ -216,7 +240,7 @@ removeBotMember zusr zcon conv bot = do
   rs <- galleyRequest DELETE req
   if isJust (responseBody rs) && Bilge.statusCode rs == 200
     then Just <$> decodeBody "galley" rs
-    else return Nothing
+    else pure Nothing
   where
     req =
       path "/i/bots"

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,6 +18,8 @@
 module CargoHold.API.V3
   ( upload,
     download,
+    downloadUnsafe,
+    checkMetadata,
     delete,
     renewToken,
     deleteToken,
@@ -26,6 +28,7 @@ module CargoHold.API.V3
 where
 
 import CargoHold.API.Error
+import CargoHold.API.Util
 import CargoHold.App
 import qualified CargoHold.Metrics as Metrics
 import CargoHold.Options
@@ -35,10 +38,10 @@ import qualified CargoHold.Types.V3 as V3
 import CargoHold.Util
 import qualified Codec.MIME.Parse as MIME
 import qualified Codec.MIME.Type as MIME
-import qualified Conduit as Conduit
+import qualified Conduit
 import Control.Applicative (optional)
 import Control.Error
-import Control.Lens (set, view, (^.))
+import Control.Lens (set, (^.))
 import Control.Monad.Trans.Resource
 import Crypto.Random (getRandomBytes)
 import Data.Aeson (eitherDecodeStrict')
@@ -48,6 +51,7 @@ import Data.Conduit
 import qualified Data.Conduit.Attoparsec as Conduit
 import Data.Id
 import qualified Data.List as List
+import Data.Qualified
 import qualified Data.Text.Ascii as Ascii
 import Data.Text.Encoding (decodeLatin1)
 import qualified Data.Text.Lazy as LT
@@ -57,64 +61,69 @@ import Imports hiding (take)
 import Network.HTTP.Types.Header
 import Network.Wai.Utilities (Error (..))
 import URI.ByteString
+import Wire.API.Asset
 
-upload :: V3.Principal -> ConduitM () ByteString (ResourceT IO) () -> Handler V3.Asset
+upload :: V3.Principal -> ConduitM () ByteString (ResourceT IO) () -> Handler (Asset' (Local AssetKey))
 upload own bdy = do
   (rsrc, sets) <- parseMetadata bdy assetSettings
   (src, hdrs) <- parseHeaders rsrc assetHeaders
   let cl = fromIntegral $ hdrLength hdrs
   when (cl <= 0) $
     throwE invalidLength
-  maxTotalBytes <- view (settings . setMaxTotalBytes)
-  when (cl > maxTotalBytes) $
+  maxBytes <- asks (.options.settings.maxTotalBytes)
+  when (cl > maxBytes) $
     throwE assetTooLarge
   ast <- liftIO $ Id <$> nextRandom
-  tok <- if sets ^. V3.setAssetPublic then return Nothing else Just <$> randToken
+  tok <- if sets ^. V3.setAssetPublic then pure Nothing else Just <$> randToken
   let ret = fromMaybe V3.AssetPersistent (sets ^. V3.setAssetRetention)
-  let key = V3.AssetKeyV3 ast ret
-  void $ S3.uploadV3 own key hdrs tok src
+  key <- qualifyLocal (V3.AssetKeyV3 ast ret)
+  void $ S3.uploadV3 own (tUnqualified key) hdrs tok src
   Metrics.s3UploadOk
   Metrics.s3UploadSize cl
   expires <- case V3.assetRetentionSeconds ret of
     Just n -> Just . addUTCTime n <$> liftIO getCurrentTime
-    Nothing -> return Nothing
-  return $! V3.mkAsset key
-    & set V3.assetExpires expires
-    & set V3.assetToken tok
+    Nothing -> pure Nothing
+  pure $!
+    V3.mkAsset key
+      & set V3.assetExpires expires
+      & set V3.assetToken tok
 
 renewToken :: V3.Principal -> V3.AssetKey -> Handler V3.AssetToken
 renewToken own key = do
   tok <- randToken
   updateToken own key (Just tok)
-  return tok
+  pure tok
 
 deleteToken :: V3.Principal -> V3.AssetKey -> Handler ()
 deleteToken own key = updateToken own key Nothing
 
 updateToken :: V3.Principal -> V3.AssetKey -> Maybe V3.AssetToken -> Handler ()
 updateToken own key tok = do
-  m <- S3.getMetadataV3 key >>= maybe (throwE assetNotFound) return
+  m <- S3.getMetadataV3 key >>= maybe (throwE assetNotFound) pure
   unless (S3.v3AssetOwner m == own) $
     throwE unauthorised
   let m' = m {S3.v3AssetToken = tok}
   S3.updateMetadataV3 key m'
 
-randToken :: MonadIO m => m V3.AssetToken
+randToken :: (MonadIO m) => m V3.AssetToken
 randToken = liftIO $ V3.AssetToken . Ascii.encodeBase64Url <$> getRandomBytes 16
 
-download :: V3.Principal -> V3.AssetKey -> Maybe V3.AssetToken -> Handler (Maybe URI)
-download own key tok = S3.getMetadataV3 key >>= maybe notFound found
-  where
-    notFound = return Nothing
-    found s3
-      | own /= S3.v3AssetOwner s3 && tok /= S3.v3AssetToken s3 = return Nothing
-      | otherwise = do
-        url <- genSignedURL (S3.mkKey key)
-        return $! Just $! url
+download :: V3.Principal -> V3.AssetKey -> Maybe V3.AssetToken -> Maybe Text -> Handler (Maybe URI)
+download own key tok mbHost = runMaybeT $ do
+  checkMetadata (Just own) key tok
+  lift $ genSignedURL (S3.mkKey key) mbHost
+
+downloadUnsafe :: V3.AssetKey -> Maybe Text -> Handler URI
+downloadUnsafe key mbHost = genSignedURL (S3.mkKey key) mbHost
+
+checkMetadata :: Maybe V3.Principal -> V3.AssetKey -> Maybe V3.AssetToken -> MaybeT Handler ()
+checkMetadata mown key tok = do
+  s3 <- lift (S3.getMetadataV3 key) >>= maybe mzero pure
+  guard $ mown == Just (S3.v3AssetOwner s3) || tok == S3.v3AssetToken s3
 
 delete :: V3.Principal -> V3.AssetKey -> Handler ()
 delete own key = do
-  m <- S3.getMetadataV3 key >>= maybe (throwE assetNotFound) return
+  m <- S3.getMetadataV3 key >>= maybe (throwE assetNotFound) pure
   unless (S3.v3AssetOwner m == own) $
     throwE unauthorised
   S3.deleteV3 key
@@ -138,7 +147,8 @@ sinkParser p = fmapL mkError <$> Conduit.sinkParserEither p
   where
     mkError = clientError . LT.pack . mkMsg
     mkMsg e =
-      "Expected: " ++ intercalate ", " (Conduit.errorContexts e)
+      "Expected: "
+        ++ intercalate ", " (Conduit.errorContexts e)
         ++ ", "
         ++ Conduit.errorMessage e
         ++ " at "
@@ -152,7 +162,7 @@ assetSettings = do
   unless (MIME.mimeType ct == MIME.Application "json") $
     fail "Invalid metadata Content-Type. Expected 'application/json'."
   bs <- take (fromIntegral cl)
-  either fail return (eitherDecodeStrict' bs)
+  either fail pure (eitherDecodeStrict' bs)
 
 metadataHeaders :: Parser (MIME.Type, Word)
 metadataHeaders =
@@ -164,9 +174,9 @@ metadataHeaders =
     go hdrs = do
       ct <- contentType hdrs
       cl <- contentLength hdrs
-      return (ct, cl)
+      pure (ct, cl)
 
-assetHeaders :: Parser AssetHeaders
+assetHeaders :: Parser CargoHold.Types.V3.AssetHeaders
 assetHeaders =
   eol
     *> boundary
@@ -174,7 +184,7 @@ assetHeaders =
     <* eol
   where
     go hdrs =
-      AssetHeaders
+      CargoHold.Types.V3.AssetHeaders
         <$> contentType hdrs
         <*> contentLength hdrs
 
@@ -182,14 +192,14 @@ contentType :: [(HeaderName, ByteString)] -> Parser MIME.Type
 contentType hdrs =
   maybe
     (fail "Missing Content-Type")
-    (maybe (fail "Invalid MIME type") return . MIME.parseMIMEType . decodeLatin1)
+    (maybe (fail "Invalid MIME type") pure . MIME.parseMIMEType . decodeLatin1)
     (lookup (CI.mk "Content-Type") hdrs)
 
 contentLength :: [(HeaderName, ByteString)] -> Parser Word
 contentLength hdrs =
   maybe
     (fail "Missing Content-Type")
-    (either fail return . parseOnly decimal)
+    (either fail pure . parseOnly decimal)
     (lookup (CI.mk "Content-Length") hdrs)
 
 boundary :: Parser ()
@@ -212,15 +222,15 @@ headers allowed = do
       pure []
     Just name
       | name `notElem` allowed ->
-        -- might also be a duplicate
-        fail $ "Unexpected header: " ++ show (CI.original name)
+          -- might also be a duplicate
+          fail $ "Unexpected header: " ++ show (CI.original name)
       | otherwise -> do
-        _ <- char ':'
-        skipSpace
-        value <- takeTill isEOL <?> "header value"
-        eol
-        -- we don't want to parse it again (this also ensures quick termination)
-        ((name, value) :) <$> headers (List.delete name allowed)
+          _ <- char ':'
+          skipSpace
+          value <- takeTill isEOL <?> "header value"
+          eol
+          -- we don't want to parse it again (this also ensures quick termination)
+          ((name, value) :) <$> headers (List.delete name allowed)
 
 eol :: Parser ()
 eol = endOfLine <?> "\r\n"

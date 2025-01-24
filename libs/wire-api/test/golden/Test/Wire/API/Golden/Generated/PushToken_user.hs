@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,9 +14,10 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.PushToken_user where
 
-import Data.Id (ClientId (ClientId, client))
+import Data.Id
 import Wire.API.Push.Token
   ( AppName (AppName, appNameText),
     PushToken,
@@ -31,4 +32,4 @@ testObject_PushToken_user_1 =
     APNSSandbox
     (AppName {appNameText = "G\1008289"})
     (Token {tokenText = "\EOT8M\NAKAv\1104873"})
-    (ClientId {client = "16"})
+    (ClientId 0x16)

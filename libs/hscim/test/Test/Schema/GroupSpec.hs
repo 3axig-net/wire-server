@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -46,15 +46,15 @@ spec = do
 genMember :: Gen GroupClass.Member
 genMember =
   GroupClass.Member
-    <$> (Gen.text (Range.constant 0 20) Gen.unicode)
-    <*> (Gen.text (Range.constant 0 20) Gen.unicode)
-    <*> (Gen.text (Range.constant 0 20) Gen.unicode)
+    <$> Gen.text (Range.constant 0 20) Gen.unicode
+    <*> Gen.text (Range.constant 0 20) Gen.unicode
+    <*> Gen.text (Range.constant 0 20) Gen.unicode
 
 genGroup :: Gen GroupClass.Group
 genGroup =
   GroupClass.Group
     <$> Gen.list (Range.linear 0 10) genSchema
-    <*> (Gen.text (Range.constant 0 20) Gen.unicode)
+    <*> Gen.text (Range.constant 0 20) Gen.unicode
     <*> Gen.list (Range.linear 0 10) genMember
 
 genSchema :: Gen Text

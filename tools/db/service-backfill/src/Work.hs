@@ -1,13 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,18 +21,15 @@
 
 module Work where
 
-import Brig.Types hiding (Client)
 import Cassandra
 import Data.Conduit
 import Data.Conduit.Internal (zipSources)
-import qualified Data.Conduit.List as C
+import Data.Conduit.List qualified as C
 import Data.Id
 import Imports
 import System.Logger (Logger)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 import UnliftIO.Async (pooledMapConcurrentlyN)
-
-deriving instance Cql Name
 
 runCommand :: Logger -> ClientState -> ClientState -> IO ()
 runCommand l brig galley =
@@ -73,7 +67,7 @@ resolveBot ::
   Client (Maybe (ProviderId, ServiceId, BotId, ConvId, Maybe TeamId))
 resolveBot (Just pid, Just sid, bid, cid) = do
   tid <- retry x5 $ query1 teamSelect (params LocalQuorum (Identity cid))
-  pure (Just (pid, sid, bid, cid, join (fmap runIdentity tid)))
+  pure (Just (pid, sid, bid, cid, runIdentity =<< tid))
   where
     teamSelect :: PrepQuery R (Identity ConvId) (Identity (Maybe TeamId))
     teamSelect = "SELECT team FROM conversation WHERE conv = ?"

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,119 +29,18 @@ module Brig.User.Template
     DeletionSmsTemplate (..),
     DeletionEmailTemplate (..),
     NewClientEmailTemplate (..),
+    SecondFactorVerificationEmailTemplate (..),
     loadUserTemplates,
 
     -- * Re-exports
     Template,
-    renderText,
-    renderHtml,
   )
 where
 
-import qualified Brig.Options as Opt
+import Brig.Options qualified as Opt
 import Brig.Template
-import Brig.Types
 import Imports
-
-data UserTemplates = UserTemplates
-  { activationSms :: !ActivationSmsTemplate,
-    activationCall :: !ActivationCallTemplate,
-    verificationEmail :: !VerificationEmailTemplate,
-    activationEmail :: !ActivationEmailTemplate,
-    activationEmailUpdate :: !ActivationEmailTemplate,
-    teamActivationEmail :: !TeamActivationEmailTemplate,
-    passwordResetSms :: !PasswordResetSmsTemplate,
-    passwordResetEmail :: !PasswordResetEmailTemplate,
-    loginSms :: !LoginSmsTemplate,
-    loginCall :: !LoginCallTemplate,
-    deletionSms :: !DeletionSmsTemplate,
-    deletionEmail :: !DeletionEmailTemplate,
-    newClientEmail :: !NewClientEmailTemplate
-  }
-
-data ActivationSmsTemplate = ActivationSmsTemplate
-  { activationSmslUrl :: !Template,
-    activationSmsText :: !Template,
-    activationSmsSender :: !Text
-  }
-
-data ActivationCallTemplate = ActivationCallTemplate
-  { activationCallText :: !Template
-  }
-
-data VerificationEmailTemplate = VerificationEmailTemplate
-  { verificationEmailUrl :: !Template,
-    verificationEmailSubject :: !Template,
-    verificationEmailBodyText :: !Template,
-    verificationEmailBodyHtml :: !Template,
-    verificationEmailSender :: !Email,
-    verificationEmailSenderName :: !Text
-  }
-
-data ActivationEmailTemplate = ActivationEmailTemplate
-  { activationEmailUrl :: !Template,
-    activationEmailSubject :: !Template,
-    activationEmailBodyText :: !Template,
-    activationEmailBodyHtml :: !Template,
-    activationEmailSender :: !Email,
-    activationEmailSenderName :: !Text
-  }
-
-data TeamActivationEmailTemplate = TeamActivationEmailTemplate
-  { teamActivationEmailUrl :: !Template,
-    teamActivationEmailSubject :: !Template,
-    teamActivationEmailBodyText :: !Template,
-    teamActivationEmailBodyHtml :: !Template,
-    teamActivationEmailSender :: !Email,
-    teamActivationEmailSenderName :: !Text
-  }
-
-data DeletionEmailTemplate = DeletionEmailTemplate
-  { deletionEmailUrl :: !Template,
-    deletionEmailSubject :: !Template,
-    deletionEmailBodyText :: !Template,
-    deletionEmailBodyHtml :: !Template,
-    deletionEmailSender :: !Email,
-    deletionEmailSenderName :: !Text
-  }
-
-data PasswordResetEmailTemplate = PasswordResetEmailTemplate
-  { passwordResetEmailUrl :: !Template,
-    passwordResetEmailSubject :: !Template,
-    passwordResetEmailBodyText :: !Template,
-    passwordResetEmailBodyHtml :: !Template,
-    passwordResetEmailSender :: !Email,
-    passwordResetEmailSenderName :: !Text
-  }
-
-data PasswordResetSmsTemplate = PasswordResetSmsTemplate
-  { passwordResetSmsText :: !Template,
-    passwordResetSmsSender :: !Text
-  }
-
-data LoginSmsTemplate = LoginSmsTemplate
-  { loginSmsUrl :: !Template,
-    loginSmsText :: !Template,
-    loginSmsSender :: !Text
-  }
-
-data LoginCallTemplate = LoginCallTemplate
-  { loginCallText :: !Template
-  }
-
-data DeletionSmsTemplate = DeletionSmsTemplate
-  { deletionSmsUrl :: !Template,
-    deletionSmsText :: !Template,
-    deletionSmsSender :: !Text
-  }
-
-data NewClientEmailTemplate = NewClientEmailTemplate
-  { newClientEmailSubject :: !Template,
-    newClientEmailBodyText :: !Template,
-    newClientEmailBodyHtml :: !Template,
-    newClientEmailSender :: !Email,
-    newClientEmailSenderName :: !Text
-  }
+import Wire.EmailSubsystem.Template
 
 loadUserTemplates :: Opt.Opts -> IO (Localised UserTemplates)
 loadUserTemplates o = readLocalesDir defLocale templateDir "user" $ \fp ->
@@ -217,18 +116,39 @@ loadUserTemplates o = readLocalesDir defLocale templateDir "user" $ \fp ->
             <*> pure emailSender
             <*> readText fp "email/sender.txt"
         )
+    <*> ( SecondFactorVerificationEmailTemplate
+            <$> readTemplate fp "email/verification-login-subject.txt"
+            <*> readTemplate fp "email/verification-login.txt"
+            <*> readTemplate fp "email/verification-login.html"
+            <*> pure emailSender
+            <*> readText fp "email/sender.txt"
+        )
+    <*> ( SecondFactorVerificationEmailTemplate
+            <$> readTemplate fp "email/verification-scim-token-subject.txt"
+            <*> readTemplate fp "email/verification-scim-token.txt"
+            <*> readTemplate fp "email/verification-scim-token.html"
+            <*> pure emailSender
+            <*> readText fp "email/sender.txt"
+        )
+    <*> ( SecondFactorVerificationEmailTemplate
+            <$> readTemplate fp "email/verification-delete-team-subject.txt"
+            <*> readTemplate fp "email/verification-delete-team.txt"
+            <*> readTemplate fp "email/verification-delete-team.html"
+            <*> pure emailSender
+            <*> readText fp "email/sender.txt"
+        )
   where
-    gOptions = Opt.general $ Opt.emailSMS o
-    uOptions = Opt.user $ Opt.emailSMS o
-    tOptions = Opt.team $ Opt.emailSMS o
-    emailSender = Opt.emailSender gOptions
-    smsSender = Opt.smsSender gOptions
-    smsActivationUrl = template $ Opt.smsActivationUrl uOptions
-    activationUrl = template $ Opt.activationUrl uOptions
-    teamActivationUrl = template $ Opt.tActivationUrl tOptions
-    passwordResetUrl = template $ Opt.passwordResetUrl uOptions
-    deletionUserUrl = template $ Opt.deletionUrl uOptions
-    defLocale = Opt.setDefaultLocale (Opt.optSettings o)
-    templateDir = Opt.templateDir gOptions
+    gOptions = o.emailSMS.general
+    uOptions = o.emailSMS.user
+    tOptions = o.emailSMS.team
+    emailSender = gOptions.emailSender
+    smsSender = gOptions.smsSender
+    smsActivationUrl = template uOptions.smsActivationUrl
+    activationUrl = template uOptions.activationUrl
+    teamActivationUrl = template tOptions.tActivationUrl
+    passwordResetUrl = template uOptions.passwordResetUrl
+    deletionUserUrl = template uOptions.deletionUrl
+    defLocale = Opt.defaultTemplateLocale o.settings
+    templateDir = gOptions.templateDir
     readTemplate = readTemplateWithDefault templateDir defLocale "user"
     readText = readTextWithDefault templateDir defLocale "user"

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,24 +25,30 @@ where
 
 import Brig.API.Error (fedError)
 import Brig.API.Handler (Handler)
-import qualified Brig.API.User as API
+import Brig.API.User qualified as API
 import Brig.App
-import qualified Brig.Data.User as Data
-import qualified Brig.Federation.Client as Federation
+import Brig.Data.User qualified as Data
+import Brig.Federation.Client qualified as Federation
 import Brig.Options (searchSameTeamOnly)
-import Control.Lens (view)
 import Data.Handle (Handle, fromHandle)
 import Data.Id (UserId)
 import Data.Qualified
 import Imports
 import Network.Wai.Utilities ((!>>))
-import qualified System.Logger.Class as Log
+import Polysemy
+import System.Logger.Class qualified as Log
 import Wire.API.User
-import qualified Wire.API.User as Public
+import Wire.API.User qualified as Public
 import Wire.API.User.Search
-import qualified Wire.API.User.Search as Public
+import Wire.API.User.Search qualified as Public
+import Wire.UserStore (UserStore)
+import Wire.UserSubsystem
 
-getHandleInfo :: UserId -> Qualified Handle -> Handler (Maybe Public.UserProfile)
+getHandleInfo ::
+  (Member UserSubsystem r, Member UserStore r) =>
+  UserId ->
+  Qualified Handle ->
+  Handler r (Maybe Public.UserProfile)
 getHandleInfo self handle = do
   lself <- qualifyLocal self
   foldQualified
@@ -51,36 +57,42 @@ getHandleInfo self handle = do
     getRemoteHandleInfo
     handle
 
-getRemoteHandleInfo :: Remote Handle -> Handler (Maybe Public.UserProfile)
+getRemoteHandleInfo :: Remote Handle -> Handler r (Maybe Public.UserProfile)
 getRemoteHandleInfo handle = do
-  Log.info $
+  lift . Log.info $
     Log.msg (Log.val "getHandleInfo - remote lookup")
       . Log.field "domain" (show (tDomain handle))
   Federation.getUserHandleInfo handle !>> fedError
 
-getLocalHandleInfo :: Local UserId -> Handle -> Handler (Maybe Public.UserProfile)
+getLocalHandleInfo ::
+  (Member UserSubsystem r, Member UserStore r) =>
+  Local UserId ->
+  Handle ->
+  Handler r (Maybe Public.UserProfile)
 getLocalHandleInfo self handle = do
-  Log.info $ Log.msg $ Log.val "getHandleInfo - local lookup"
-  maybeOwnerId <- lift $ API.lookupHandle handle
+  lift . Log.info $ Log.msg $ Log.val "getHandleInfo - local lookup"
+  maybeOwnerId <- lift . liftSem $ API.lookupHandle handle
   case maybeOwnerId of
-    Nothing -> return Nothing
+    Nothing -> pure Nothing
     Just ownerId -> do
       domain <- viewFederationDomain
-      ownerProfile <- API.lookupProfile self (Qualified ownerId domain) !>> fedError
+      ownerProfile <-
+        (lift . liftSem $ getUserProfile self (Qualified ownerId domain))
+          !>> fedError
       owner <- filterHandleResults self (maybeToList ownerProfile)
-      return $ listToMaybe owner
+      pure $ listToMaybe owner
 
 -- | Checks search permissions and filters accordingly
-filterHandleResults :: Local UserId -> [Public.UserProfile] -> Handler [Public.UserProfile]
+filterHandleResults :: Local UserId -> [Public.UserProfile] -> (Handler r) [Public.UserProfile]
 filterHandleResults searchingUser us = do
-  sameTeamSearchOnly <- fromMaybe False <$> view (settings . searchSameTeamOnly)
+  sameTeamSearchOnly <- fromMaybe False <$> asks (.settings.searchSameTeamOnly)
   if sameTeamSearchOnly
     then do
-      fromTeam <- lift $ Data.lookupUserTeam (tUnqualified searchingUser)
-      return $ case fromTeam of
+      fromTeam <- lift . wrapClient $ Data.lookupUserTeam (tUnqualified searchingUser)
+      pure $ case fromTeam of
         Just team -> filter (\x -> Public.profileTeam x == Just team) us
         Nothing -> us
-    else return us
+    else pure us
 
 contactFromProfile :: Public.UserProfile -> Public.Contact
 contactFromProfile profile =

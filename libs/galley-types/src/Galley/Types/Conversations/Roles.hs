@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,23 +22,10 @@
 module Galley.Types.Conversations.Roles
   ( isActionAllowed,
     roleNameToActions,
-
-    -- * re-exports
-    ConversationRole,
-    convRoleWireAdmin,
-    convRoleWireMember,
-    wireConvRoles,
-    RoleName,
-    roleNameWireAdmin,
-    roleNameWireMember,
-    wireConvRoleNames,
-    Action (..),
-    Actions (..),
-    ConversationRolesList (..),
   )
 where
 
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Imports
 import Wire.API.Conversation.Role
 
@@ -53,7 +40,7 @@ isActionAllowed action rn
 
 -- | Custom RoleNames _must not_ start with `wire_`
 isCustomRoleName :: RoleName -> Bool
-isCustomRoleName (fromRoleName -> r) = isValidRoleName r && (not $ "wire_" `T.isPrefixOf` r)
+isCustomRoleName (fromRoleName -> r) = isValidRoleName r && not ("wire_" `T.isPrefixOf` r)
 
 roleNameToActions :: RoleName -> Maybe (Set Action)
 roleNameToActions r = roleActions <$> toConvRole r Nothing

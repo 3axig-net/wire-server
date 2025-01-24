@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,27 +25,29 @@ where
 import Control.Lens (view, (.~), (^.))
 import Data.ByteString.Conversion
 import Data.Id (ClientId, UserId)
-import qualified Data.List as List
+import Data.List qualified as List
 import Data.List1
-import qualified Data.Set as Set
-import qualified Data.Text as Text
+import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Gundeck.Aws (SNSEndpoint, endpointEnabled, endpointToken, endpointUsers)
-import qualified Gundeck.Aws as Aws
+import Gundeck.Aws qualified as Aws
 import Gundeck.Aws.Arn
 import Gundeck.Aws.Sns
 import Gundeck.Env
 import Gundeck.Instances ()
 import Gundeck.Monad
-import qualified Gundeck.Notification.Data as Stream
-import Gundeck.Options (optSettings, setNotificationTTL)
-import qualified Gundeck.Push.Data as Push
+import Gundeck.Notification.Data qualified as Stream
+import Gundeck.Options (notificationTTL, settings)
+import Gundeck.Push.Data qualified as Push
 import Gundeck.Push.Native.Types
-import qualified Gundeck.Push.Websocket as Web
-import Gundeck.Types
+import Gundeck.Push.Websocket qualified as Web
 import Gundeck.Util
 import Imports
 import System.Logger.Class (Msg, msg, val, (+++), (.=), (~~))
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
+import Wire.API.Event.Gundeck
+import Wire.API.Internal.Notification
+import Wire.API.Push.V2
 
 onEvent :: Event -> Gundeck ()
 onEvent ev = case ev ^. evType of
@@ -77,9 +79,9 @@ onUpdated ev = withEndpoint ev $ \e as ->
         logUserEvent (a ^. addrUser) ev $ msg (val "Removing superseded token")
         deleteToken (a ^. addrUser) ev (a ^. addrToken) (a ^. addrClient)
       if
-          | null sup -> return ()
-          | null cur -> deleteEndpoint ev
-          | otherwise -> updateEndpoint ev e (map (view addrUser) cur)
+        | null sup -> pure ()
+        | null cur -> deleteEndpoint ev
+        | otherwise -> updateEndpoint ev e (map (view addrUser) cur)
 
 onFailure :: Event -> Gundeck ()
 onFailure ev = withEndpoint ev $ \e as ->
@@ -99,22 +101,28 @@ onPermFailure ev = withEndpoint ev $ \_ as -> do
 onTTLExpired :: Event -> Gundeck ()
 onTTLExpired ev =
   Log.warn $
-    "arn" .= toText (ev ^. evEndpoint)
-      ~~ "cause" .= toText (ev ^. evType)
+    "arn"
+      .= toText (ev ^. evEndpoint)
+      ~~ "cause"
+      .= toText (ev ^. evType)
       ~~ msg (val "Notification TTL expired")
 
 onUnknownFailure :: Event -> Text -> Gundeck ()
 onUnknownFailure ev r =
   Log.warn $
-    "arn" .= toText (ev ^. evEndpoint)
-      ~~ "cause" .= toText (ev ^. evType)
+    "arn"
+      .= toText (ev ^. evEndpoint)
+      ~~ "cause"
+      .= toText (ev ^. evType)
       ~~ msg (val "Unknown failure, reason: " +++ r)
 
 onUnhandledEventType :: Event -> Gundeck ()
 onUnhandledEventType ev =
   Log.warn $
-    "arn" .= toText (ev ^. evEndpoint)
-      ~~ "cause" .= toText (ev ^. evType)
+    "arn"
+      .= toText (ev ^. evEndpoint)
+      ~~ "cause"
+      .= toText (ev ^. evType)
       ~~ msg (val "Unhandled event type")
 
 -------------------------------------------------------------------------------
@@ -133,7 +141,8 @@ withEndpoint ev f = do
     case filter ((== (ev ^. evEndpoint)) . view addrEndpoint) as of
       [] -> do
         logEvent ev $
-          "token" .= Text.take 16 (tokenText (ep ^. endpointToken))
+          "token"
+            .= Text.take 16 (tokenText (ep ^. endpointToken))
             ~~ msg (val "Deleting orphaned SNS endpoint")
         Aws.execute v (Aws.deleteEndpoint (ev ^. evEndpoint))
       as' -> f ep as'
@@ -153,7 +162,8 @@ updateEndpoint ev ep us = do
 deleteToken :: UserId -> Event -> Token -> ClientId -> Gundeck ()
 deleteToken u ev tk cl = do
   logUserEvent u ev $
-    "token" .= Text.take 16 (tokenText tk)
+    "token"
+      .= Text.take 16 (tokenText tk)
       ~~ msg (val "Deleting push token")
   i <- mkNotificationId
   let t = mkPushToken ev tk cl
@@ -161,7 +171,7 @@ deleteToken u ev tk cl = do
       n = Notification i False p
       r = singleton (target u & targetClients .~ [cl])
   void $ Web.push n r (Just u) Nothing Set.empty
-  Stream.add i r p =<< view (options . optSettings . setNotificationTTL)
+  Stream.add i r p =<< view (options . settings . notificationTTL)
   Push.delete u (t ^. tokenTransport) (t ^. tokenApp) tk
 
 mkPushToken :: Event -> Token -> ClientId -> PushToken
@@ -172,12 +182,15 @@ mkPushToken ev tk cl =
 logEvent :: Event -> (Msg -> Msg) -> Gundeck ()
 logEvent ev f =
   Log.info $
-    "arn" .= toText (ev ^. evEndpoint)
-      ~~ "cause" .= toText (ev ^. evType)
+    "arn"
+      .= toText (ev ^. evEndpoint)
+      ~~ "cause"
+      .= toText (ev ^. evType)
       ~~ f
 
 logUserEvent :: UserId -> Event -> (Msg -> Msg) -> Gundeck ()
 logUserEvent u ev f =
   logEvent ev $
-    "user" .= toByteString u
+    "user"
+      .= toByteString u
       ~~ f

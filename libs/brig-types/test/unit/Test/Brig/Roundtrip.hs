@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,8 +19,7 @@ module Test.Brig.Roundtrip where
 
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toJSON)
 import Data.Aeson.Types (parseEither)
-import Data.ByteString.Conversion
-import Data.Swagger (ToSchema, validatePrettyToJSON)
+import Data.OpenApi (ToSchema, validatePrettyToJSON)
 import Imports
 import Test.Tasty (TestTree)
 import Test.Tasty.QuickCheck (Arbitrary, counterexample, testProperty, (.&&.), (===))
@@ -40,7 +39,7 @@ testRoundTrip = testProperty msg trip
 
 testRoundTripWithSwagger ::
   forall a.
-  (Arbitrary a, Typeable a, ToJSON a, FromJSON a, ToSchema a, Eq a, Show a) =>
+  (Arbitrary a, ToJSON a, FromJSON a, ToSchema a, Eq a, Show a) =>
   TestTree
 testRoundTripWithSwagger = testProperty msg (trip .&&. scm)
   where
@@ -56,14 +55,3 @@ testRoundTripWithSwagger = testProperty msg (trip .&&. scm)
             validatePrettyToJSON v
         )
         $ isNothing (validatePrettyToJSON v)
-
-testRoundTripByteString ::
-  forall a.
-  (Arbitrary a, Typeable a, ToByteString a, FromByteString a, Eq a, Show a) =>
-  TestTree
-testRoundTripByteString = testProperty msg trip
-  where
-    msg = show (typeRep @a)
-    trip (v :: a) =
-      counterexample (show $ toByteString' v) $
-        Just v === (fromByteString . toByteString') v

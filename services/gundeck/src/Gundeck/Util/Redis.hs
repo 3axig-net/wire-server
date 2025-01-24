@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,28 +19,43 @@ module Gundeck.Util.Redis where
 
 import Control.Monad.Catch
 import Control.Retry
-import qualified Data.ByteString.Lazy as BSL
-import Database.Redis.IO
+import Data.ByteString qualified as BS
+import Database.Redis
 import Imports
+import System.Logger.Class (MonadLogger)
+import System.Logger.Class qualified as Log
+import System.Logger.Message
 
-retry :: (MonadIO m, MonadMask m) => RetryPolicyM m -> m a -> m a
+retry :: (MonadIO m, MonadMask m, MonadLogger m) => RetryPolicyM m -> m a -> m a
 retry x = recovering x handlers . const
-
-x1 :: RetryPolicy
-x1 = limitRetries 1 <> exponentialBackoff 100000
 
 x3 :: RetryPolicy
 x3 = limitRetries 3 <> exponentialBackoff 100000
 
-handlers :: Monad m => [a -> Handler m Bool]
+handlers :: (MonadLogger m) => [a -> Handler m Bool]
 handlers =
-  [ const . Handler $ \(e :: RedisError) -> case e of
-      RedisError msg -> pure $ "READONLY" `BSL.isPrefixOf` msg
-      _ -> pure False,
-    const . Handler $ \(_ :: ConnectionError) -> pure True,
-    const . Handler $ \(_ :: Timeout) -> pure True,
-    const . Handler $ \e ->
-      case e of
-        TransactionAborted -> pure True
-        _ -> pure False
+  [ const . Handler $ \case
+      RedisSimpleError (Error err) -> pure $ "READONLY" `BS.isPrefixOf` err
+      RedisTxError err -> pure $ "READONLY" `isPrefixOf` err
+      err -> do
+        Log.warn $
+          Log.msg (Log.val "Redis error; not retrying.")
+            ~~ "redis.errMsg" .= show err
+        pure False
   ]
+
+-- Error -------------------------------------------------------------------
+
+data RedisError
+  = RedisSimpleError Reply
+  | RedisTxAborted
+  | RedisTxError String
+  deriving (Show)
+
+instance Exception RedisError
+
+fromTxResult :: (MonadThrow m) => TxResult a -> m a
+fromTxResult = \case
+  TxSuccess a -> pure a
+  TxAborted -> throwM RedisTxAborted
+  TxError e -> throwM $ RedisTxError e

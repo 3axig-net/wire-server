@@ -1,6 +1,5 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -20,7 +19,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -43,50 +42,60 @@
 -- * Request and response types for SCIM-related endpoints.
 module Wire.API.User.Scim where
 
-import Control.Lens (Prism', makeLenses, mapped, prism', (.~), (?~))
+import Control.Lens (makeLenses, to, (.~), (^.))
 import Control.Monad.Except (throwError)
 import Crypto.Hash (hash)
 import Crypto.Hash.Algorithms (SHA512)
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Attoparsec.ByteString (string)
-import qualified Data.Binary.Builder as BB
+import Data.Binary.Builder qualified as BB
 import Data.ByteArray.Encoding (Base (..), convertToBase)
 import Data.ByteString.Conversion (FromByteString (..), ToByteString (..))
-import qualified Data.CaseInsensitive as CI
+import Data.CaseInsensitive qualified as CI
+import Data.Code as Code
 import Data.Handle (Handle)
-import Data.Id (ScimTokenId, TeamId, UserId)
-import Data.Json.Util ((#))
-import qualified Data.Map as Map
-import Data.Misc (PlainTextPassword)
-import Data.Proxy
-import Data.String.Conversions (cs)
-import Data.Swagger hiding (Operation)
-import Data.Text.Encoding (encodeUtf8)
+import Data.Id
+import Data.Json.Util
+import Data.Map qualified as Map
+import Data.Misc (PlainTextPassword6)
+import Data.OpenApi qualified as S
+import Data.Schema as Schema
+import Data.Text qualified as T
+import Data.Text qualified as Text
+import Data.Text.Encoding (decodeUtf8, encodeUtf8)
+import Data.These
+import Data.These.Combinators
 import Data.Time.Clock (UTCTime)
 import Imports
-import qualified SAML2.WebSSO as SAML
+import SAML2.WebSSO qualified as SAML
 import SAML2.WebSSO.Test.Arbitrary ()
 import Servant.API (FromHttpApiData (..), ToHttpApiData (..))
-import qualified Test.QuickCheck as QC
+import Test.QuickCheck (Gen)
+import Test.QuickCheck qualified as QC
 import Web.HttpApiData (parseHeaderWithPrefix)
 import Web.Scim.AttrName (AttrName (..))
-import qualified Web.Scim.Class.Auth as Scim.Auth
-import qualified Web.Scim.Class.Group as Scim.Group
-import qualified Web.Scim.Class.User as Scim.User
+import Web.Scim.Class.Auth qualified as Scim.Auth
+import Web.Scim.Class.Group qualified as Scim.Group
+import Web.Scim.Class.User qualified as Scim.User
 import Web.Scim.Filter (AttrPath (..))
-import qualified Web.Scim.Schema.Common as Scim
-import qualified Web.Scim.Schema.Error as Scim
+import Web.Scim.Schema.Common qualified as Scim
+import Web.Scim.Schema.Error qualified as Scim
 import Web.Scim.Schema.PatchOp (Operation (..), Path (NormalPath))
-import qualified Web.Scim.Schema.PatchOp as Scim
+import Web.Scim.Schema.PatchOp qualified as Scim
 import Web.Scim.Schema.Schema (Schema (CustomSchema))
-import qualified Web.Scim.Schema.Schema as Scim
-import qualified Web.Scim.Schema.User as Scim
-import qualified Web.Scim.Schema.User as Scim.User
-import Wire.API.User.Identity (Email)
+import Web.Scim.Schema.Schema qualified as Scim
+import Web.Scim.Schema.User qualified as Scim
+import Web.Scim.Schema.User qualified as Scim.User
+import Wire.API.Locale
+import Wire.API.Routes.Version
+import Wire.API.Routes.Versioned
+import Wire.API.Team.Role (Role)
+import Wire.API.User.EmailAddress (EmailAddress, fromEmail)
 import Wire.API.User.Profile as BT
-import qualified Wire.API.User.RichInfo as RI
+import Wire.API.User.RichInfo qualified as RI
 import Wire.API.User.Saml ()
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 ----------------------------------------------------------------------------
 -- Schemas
@@ -108,7 +117,11 @@ userSchemas =
 --
 -- For SCIM authentication and token handling logic, see "Spar.Scim.Auth".
 newtype ScimToken = ScimToken {fromScimToken :: Text}
-  deriving (Eq, Ord, Show, FromJSON, ToJSON, FromByteString, ToByteString)
+  deriving (Eq, Ord, Show, FromByteString, ToByteString, Arbitrary)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimToken)
+
+instance ToSchema ScimToken where
+  schema = ScimToken <$> fromScimToken .= schema
 
 newtype ScimTokenHash = ScimTokenHash {fromScimTokenHash :: Text}
   deriving (Eq, Show)
@@ -127,7 +140,7 @@ data ScimTokenLookupKey
 hashScimToken :: ScimToken -> ScimTokenHash
 hashScimToken token =
   let digest = hash @ByteString @SHA512 (encodeUtf8 (fromScimToken token))
-   in ScimTokenHash (cs @ByteString @Text (convertToBase Base64 digest))
+   in ScimTokenHash (decodeUtf8 (convertToBase Base64 digest))
 
 -- | Metadata that we store about each token.
 data ScimTokenInfo = ScimTokenInfo
@@ -141,9 +154,13 @@ data ScimTokenInfo = ScimTokenInfo
     stiIdP :: !(Maybe SAML.IdPId),
     -- | Free-form token description, can be set
     --   by the token creator as a mental aid
-    stiDescr :: !Text
+    stiDescr :: !Text,
+    -- | Name for the token, if not set by the user, the name will be equal to the token ID
+    stiName :: !Text
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform ScimTokenInfo)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimTokenInfo)
 
 instance FromHttpApiData ScimToken where
   parseHeader h = ScimToken <$> parseHeaderWithPrefix "Bearer " h
@@ -153,24 +170,44 @@ instance ToHttpApiData ScimToken where
   toHeader (ScimToken s) = "Bearer " <> encodeUtf8 s
   toQueryParam (ScimToken s) = toQueryParam s
 
-instance FromJSON ScimTokenInfo where
-  parseJSON = A.withObject "ScimTokenInfo" $ \o -> do
-    stiTeam <- o A..: "team"
-    stiId <- o A..: "id"
-    stiCreatedAt <- o A..: "created_at"
-    stiIdP <- o A..:? "idp"
-    stiDescr <- o A..: "description"
-    pure ScimTokenInfo {..}
+instance ToSchema ScimTokenInfo where
+  schema =
+    object "ScimTokenInfo" $
+      ScimTokenInfo
+        <$> (.stiTeam) .= field "team" schema
+        <*> (.stiId) .= field "id" schema
+        <*> (.stiCreatedAt) .= field "created_at" utcTimeSchema
+        <*> (fmap SAML.fromIdPId . (.stiIdP)) .= (SAML.IdPId <$$> maybe_ (optField "idp" uuidSchema))
+        <*> (.stiDescr) .= field "description" schema
+        <*> (.stiName) .= field "name" schema
 
-instance ToJSON ScimTokenInfo where
-  toJSON s =
-    A.object $
-      "team" A..= stiTeam s
-        # "id" A..= stiId s
-        # "created_at" A..= stiCreatedAt s
-        # "idp" A..= stiIdP s
-        # "description" A..= stiDescr s
-        # []
+-- | Metadata that we store about each token.
+data ScimTokenInfoV7 = ScimTokenInfoV7
+  { -- | Which team can be managed with the token
+    stiTeam :: !TeamId,
+    -- | Token ID, can be used to eg. delete the token
+    stiId :: !ScimTokenId,
+    -- | Time of token creation
+    stiCreatedAt :: !UTCTime,
+    -- | IdP that created users will "belong" to
+    stiIdP :: !(Maybe SAML.IdPId),
+    -- | Free-form token description, can be set
+    --   by the token creator as a mental aid
+    stiDescr :: !Text
+  }
+  deriving (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform ScimTokenInfoV7)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimTokenInfoV7)
+
+instance ToSchema ScimTokenInfoV7 where
+  schema =
+    object "ScimTokenInfoV7" $
+      ScimTokenInfoV7
+        <$> (.stiTeam) .= field "team" schema
+        <*> (.stiId) .= field "id" schema
+        <*> (.stiCreatedAt) .= field "created_at" utcTimeSchema
+        <*> (fmap SAML.fromIdPId . (.stiIdP)) .= (SAML.IdPId <$$> maybe_ (optField "idp" uuidSchema))
+        <*> (.stiDescr) .= field "description" schema
 
 ----------------------------------------------------------------------------
 -- @hscim@ extensions and wrappers
@@ -250,8 +287,8 @@ instance QC.Arbitrary (Scim.User SparTag) where
     where
       addFields :: Scim.User.User tag -> QC.Gen (Scim.User.User tag)
       addFields usr = do
-        gexternalId <- cs . QC.getPrintableString <$$> QC.arbitrary
-        gdisplayName <- cs . QC.getPrintableString <$$> QC.arbitrary
+        gexternalId <- T.pack . QC.getPrintableString <$$> QC.arbitrary
+        gdisplayName <- T.pack . QC.getPrintableString <$$> QC.arbitrary
         gactive <- Just . Scim.ScimBool <$> QC.arbitrary -- (`Nothing` maps on `Just True` and was in the way of a unit test.)
         gemails <- catMaybes <$> (A.decode <$$> QC.listOf (QC.elements ["a@b.c", "x@y,z", "roland@st.uv"]))
         pure
@@ -266,7 +303,7 @@ instance QC.Arbitrary (Scim.User SparTag) where
       genSchemas = QC.listOf1 $ QC.elements Scim.fakeEnumSchema
 
       genUserName :: QC.Gen Text
-      genUserName = cs . QC.getPrintableString <$> QC.arbitrary
+      genUserName = T.pack . QC.getPrintableString <$> QC.arbitrary
 
       genExtra :: QC.Gen ScimUserExtra
       genExtra = QC.arbitrary
@@ -274,34 +311,34 @@ instance QC.Arbitrary (Scim.User SparTag) where
 instance Scim.Patchable ScimUserExtra where
   applyOperation (ScimUserExtra (RI.RichInfo rinfRaw)) (Operation o (Just (NormalPath (AttrPath (Just (CustomSchema sch)) (AttrName (CI.mk -> ciAttrName)) Nothing))) val)
     | sch == RI.richInfoMapURN =
-      let rinf = RI.richInfoMap $ RI.fromRichInfoAssocList rinfRaw
-          unrinf = ScimUserExtra . RI.RichInfo . RI.toRichInfoAssocList . RI.mkRichInfoMapAndList . fmap (uncurry RI.RichField) . Map.assocs
-       in unrinf <$> case o of
-            Scim.Remove ->
-              pure $ Map.delete ciAttrName rinf
-            _AddOrReplace ->
-              case val of
-                (Just (A.String textVal)) ->
-                  pure $ Map.insert ciAttrName textVal rinf
-                _ -> throwError $ Scim.badRequest Scim.InvalidValue $ Just "rich info values can only be text"
+        let rinf = RI.richInfoMap $ RI.fromRichInfoAssocList rinfRaw
+            unrinf = ScimUserExtra . RI.RichInfo . RI.toRichInfoAssocList . RI.mkRichInfoMapAndList . fmap (uncurry RI.RichField) . Map.assocs
+         in unrinf <$> case o of
+              Scim.Remove ->
+                pure $ Map.delete ciAttrName rinf
+              _AddOrReplace ->
+                case val of
+                  (Just (A.String textVal)) ->
+                    pure $ Map.insert ciAttrName textVal rinf
+                  _ -> throwError $ Scim.badRequest Scim.InvalidValue $ Just "rich info values can only be text"
     | sch == RI.richInfoAssocListURN =
-      let rinf = RI.richInfoAssocList $ RI.fromRichInfoAssocList rinfRaw
-          unrinf = ScimUserExtra . RI.RichInfo . RI.toRichInfoAssocList . RI.mkRichInfoMapAndList
-          matchesAttrName (RI.RichField k _) = k == ciAttrName
-       in unrinf <$> case o of
-            Scim.Remove ->
-              pure $ filter (not . matchesAttrName) rinf
-            _AddOrReplace ->
-              case val of
-                (Just (A.String textVal)) ->
-                  let newField = RI.RichField ciAttrName textVal
-                      replaceIfMatchesAttrName f = if matchesAttrName f then newField else f
-                      newRichInfo =
-                        if not $ any matchesAttrName rinf
-                          then rinf ++ [newField]
-                          else map replaceIfMatchesAttrName rinf
-                   in pure newRichInfo
-                _ -> throwError $ Scim.badRequest Scim.InvalidValue $ Just "rich info values can only be text"
+        let rinf = RI.richInfoAssocList $ RI.fromRichInfoAssocList rinfRaw
+            unrinf = ScimUserExtra . RI.RichInfo . RI.toRichInfoAssocList . RI.mkRichInfoMapAndList
+            matchesAttrName (RI.RichField k _) = k == ciAttrName
+         in unrinf <$> case o of
+              Scim.Remove ->
+                pure $ filter (not . matchesAttrName) rinf
+              _AddOrReplace ->
+                case val of
+                  (Just (A.String textVal)) ->
+                    let newField = RI.RichField ciAttrName textVal
+                        replaceIfMatchesAttrName f = if matchesAttrName f then newField else f
+                        newRichInfo =
+                          if not $ any matchesAttrName rinf
+                            then rinf ++ [newField]
+                            else map replaceIfMatchesAttrName rinf
+                     in pure newRichInfo
+                  _ -> throwError $ Scim.badRequest Scim.InvalidValue $ Just "rich info values can only be text"
     | otherwise = throwError $ Scim.badRequest Scim.InvalidValue $ Just "unknown schema, cannot patch"
   applyOperation _ _ = throwError $ Scim.badRequest Scim.InvalidValue $ Just "invalid patch op for rich info"
 
@@ -319,43 +356,61 @@ instance Scim.Patchable ScimUserExtra where
 -- and/or ignore POSTed content, returning the full representation can be useful to the
 -- client, enabling it to correlate the client's and server's views of the new resource."
 data ValidScimUser = ValidScimUser
-  { _vsuExternalId :: ValidExternalId,
-    _vsuHandle :: Handle,
-    _vsuName :: BT.Name,
-    _vsuRichInfo :: RI.RichInfo,
-    _vsuActive :: Bool
+  { externalId :: ValidScimId,
+    handle :: Handle,
+    name :: BT.Name,
+    emails :: [EmailAddress],
+    richInfo :: RI.RichInfo,
+    active :: Bool,
+    locale :: Maybe Locale,
+    role :: Maybe Role
   }
   deriving (Eq, Show)
 
-data ValidExternalId
-  = EmailAndUref Email SAML.UserRef
-  | UrefOnly SAML.UserRef
-  | EmailOnly Email
+-- | This type carries externalId, plus email address (validated if present, unvalidated if not) and saml credentials,
+-- because those are sometimes derived from the externalId field.
+data ValidScimId = ValidScimId
+  { validScimIdExternal :: Text,
+    validScimIdAuthInfo :: These EmailAddress SAML.UserRef
+  }
   deriving (Eq, Show, Generic)
 
--- | Take apart a 'ValidExternalId', using 'SAML.UserRef' if available, otehrwise 'Email'.
-runValidExternalId :: (SAML.UserRef -> a) -> (Email -> a) -> ValidExternalId -> a
-runValidExternalId doUref doEmail = \case
-  EmailAndUref _ uref -> doUref uref
-  UrefOnly uref -> doUref uref
-  EmailOnly em -> doEmail em
+instance Arbitrary ValidScimId where
+  arbitrary =
+    these onlyThis (pure . onlyThat) (\_ uref -> pure (onlyThat uref)) =<< QC.arbitrary
+    where
+      onlyThis :: EmailAddress -> Gen ValidScimId
+      onlyThis em = do
+        extIdNick <- T.pack . QC.getPrintableString <$> QC.arbitrary
+        extId <- QC.elements [extIdNick, fromEmail em]
+        pure $ ValidScimId {validScimIdExternal = extId, validScimIdAuthInfo = This em}
 
-veidUref :: Prism' ValidExternalId SAML.UserRef
-veidUref = prism' UrefOnly $
-  \case
-    EmailAndUref _ uref -> Just uref
-    UrefOnly uref -> Just uref
-    EmailOnly _ -> Nothing
+      -- `unsafeShowNameID` can name clash, if this is a problem consider using `arbitraryValidScimIdNoNameIDQualifiers`
+      onlyThat :: SAML.UserRef -> ValidScimId
+      onlyThat uref = ValidScimId {validScimIdExternal = uref ^. SAML.uidSubject . to SAML.unsafeShowNameID . to CI.original, validScimIdAuthInfo = That uref}
 
-veidEmail :: Prism' ValidExternalId Email
-veidEmail = prism' EmailOnly $
-  \case
-    EmailAndUref em _ -> Just em
-    UrefOnly _ -> Nothing
-    EmailOnly em -> Just em
+newtype ValidScimIdNoNameIDQualifiers = ValidScimIdNoNameIDQualifiers ValidScimId
+  deriving (Eq, Show)
+
+instance Arbitrary ValidScimIdNoNameIDQualifiers where
+  arbitrary = ValidScimIdNoNameIDQualifiers <$> arbitraryValidScimIdNoNameIDQualifiers
+
+arbitraryValidScimIdNoNameIDQualifiers :: QC.Gen ValidScimId
+arbitraryValidScimIdNoNameIDQualifiers = do
+  veid :: ValidScimId <- QC.arbitrary
+  pure $ ValidScimId veid.validScimIdExternal (veid.validScimIdAuthInfo & mapThere removeQualifiers)
+  where
+    removeQualifiers :: SAML.UserRef -> SAML.UserRef
+    removeQualifiers =
+      (SAML.uidSubject . SAML.nameIDNameQ .~ Nothing)
+        . (SAML.uidSubject . SAML.nameIDSPProvidedID .~ Nothing)
+        . (SAML.uidSubject . SAML.nameIDSPNameQ .~ Nothing)
+
+veidUref :: ValidScimId -> Maybe SAML.UserRef
+veidUref = justThere . validScimIdAuthInfo
 
 makeLenses ''ValidScimUser
-makeLenses ''ValidExternalId
+makeLenses ''ValidScimId
 
 ----------------------------------------------------------------------------
 -- Request and response types
@@ -363,46 +418,75 @@ makeLenses ''ValidExternalId
 -- | Type used for request parameters to 'APIScimTokenCreate'.
 data CreateScimToken = CreateScimToken
   { -- | Token description (as memory aid for whoever is creating the token)
-    createScimTokenDescr :: !Text,
+    description :: !Text,
     -- | User password, which we ask for because creating a token is a "powerful" operation
-    createScimTokenPassword :: !(Maybe PlainTextPassword)
+    password :: !(Maybe PlainTextPassword6),
+    -- | User code (sent by email), for 2nd factor to 'password'
+    verificationCode :: !(Maybe Code.Value),
+    -- | Optional name for the token
+    name :: Maybe Text,
+    -- | Optional IdP that created users will "belong" to
+    idp :: Maybe SAML.IdPId
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform CreateScimToken)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema CreateScimToken)
 
-instance A.FromJSON CreateScimToken where
-  parseJSON = A.withObject "CreateScimToken" $ \o -> do
-    createScimTokenDescr <- o A..: "description"
-    createScimTokenPassword <- o A..:? "password"
-    pure CreateScimToken {..}
+createScimTokenSchema :: Maybe Version -> ValueSchema NamedSwaggerDoc CreateScimToken
+createScimTokenSchema mVersion =
+  object ("CreateScimToken" <> foldMap (Text.toUpper . versionText) mVersion) $
+    CreateScimToken
+      <$> (.description) .= field "description" schema
+      <*> password .= optField "password" (maybeWithDefault A.Null schema)
+      <*> verificationCode .= optField "verification_code" (maybeWithDefault A.Null schema)
+      <*> nameSchema
+      <*> idpSchema
+  where
+    nameSchema =
+      case mVersion of
+        Just v | v <= V7 -> const Nothing .= pure Nothing
+        _ -> (.name) .= maybe_ (optField "name" schema)
+    idpSchema =
+      case mVersion of
+        Just v | v <= V7 -> const Nothing .= pure Nothing
+        _ -> (fmap SAML.fromIdPId . idp) .= maybe_ (optField "idp" (SAML.IdPId <$> uuidSchema))
 
--- Used for integration tests
-instance A.ToJSON CreateScimToken where
-  toJSON CreateScimToken {..} =
-    A.object
-      [ "description" A..= createScimTokenDescr,
-        "password" A..= createScimTokenPassword
-      ]
+instance ToSchema CreateScimToken where
+  schema = createScimTokenSchema Nothing
+
+instance ToSchema (Versioned 'V7 CreateScimToken) where
+  schema = Versioned <$> unVersioned .= createScimTokenSchema (Just V7)
 
 -- | Type used for the response of 'APIScimTokenCreate'.
 data CreateScimTokenResponse = CreateScimTokenResponse
-  { createScimTokenResponseToken :: ScimToken,
-    createScimTokenResponseInfo :: ScimTokenInfo
+  { token :: ScimToken,
+    info :: ScimTokenInfo
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform CreateScimTokenResponse)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema CreateScimTokenResponse)
 
--- Used for integration tests
-instance A.FromJSON CreateScimTokenResponse where
-  parseJSON = A.withObject "CreateScimTokenResponse" $ \o -> do
-    createScimTokenResponseToken <- o A..: "token"
-    createScimTokenResponseInfo <- o A..: "info"
-    pure CreateScimTokenResponse {..}
+instance ToSchema CreateScimTokenResponse where
+  schema =
+    object "CreateScimTokenResponse" $
+      CreateScimTokenResponse
+        <$> (.token) .= field "token" schema
+        <*> (.info) .= field "info" schema
 
-instance A.ToJSON CreateScimTokenResponse where
-  toJSON CreateScimTokenResponse {..} =
-    A.object
-      [ "token" A..= createScimTokenResponseToken,
-        "info" A..= createScimTokenResponseInfo
-      ]
+data CreateScimTokenResponseV7 = CreateScimTokenResponseV7
+  { token :: ScimToken,
+    info :: ScimTokenInfoV7
+  }
+  deriving (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform CreateScimTokenResponseV7)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema CreateScimTokenResponseV7)
+
+instance ToSchema CreateScimTokenResponseV7 where
+  schema =
+    object "CreateScimTokenResponseV7" $
+      CreateScimTokenResponseV7
+        <$> (.token) .= field "token" schema
+        <*> (.info) .= field "info" schema
 
 -- | Type used for responses of endpoints that return a list of SCIM tokens.
 -- Wrapped into an object to allow extensibility later on.
@@ -412,83 +496,23 @@ data ScimTokenList = ScimTokenList
   { scimTokenListTokens :: [ScimTokenInfo]
   }
   deriving (Eq, Show)
-
-instance A.FromJSON ScimTokenList where
-  parseJSON = A.withObject "ScimTokenList" $ \o -> do
-    scimTokenListTokens <- o A..: "tokens"
-    pure ScimTokenList {..}
-
-instance A.ToJSON ScimTokenList where
-  toJSON ScimTokenList {..} =
-    A.object
-      [ "tokens" A..= scimTokenListTokens
-      ]
-
--- Swagger
-
-instance ToParamSchema ScimToken where
-  toParamSchema _ = toParamSchema (Proxy @Text)
-
-instance ToSchema ScimToken where
-  declareNamedSchema _ =
-    declareNamedSchema (Proxy @Text)
-      & mapped . schema . description ?~ "Authentication token"
-
-instance ToSchema ScimTokenInfo where
-  declareNamedSchema _ = do
-    teamSchema <- declareSchemaRef (Proxy @TeamId)
-    idSchema <- declareSchemaRef (Proxy @ScimTokenId)
-    createdAtSchema <- declareSchemaRef (Proxy @UTCTime)
-    idpSchema <- declareSchemaRef (Proxy @SAML.IdPId)
-    descrSchema <- declareSchemaRef (Proxy @Text)
-    return $
-      NamedSchema (Just "ScimTokenInfo") $
-        mempty
-          & type_ .~ Just SwaggerObject
-          & properties
-            .~ [ ("team", teamSchema),
-                 ("id", idSchema),
-                 ("created_at", createdAtSchema),
-                 ("idp", idpSchema),
-                 ("description", descrSchema)
-               ]
-          & required .~ ["team", "id", "created_at", "description"]
-
-instance ToSchema CreateScimToken where
-  declareNamedSchema _ = do
-    textSchema <- declareSchemaRef (Proxy @Text)
-    return $
-      NamedSchema (Just "CreateScimToken") $
-        mempty
-          & type_ .~ Just SwaggerObject
-          & properties
-            .~ [ ("description", textSchema),
-                 ("password", textSchema)
-               ]
-          & required .~ ["description"]
-
-instance ToSchema CreateScimTokenResponse where
-  declareNamedSchema _ = do
-    tokenSchema <- declareSchemaRef (Proxy @ScimToken)
-    infoSchema <- declareSchemaRef (Proxy @ScimTokenInfo)
-    return $
-      NamedSchema (Just "CreateScimTokenResponse") $
-        mempty
-          & type_ .~ Just SwaggerObject
-          & properties
-            .~ [ ("token", tokenSchema),
-                 ("info", infoSchema)
-               ]
-          & required .~ ["token", "info"]
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimTokenList)
 
 instance ToSchema ScimTokenList where
-  declareNamedSchema _ = do
-    infoListSchema <- declareSchemaRef (Proxy @[ScimTokenInfo])
-    return $
-      NamedSchema (Just "ScimTokenList") $
-        mempty
-          & type_ .~ Just SwaggerObject
-          & properties
-            .~ [ ("tokens", infoListSchema)
-               ]
-          & required .~ ["tokens"]
+  schema = object "ScimTokenList" $ ScimTokenList <$> (.scimTokenListTokens) .= field "tokens" (array schema)
+
+data ScimTokenListV7 = ScimTokenListV7
+  { scimTokenListTokens :: [ScimTokenInfoV7]
+  }
+  deriving (Eq, Show)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimTokenListV7)
+
+instance ToSchema ScimTokenListV7 where
+  schema = object "ScimTokenListV7" $ ScimTokenListV7 <$> (.scimTokenListTokens) .= field "tokens" (array schema)
+
+newtype ScimTokenName = ScimTokenName {fromScimTokenName :: Text}
+  deriving (Eq, Show)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema.Schema ScimTokenName)
+
+instance ToSchema ScimTokenName where
+  schema = object "ScimTokenName" $ ScimTokenName <$> fromScimTokenName .= field "name" schema

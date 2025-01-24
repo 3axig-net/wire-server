@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,13 +26,13 @@ module Gundeck.Aws.Sns
   )
 where
 
+import Amazonka.Data (ToText (..), fromText)
 import Control.Error
 import Control.Lens
 import Data.Aeson
 import Data.Aeson.Lens
 import Gundeck.Aws.Arn (EndpointArn)
 import Imports
-import Network.AWS.Data (ToText (..), fromText)
 
 data EventType
   = EndpointCreated
@@ -87,8 +89,8 @@ instance ToText EventType where
 instance FromJSON Event where
   -- n.b. The SNS topic publishing these events must be configured for raw
   -- message delivery: cf. https://aws.amazon.com/sns/faqs/#raw-message-delivery
-  parseJSON m = maybe (fail "Failed to parse SNS event") return $ do
+  parseJSON m = maybe (fail "Failed to parse SNS event") pure $ do
     e <- m ^? key "EndpointArn" . _String >>= hush . fromText
     t <- m ^? key "EventType" . _String
     let f = m ^? key "FailureType" . _String
-    return $! Event (readEventType t f) e
+    pure $! Event (readEventType t f) e

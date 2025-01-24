@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -39,31 +39,33 @@ module Galley.API.Teams.Notifications
   )
 where
 
-import Brig.Types.Intra (accountUser)
-import Brig.Types.User (userTeam)
 import Data.Id
 import Data.Json.Util (toJSONObject)
-import qualified Data.List1 as List1
+import Data.List1 qualified as List1
 import Data.Range (Range)
-import Galley.API.Error
-import qualified Galley.Data.TeamNotifications as DataTeamQueue
+import Galley.Data.TeamNotifications qualified as DataTeamQueue
 import Galley.Effects
 import Galley.Effects.BrigAccess as Intra
-import qualified Galley.Effects.TeamNotificationStore as E
-import Galley.Types.Teams hiding (newTeam)
-import Gundeck.Types.Notification
+import Galley.Effects.TeamNotificationStore qualified as E
 import Imports
 import Polysemy
-import Polysemy.Error
+import Wire.API.Error
+import Wire.API.Error.Galley
+import Wire.API.Event.Team (Event)
+import Wire.API.Internal.Notification
+import Wire.API.User
 
 getTeamNotifications ::
-  Members '[BrigAccess, Error TeamError, TeamNotificationStore] r =>
+  ( Member BrigAccess r,
+    Member (ErrorS 'TeamNotFound) r,
+    Member TeamNotificationStore r
+  ) =>
   UserId ->
   Maybe NotificationId ->
   Range 1 10000 Int32 ->
   Sem r QueuedNotificationList
 getTeamNotifications zusr since size = do
-  tid <- (note TeamNotFound =<<) $ (userTeam . accountUser =<<) <$> Intra.getUser zusr
+  tid <- (noteS @'TeamNotFound =<<) $ (userTeam =<<) <$> Intra.getUser zusr
   page <- E.getTeamNotifications tid since size
   pure $
     queuedNotificationList
@@ -71,7 +73,7 @@ getTeamNotifications zusr since size = do
       (DataTeamQueue.resultHasMore page)
       Nothing
 
-pushTeamEvent :: Member TeamNotificationStore r => TeamId -> Event -> Sem r ()
+pushTeamEvent :: (Member TeamNotificationStore r) => TeamId -> Event -> Sem r ()
 pushTeamEvent tid evt = do
   nid <- E.mkNotificationId
   E.createTeamNotification tid nid (List1.singleton $ toJSONObject evt)

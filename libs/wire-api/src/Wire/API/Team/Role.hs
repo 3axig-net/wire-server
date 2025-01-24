@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,22 +20,21 @@
 module Wire.API.Team.Role
   ( Role (..),
     defaultRole,
-
-    -- * Swagger
-    typeRole,
   )
 where
 
-import qualified Cassandra as Cql
+import Cassandra qualified as Cql
+import Control.Error (note)
+import Control.Lens ((?~))
 import Data.Aeson
 import Data.Attoparsec.ByteString.Char8 (string)
 import Data.ByteString.Conversion (FromByteString (..), ToByteString (..))
-import Data.ByteString.Conversion.From (runParser)
-import Data.ByteString.Lazy.Builder (toLazyByteString)
-import Data.String.Conversions (cs)
-import qualified Data.Swagger.Model.Api as Doc
+import Data.OpenApi qualified as S
+import Data.Schema
+import Data.Text qualified as T
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
+import Servant.API (FromHttpApiData, parseQueryParam)
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 -- Note [team roles]
 -- ~~~~~~~~~~~~
@@ -52,8 +51,6 @@ import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
 --
 --     owner = admin +
 --         {DeleteTeam, Get/SetBilling}
---
--- For instance, here: https://github.com/wireapp/wire-webapp/blob/dev/app/script/team/TeamPermission.js
 --
 -- Whenever a user has one of those specific sets of permissions, they are
 -- considered a member/admin/owner and the client treats them accordingly
@@ -73,44 +70,52 @@ import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
 -- that all team admins must have this new permission, we will have to
 -- identify all existing team admins. And if it turns out that some users
 -- don't fit into one of those three team roles, we're screwed.
+--
+-- SOLUTION: we introduce 'HiddenPerm' and 'HiddenPermissions', map
+-- (non-hidden) -- permission masks to roles and roles to permissions (both
+-- hidden and non-hidden), and provide a type class 'IsPerm' that handles
+-- both hidden and non-hidden permissions uniformly.  We still cannot update
+-- 'Perms' and 'Permissions', but we can introduce new HiddenPermissions and
+-- associate them with roles.
 
 -- | Team-level role.  Analog to conversation-level 'ConversationRole'.
 data Role = RoleOwner | RoleAdmin | RoleMember | RoleExternalPartner
   deriving stock (Eq, Show, Enum, Bounded, Generic)
   deriving (Arbitrary) via (GenericUniform Role)
+  deriving (ToJSON, FromJSON, S.ToSchema) via Schema Role
 
-typeRole :: Doc.DataType
-typeRole =
-  Doc.Prim $
-    Doc.Primitive
-      { Doc.primType = Doc.PrimString,
-        Doc.defaultValue = Just defaultRole,
-        Doc.enum = Just [minBound ..],
-        Doc.minVal = Just minBound,
-        Doc.maxVal = Just maxBound
-      }
+instance ToSchema Role where
+  schema =
+    enum @Text "Role" $
+      flip foldMap [minBound .. maxBound] $ \r ->
+        element (roleName r) r
 
-instance ToJSON Role where
-  toJSON = String . cs . toLazyByteString . builder
+instance S.ToParamSchema Role where
+  toParamSchema _ =
+    mempty
+      & S.type_ ?~ S.OpenApiString
+      & S.enum_ ?~ fmap roleName [minBound .. maxBound]
 
-instance FromJSON Role where
-  parseJSON = withText "Role" $ \str ->
-    case runParser (parser @Role) (cs str) of
-      Left err -> fail err
-      Right result -> pure result
+instance FromHttpApiData Role where
+  parseQueryParam name = note ("Unknown role: " <> name) $
+    getAlt $
+      flip foldMap [minBound .. maxBound] $ \s ->
+        guard (T.pack (show s) == name) $> s
+
+roleName :: (IsString a) => Role -> a
+roleName RoleOwner = "owner"
+roleName RoleAdmin = "admin"
+roleName RoleMember = "member"
+roleName RoleExternalPartner = "partner"
 
 instance ToByteString Role where
-  builder RoleOwner = "owner"
-  builder RoleAdmin = "admin"
-  builder RoleMember = "member"
-  builder RoleExternalPartner = "partner"
+  builder = roleName
 
 instance FromByteString Role where
   parser =
-    RoleOwner <$ string "owner"
-      <|> RoleAdmin <$ string "admin"
-      <|> RoleMember <$ string "member"
-      <|> RoleExternalPartner <$ string "partner"
+    asum $
+      [minBound .. maxBound] <&> \ctor ->
+        ctor <$ string (roleName ctor)
 
 defaultRole :: Role
 defaultRole = RoleMember
@@ -124,9 +129,9 @@ instance Cql.Cql Role where
   toCql RoleExternalPartner = Cql.CqlInt 4
 
   fromCql (Cql.CqlInt i) = case i of
-    1 -> return RoleOwner
-    2 -> return RoleAdmin
-    3 -> return RoleMember
-    4 -> return RoleExternalPartner
+    1 -> pure RoleOwner
+    2 -> pure RoleAdmin
+    3 -> pure RoleMember
+    4 -> pure RoleExternalPartner
     n -> Left $ "Unexpected Role value: " ++ show n
   fromCql _ = Left "Role value: int expected"

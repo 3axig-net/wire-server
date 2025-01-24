@@ -4,11 +4,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+-- GHC was complaining about the `(Subset c c' ~ 'True)` and `AsciiChars c` constraints
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,7 +38,6 @@ module Data.Text.Ascii
     -- * Standard Characters
     Standard (..),
     Ascii,
-    validateStandard,
 
     -- * Printable Characters
     Printable (..),
@@ -56,6 +56,7 @@ module Data.Text.Ascii
     AsciiBase64Url,
     validateBase64Url,
     encodeBase64Url,
+    encodeBase64UrlUnpadded,
     decodeBase64Url,
 
     -- * Base16 (Hex) Characters
@@ -64,10 +65,6 @@ module Data.Text.Ascii
     validateBase16,
     encodeBase16,
     decodeBase16,
-
-    -- * Safe Widening
-    widen,
-    widenChar,
 
     -- * Unsafe Construction
     unsafeFromText,
@@ -78,25 +75,35 @@ where
 import Cassandra hiding (Ascii)
 import Data.Aeson (FromJSON (..), FromJSONKey, ToJSON (..), ToJSONKey)
 import Data.Attoparsec.ByteString (Parser)
-import qualified Data.ByteString.Base16 as B16
-import qualified Data.ByteString.Base64 as B64
-import qualified Data.ByteString.Base64.URL as B64Url
-import qualified Data.ByteString.Char8 as C8
+import Data.Bifunctor (first)
+import Data.ByteString.Base16 qualified as B16
+import Data.ByteString.Base64 qualified as B64
+import Data.ByteString.Base64.URL qualified as B64Url
+import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Conversion
 import Data.Hashable (Hashable)
+import Data.OpenApi qualified as S
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Text.Encoding (decodeLatin1, decodeUtf8')
 import Imports
 import Test.QuickCheck (Arbitrary (arbitrary), listOf, suchThatMap)
 import Test.QuickCheck.Instances ()
+import Web.HttpApiData
 
 -- | 'AsciiText' is text that is known to contain only the subset
 -- of ASCII characters indicated by its character set @c@.
 newtype AsciiText c = AsciiText {toText :: Text}
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (Semigroup, Monoid, NFData, ToByteString, FromJSONKey, ToJSONKey, Hashable)
+  deriving newtype
+    ( Semigroup,
+      Monoid,
+      NFData,
+      ToByteString,
+      ToJSONKey,
+      Hashable,
+      ToHttpApiData
+    )
 
 newtype AsciiChar c = AsciiChar {toChar :: Char}
   deriving stock (Eq, Ord, Show)
@@ -125,36 +132,41 @@ class AsciiChars c where
 -- | Note: Assumes UTF8 encoding. If the bytestring is known to
 -- be in a different encoding, 'validate' the text after decoding it with
 -- the correct encoding instead of using this instance.
-instance AsciiChars c => FromByteString (AsciiText c) where
+instance (AsciiChars c) => FromByteString (AsciiText c) where
   parser = parseBytes validate
+
+instance (AsciiChars c) => FromHttpApiData (AsciiText c) where
+  parseUrlPiece = first Text.pack . validate
 
 -- | Note: 'fromString' is a partial function that will 'error' when given
 -- a string containing characters not in the set @c@. It is only intended to be used
 -- via the @OverloadedStrings@ extension, i.e. for known ASCII string literals.
-instance AsciiChars c => IsString (AsciiText c) where
+instance (AsciiChars c) => IsString (AsciiText c) where
   fromString = unsafeString validate
 
-instance AsciiChars c => ToSchema (AsciiText c) where
+instance (AsciiChars c) => ToSchema (AsciiText c) where
   schema = toText .= parsedText "ASCII" validate
 
-instance AsciiChars c => ToJSON (AsciiText c) where
+instance (AsciiChars c) => ToJSON (AsciiText c) where
   toJSON = schemaToJSON
 
-instance AsciiChars c => FromJSON (AsciiText c) where
+instance (AsciiChars c) => FromJSON (AsciiText c) where
   parseJSON = schemaParseJSON
 
-instance AsciiChars c => S.ToSchema (AsciiText c) where
+instance (FromJSON (AsciiText c)) => FromJSONKey (AsciiText c)
+
+instance (Typeable c, AsciiChars c) => S.ToSchema (AsciiText c) where
   declareNamedSchema = schemaToSwagger
 
-instance AsciiChars c => Cql (AsciiText c) where
+instance (AsciiChars c) => Cql (AsciiText c) where
   ctype = Tagged AsciiColumn
   toCql = CqlAscii . toText
   fromCql = fmap (unsafeFromText . fromAscii) . fromCql
 
-fromAsciiChars :: AsciiChars c => [AsciiChar c] -> AsciiText c
+fromAsciiChars :: (AsciiChars c) => [AsciiChar c] -> AsciiText c
 fromAsciiChars = fromString . map toChar
 
-fromChar :: AsciiChars c => c -> Char -> Maybe (AsciiChar c)
+fromChar :: (AsciiChars c) => c -> Char -> Maybe (AsciiChar c)
 fromChar c char
   | contains c char = Just (AsciiChar char)
   | otherwise = Nothing
@@ -180,9 +192,6 @@ instance AsciiChars Standard where
   validate = check "Invalid ASCII characters" (contains Standard)
   contains Standard = isAscii
   {-# INLINE contains #-}
-
-validateStandard :: Text -> Either String Ascii
-validateStandard = validate
 
 --------------------------------------------------------------------------------
 -- Printable
@@ -298,6 +307,12 @@ validateBase64Url = validate
 encodeBase64Url :: ByteString -> AsciiBase64Url
 encodeBase64Url = unsafeFromByteString . B64Url.encode
 
+-- | Encode a bytestring into a text containing only url-safe
+-- base-64 characters. The resulting text is always a valid
+-- encoding in unpadded form.
+encodeBase64UrlUnpadded :: ByteString -> AsciiBase64Url
+encodeBase64UrlUnpadded = unsafeFromByteString . B64Url.encodeUnpadded
+
 -- | Decode a text containing only url-safe base-64 characters.
 -- Decoding only succeeds if the text is a valid encoding and
 -- a multiple of 4 bytes in length.
@@ -339,22 +354,7 @@ encodeBase16 = unsafeFromByteString . B16.encode
 -- | Decode a text containing only hex characters.
 -- Decoding only succeeds if the text is a multiple of 2 bytes in length.
 decodeBase16 :: AsciiBase16 -> Maybe ByteString
-decodeBase16 t = case B16.decode (toByteString' t) of
-  (b, r) | r == mempty -> Just b
-  (_, _) -> Nothing
-
---------------------------------------------------------------------------------
--- Safe Widening
-
--- | Safely widen an ASCII text into another ASCII text with a larger
--- character set.
-widen :: (Subset c c' ~ 'True) => AsciiText c -> AsciiText c'
-widen (AsciiText t) = AsciiText t
-
--- | Safely widen an ASCII character into another ASCII character with a larger
--- character set.
-widenChar :: (Subset c c' ~ 'True) => AsciiChar c -> AsciiChar c'
-widenChar (AsciiChar t) = AsciiChar t
+decodeBase16 t = either (const Nothing) Just (B16.decode (toByteString' t))
 
 --------------------------------------------------------------------------------
 -- Unsafe Construction
@@ -362,13 +362,13 @@ widenChar (AsciiChar t) = AsciiChar t
 -- | Construct 'AsciiText' from a known ASCII 'Text'.
 -- This is a total function but unsafe because the text is not checked
 -- for non-ASCII characters.
-unsafeFromText :: AsciiChars c => Text -> AsciiText c
+unsafeFromText :: (AsciiChars c) => Text -> AsciiText c
 unsafeFromText = AsciiText
 
 -- | Construct 'AsciiText' from a known ASCII 'ByteString'.
 -- This is a total function but unsafe because the bytestring is not checked
 -- for non-ASCII characters.
-unsafeFromByteString :: AsciiChars c => ByteString -> AsciiText c
+unsafeFromByteString :: (AsciiChars c) => ByteString -> AsciiText c
 unsafeFromByteString = AsciiText . decodeLatin1
 
 --------------------------------------------------------------------------------

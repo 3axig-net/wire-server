@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,17 +22,14 @@ module Data.UUID.Tagged
     V5,
     Version (..),
     version,
-    variant,
     addv4,
     unpack,
-    create,
     mk,
   )
 where
 
 import Data.Bits
-import qualified Data.UUID as D
-import qualified Data.UUID.V4 as D4
+import Data.UUID qualified as D
 import Imports
 
 -- | Versioned UUID.
@@ -58,7 +55,7 @@ data V5
 instance Version V5 where
   versionValue = 5
 
-mk :: forall v. Version v => D.UUID -> UUID v
+mk :: forall v. (Version v) => D.UUID -> UUID v
 mk u = UUID $
   case D.toWords u of
     (x0, x1, x2, x3) ->
@@ -67,10 +64,6 @@ mk u = UUID $
         (retainVersion (versionValue @v) x1)
         (retainVariant 2 x2)
         x3
-
--- | Create a fresh UUIDv4.
-create :: IO (UUID V4)
-create = UUID <$> D4.nextRandom
 
 -- | Extract the 'D.UUID' from a versioned UUID.
 unpack :: UUID v -> D.UUID
@@ -99,12 +92,6 @@ version :: D.UUID -> Word32
 version u =
   let (_, x, _, _) = D.toWords u
    in (x .&. 0x0000F000) `shiftR` 12
-
--- | Tell the variant of a 'D.UUID' value.
-variant :: D.UUID -> Word32
-variant u =
-  let (_, _, x, _) = D.toWords u
-   in (x .&. 0xC0000000) `shiftR` 30
 
 -- Internal:
 

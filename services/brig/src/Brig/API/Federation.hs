@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,122 +19,300 @@
 
 module Brig.API.Federation (federationSitemap, FederationAPI) where
 
-import qualified Brig.API.Client as API
+import Brig.API.Client qualified as API
 import Brig.API.Connection.Remote (performRemoteAction)
-import Brig.API.Error (clientError)
+import Brig.API.Error
 import Brig.API.Handler (Handler)
-import qualified Brig.API.User as API
-import Brig.App (qualifyLocal)
-import qualified Brig.Data.Connection as Data
-import qualified Brig.Data.User as Data
+import Brig.API.Internal qualified as Internal
+import Brig.API.MLS.CipherSuite
+import Brig.API.MLS.KeyPackages
+import Brig.API.MLS.Util
+import Brig.API.User qualified as API
+import Brig.App
+import Brig.Data.Connection qualified as Data
+import Brig.Data.User qualified as Data
 import Brig.IO.Intra (notify)
-import Brig.Types (PrekeyBundle, Relation (Accepted))
-import Brig.Types.User.Event
+import Brig.Options
 import Brig.User.API.Handle
+import Brig.User.Search.SearchIndex qualified as Q
+import Control.Error.Util
+import Control.Monad.Trans.Except
 import Data.Domain
-import Data.Handle (Handle (..), parseHandle)
-import Data.Id (ClientId, UserId)
+import Data.Handle (Handle (..))
+import Data.Handle qualified as Handle
+import Data.Id (ClientId, TeamId, UserId)
 import Data.List.NonEmpty (nonEmpty)
-import Data.List1
 import Data.Qualified
 import Data.Range
-import qualified Gundeck.Types.Push as Push
-import Imports
+import Data.Set (fromList, (\\))
+import Imports hiding ((\\))
 import Network.Wai.Utilities.Error ((!>>))
+import Polysemy
 import Servant (ServerT)
 import Servant.API
-import Servant.API.Generic (ToServantApi)
-import Servant.Server.Generic (genericServerT)
-import UnliftIO.Async (pooledForConcurrentlyN_)
-import Wire.API.Federation.API.Brig hiding (BrigApi (..))
-import qualified Wire.API.Federation.API.Brig as F
+import Wire.API.Connection
+import Wire.API.Federation.API.Brig hiding (searchPolicy)
 import Wire.API.Federation.API.Common
-import Wire.API.Message (UserClients)
+import Wire.API.Federation.Endpoint
+import Wire.API.Federation.Version
+import Wire.API.MLS.KeyPackage
+import Wire.API.Push.V2 qualified as Push
+import Wire.API.Routes.FederationDomainConfig as FD
 import Wire.API.Routes.Internal.Brig.Connection
+import Wire.API.Routes.Named
 import Wire.API.Team.LegalHold (LegalholdProtectee (LegalholdPlusFederationNotImplemented))
 import Wire.API.User (UserProfile)
-import Wire.API.User.Client (PubClient, UserClientPrekeyMap)
-import Wire.API.User.Client.Prekey (ClientPrekey)
-import Wire.API.User.Search
+import Wire.API.User.Client
+import Wire.API.User.Client.Prekey
+import Wire.API.User.Search hiding (searchPolicy)
+import Wire.API.UserEvent
 import Wire.API.UserMap (UserMap)
+import Wire.DeleteQueue
+import Wire.Error
+import Wire.FederationConfigStore (FederationConfigStore)
+import Wire.FederationConfigStore qualified as E
+import Wire.GalleyAPIAccess (GalleyAPIAccess)
+import Wire.NotificationSubsystem
+import Wire.Sem.Concurrency
+import Wire.UserStore
+import Wire.UserSubsystem (UserSubsystem)
+import Wire.UserSubsystem qualified as UserSubsystem
 
-type FederationAPI = "federation" :> ToServantApi F.BrigApi
+type FederationAPI = "federation" :> BrigApi
 
-federationSitemap :: ServerT FederationAPI Handler
+federationSitemap ::
+  ( Member GalleyAPIAccess r,
+    Member (Concurrency 'Unsafe) r,
+    Member FederationConfigStore r,
+    Member NotificationSubsystem r,
+    Member UserSubsystem r,
+    Member UserStore r,
+    Member DeleteQueue r
+  ) =>
+  ServerT FederationAPI (Handler r)
 federationSitemap =
-  genericServerT $
-    F.BrigApi
-      { F.getUserByHandle = getUserByHandle,
-        F.getUsersByIds = getUsersByIds,
-        F.claimPrekey = claimPrekey,
-        F.claimPrekeyBundle = claimPrekeyBundle,
-        F.claimMultiPrekeyBundle = claimMultiPrekeyBundle,
-        F.searchUsers = searchUsers,
-        F.getUserClients = getUserClients,
-        F.sendConnectionAction = sendConnectionAction,
-        F.onUserDeleted = onUserDeleted
-      }
+  Named @"api-version" (\_ _ -> pure versionInfo)
+    :<|> Named @"get-user-by-handle" (\d h -> getUserByHandle d h)
+    :<|> Named @"get-users-by-ids" (\d us -> getUsersByIds d us)
+    :<|> Named @"claim-prekey" claimPrekey
+    :<|> Named @"claim-prekey-bundle" claimPrekeyBundle
+    :<|> Named @"claim-multi-prekey-bundle" claimMultiPrekeyBundle
+    :<|> Named @"search-users" (\d sr -> searchUsers d sr)
+    :<|> Named @"get-user-clients" getUserClients
+    :<|> Named @(Versioned 'V0 "get-mls-clients") getMLSClientsV0
+    :<|> Named @"get-mls-clients" getMLSClients
+    :<|> Named @"send-connection-action" sendConnectionAction
+    :<|> Named @"claim-key-packages" fedClaimKeyPackages
+    :<|> Named @"get-not-fully-connected-backends" getFederationStatus
+    :<|> Named @"on-user-deleted-connections" onUserDeleted
 
-sendConnectionAction :: Domain -> NewConnectionRequest -> Handler NewConnectionResponse
+-- Allow remote domains to send their known remote federation instances, and respond
+-- with the subset of those we aren't connected to.
+getFederationStatus :: (Member FederationConfigStore r) => Domain -> DomainSet -> Handler r NonConnectedBackends
+getFederationStatus _ request = do
+  cfg <- ask
+  case cfg.settings.federationStrategy of
+    Just AllowAll -> pure $ NonConnectedBackends mempty
+    _ -> do
+      fedDomains <- fromList . fmap (.domain) . (.remotes) <$> lift (liftSem $ E.getFederationConfigs)
+      pure $ NonConnectedBackends (request.domains \\ fedDomains)
+
+sendConnectionAction ::
+  ( Member FederationConfigStore r,
+    Member GalleyAPIAccess r,
+    Member UserStore r,
+    Member NotificationSubsystem r
+  ) =>
+  Domain ->
+  NewConnectionRequest ->
+  Handler r NewConnectionResponse
 sendConnectionAction originDomain NewConnectionRequest {..} = do
-  active <- lift $ Data.isActivated ncrTo
-  if active
+  let rTeam = qTagUnsafe (Qualified fromTeam originDomain)
+  federates <- lift . liftSem . E.backendFederatesWith $ rTeam
+  if federates
     then do
-      self <- qualifyLocal ncrTo
-      let other = toRemoteUnsafe originDomain ncrFrom
-      mconnection <- lift $ Data.lookupConnection self (qUntagged other)
-      maction <- lift $ performRemoteAction self other mconnection ncrAction
-      pure $ NewConnectionResponseOk maction
-    else pure NewConnectionResponseUserNotActivated
+      active <- lift . liftSem $ isActivated to
+      if active
+        then do
+          self <- qualifyLocal to
+          let other = toRemoteUnsafe originDomain from
+          mconnection <- lift . wrapClient $ Data.lookupConnection self (tUntagged other)
+          maction <- lift $ performRemoteAction self other mconnection action
+          pure $ NewConnectionResponseOk maction
+        else pure NewConnectionResponseUserNotActivated
+    else pure NewConnectionResponseNotFederating
 
-getUserByHandle :: Handle -> Handler (Maybe UserProfile)
-getUserByHandle handle = lift $ do
-  maybeOwnerId <- API.lookupHandle handle
-  case maybeOwnerId of
-    Nothing ->
-      pure Nothing
-    Just ownerId ->
-      listToMaybe <$> API.lookupLocalProfiles Nothing [ownerId]
+getUserByHandle ::
+  ( Member FederationConfigStore r,
+    Member UserSubsystem r,
+    Member UserStore r
+  ) =>
+  Domain ->
+  Handle ->
+  ExceptT HttpError (AppT r) (Maybe UserProfile)
+getUserByHandle domain handle = do
+  searchPolicy <- lookupSearchPolicy domain
 
-getUsersByIds :: [UserId] -> Handler [UserProfile]
-getUsersByIds uids =
-  lift (API.lookupLocalProfiles Nothing uids)
+  let performHandleLookup =
+        case searchPolicy of
+          NoSearch -> False
+          ExactHandleSearch -> True
+          FullSearch -> True
+  if not performHandleLookup
+    then pure Nothing
+    else lift $ do
+      maybeOwnerId <- liftSem $ API.lookupHandle handle
+      case maybeOwnerId of
+        Nothing ->
+          pure Nothing
+        Just ownerId -> do
+          localOwnerId <- qualifyLocal ownerId
+          liftSem $ UserSubsystem.getLocalUserProfile localOwnerId
 
-claimPrekey :: (UserId, ClientId) -> Handler (Maybe ClientPrekey)
-claimPrekey (user, client) = do
+getUsersByIds ::
+  (Member UserSubsystem r) =>
+  Domain ->
+  [UserId] ->
+  ExceptT HttpError (AppT r) [UserProfile]
+getUsersByIds _ uids = do
+  luids <- qualifyLocal uids
+  lift $ liftSem $ UserSubsystem.getLocalUserProfiles luids
+
+claimPrekey :: (Member DeleteQueue r) => Domain -> (UserId, ClientId) -> (Handler r) (Maybe ClientPrekey)
+claimPrekey _ (user, client) = do
   API.claimLocalPrekey LegalholdPlusFederationNotImplemented user client !>> clientError
 
-claimPrekeyBundle :: UserId -> Handler PrekeyBundle
-claimPrekeyBundle user =
+claimPrekeyBundle :: Domain -> UserId -> (Handler r) PrekeyBundle
+claimPrekeyBundle _ user =
   API.claimLocalPrekeyBundle LegalholdPlusFederationNotImplemented user !>> clientError
 
-claimMultiPrekeyBundle :: UserClients -> Handler UserClientPrekeyMap
-claimMultiPrekeyBundle uc = API.claimLocalMultiPrekeyBundles LegalholdPlusFederationNotImplemented uc !>> clientError
+claimMultiPrekeyBundle ::
+  (Member (Concurrency 'Unsafe) r, Member DeleteQueue r) =>
+  Domain ->
+  UserClients ->
+  Handler r UserClientPrekeyMap
+claimMultiPrekeyBundle _ uc = API.claimLocalMultiPrekeyBundles LegalholdPlusFederationNotImplemented uc !>> clientError
 
--- | Searching for federated users on a remote backend should
--- only search by exact handle search, not in elasticsearch.
--- (This decision may change in the future)
-searchUsers :: SearchRequest -> Handler [Contact]
-searchUsers (SearchRequest searchTerm) = do
-  let maybeHandle = parseHandle searchTerm
-  maybeOwnerId <- maybe (pure Nothing) (lift . API.lookupHandle) maybeHandle
-  case maybeOwnerId of
-    Nothing -> pure []
-    Just foundUser -> lift $ contactFromProfile <$$> API.lookupLocalProfiles Nothing [foundUser]
+fedClaimKeyPackages ::
+  ( Member GalleyAPIAccess r,
+    Member UserStore r
+  ) =>
+  Domain ->
+  ClaimKeyPackageRequest ->
+  Handler r (Maybe KeyPackageBundle)
+fedClaimKeyPackages domain ckpr =
+  isMLSEnabled >>= \case
+    True -> do
+      suite <- getCipherSuite (Just ckpr.cipherSuite)
+      ltarget <- qualifyLocal ckpr.target
+      let rusr = toRemoteUnsafe domain ckpr.claimant
+      lift . fmap hush . runExceptT $
+        claimLocalKeyPackages (tUntagged rusr) Nothing suite ltarget
+    False -> pure Nothing
 
-getUserClients :: GetUserClients -> Handler (UserMap (Set PubClient))
-getUserClients (GetUserClients uids) = API.lookupLocalPubClientsBulk uids !>> clientError
+-- | Searching for federated users on a remote backend
+searchUsers ::
+  forall r.
+  ( Member FederationConfigStore r,
+    Member UserSubsystem r,
+    Member UserStore r
+  ) =>
+  Domain ->
+  SearchRequest ->
+  ExceptT HttpError (AppT r) SearchResponse
+searchUsers domain (SearchRequest _ mTeam (Just [])) = do
+  searchPolicy <- lookupSearchPolicyWithTeam domain mTeam
+  pure $ SearchResponse [] searchPolicy
+searchUsers domain (SearchRequest searchTerm mTeam mOnlyInTeams) = do
+  searchPolicy <- lookupSearchPolicyWithTeam domain mTeam
 
-onUserDeleted :: Domain -> UserDeletedConnectionsNotification -> Handler EmptyResponse
+  let searches = case searchPolicy of
+        NoSearch -> []
+        ExactHandleSearch -> [exactHandleSearch]
+        FullSearch -> [exactHandleSearch, fullSearch]
+
+  let maxResults = 15
+
+  contacts <- go [] maxResults searches
+  pure $ SearchResponse contacts searchPolicy
+  where
+    go :: [Contact] -> Int -> [Int -> ExceptT HttpError (AppT r) [Contact]] -> ExceptT HttpError (AppT r) [Contact]
+    go contacts _ [] = pure contacts
+    go contacts maxResult (search : searches) = do
+      contactsNew <- search maxResult
+      go (contacts <> contactsNew) (maxResult - length contactsNew) searches
+
+    fullSearch :: Int -> ExceptT HttpError (AppT r) [Contact]
+    fullSearch n
+      | n > 0 = lift $ searchResults <$> Q.searchIndex (Q.FederatedSearch mOnlyInTeams) searchTerm n
+      | otherwise = pure []
+
+    exactHandleSearch :: Int -> ExceptT HttpError (AppT r) [Contact]
+    exactHandleSearch n
+      | n > 0 = do
+          let maybeHandle = Handle.parseHandle searchTerm
+          maybeOwnerId <- maybe (pure Nothing) (lift . liftSem . API.lookupHandle) maybeHandle
+          case maybeOwnerId of
+            Nothing -> pure []
+            Just foundUser -> do
+              mFoundUserTeamId <- lift $ wrapClient $ Data.lookupUserTeam foundUser
+              localFoundUser <- qualifyLocal foundUser
+              if isTeamAllowed mOnlyInTeams mFoundUserTeamId
+                then lift $ liftSem $ (fmap contactFromProfile . maybeToList) <$> UserSubsystem.getLocalUserProfile localFoundUser
+                else pure []
+      | otherwise = pure []
+
+    isTeamAllowed :: Maybe [TeamId] -> Maybe TeamId -> Bool
+    isTeamAllowed Nothing _ = True
+    isTeamAllowed (Just _) Nothing = False
+    isTeamAllowed (Just teams) (Just tid) = tid `elem` teams
+
+getUserClients :: Domain -> GetUserClients -> (Handler r) (UserMap (Set PubClient))
+getUserClients _ (GetUserClients uids) = API.lookupLocalPubClientsBulk uids !>> clientError
+
+getMLSClients :: Domain -> MLSClientsRequest -> Handler r (Set ClientInfo)
+getMLSClients _domain mcr = do
+  Internal.getMLSClients mcr.userId mcr.cipherSuite
+
+getMLSClientsV0 :: Domain -> MLSClientsRequestV0 -> Handler r (Set ClientInfo)
+getMLSClientsV0 domain mcr0 = getMLSClients domain (mlsClientsRequestFromV0 mcr0)
+
+onUserDeleted ::
+  ( Member (Concurrency 'Unsafe) r,
+    Member NotificationSubsystem r
+  ) =>
+  Domain ->
+  UserDeletedConnectionsNotification ->
+  (Handler r) EmptyResponse
 onUserDeleted origDomain udcn = lift $ do
-  let deletedUser = toRemoteUnsafe origDomain (udcnUser udcn)
-      connections = udcnConnections udcn
-      event = pure . UserEvent $ UserDeleted (qUntagged deletedUser)
+  let deletedUser = toRemoteUnsafe origDomain udcn.user
+      connections = udcn.connections
+      event = UserEvent $ UserDeleted (tUntagged deletedUser)
   acceptedLocals <-
     map csv2From
       . filter (\x -> csv2Status x == Accepted)
-      <$> Data.lookupRemoteConnectionStatuses (fromRange connections) (fmap pure deletedUser)
-  pooledForConcurrentlyN_ 16 (nonEmpty acceptedLocals) $ \(List1 -> recipients) ->
-    notify event (tUnqualified deletedUser) Push.RouteDirect Nothing (pure recipients)
-  Data.deleteRemoteConnections deletedUser connections
+      <$> wrapClient (Data.lookupRemoteConnectionStatuses (fromRange connections) (fmap pure deletedUser))
+  liftSem $
+    unsafePooledForConcurrentlyN_ 16 (nonEmpty acceptedLocals) $ \recipients ->
+      notify event (tUnqualified deletedUser) Push.RouteDirect Nothing (pure recipients)
+  wrapClient $ Data.deleteRemoteConnections deletedUser connections
   pure EmptyResponse
+
+-- | If domain is not configured fall back to `NoSearch`
+lookupSearchPolicy :: (Member FederationConfigStore r) => Domain -> (Handler r) FederatedUserSearchPolicy
+lookupSearchPolicy domain = do
+  mConfig <- lift $ liftSem $ E.getFederationConfig domain
+  pure $ maybe NoSearch searchPolicy mConfig
+
+-- | If domain is not configured fall back to `NoSearch`
+-- if a team is provided, check if the team is allowed to search
+-- if no team is provided, and restriction is set by team, fall back to `NoSearch`
+lookupSearchPolicyWithTeam :: (Member FederationConfigStore r) => Domain -> Maybe TeamId -> (Handler r) FederatedUserSearchPolicy
+lookupSearchPolicyWithTeam domain mSearcherTeamId =
+  lift $
+    liftSem $
+      E.getFederationConfig domain <&> \case
+        Nothing -> NoSearch
+        Just (FederationDomainConfig _ sp FederationRestrictionAllowAll) -> sp
+        Just (FederationDomainConfig _ sp (FederationRestrictionByTeam teams)) ->
+          maybe NoSearch (\tid -> if tid `elem` teams then sp else NoSearch) $ mSearcherTeamId

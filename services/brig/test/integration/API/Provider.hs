@@ -1,10 +1,9 @@
 {-# LANGUAGE NondecreasingIndentation #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,72 +24,89 @@ module API.Provider
   )
 where
 
-import qualified API.Team.Util as Team
+import API.Team.Util qualified as Team
 import Bilge hiding (accept, head, timeout)
 import Bilge.Assert
-import qualified Brig.Code as Code
-import Brig.Types hiding (CompletePasswordReset (..), EmailUpdate (..), NewPasswordReset (..), PasswordChange (..), PasswordReset (..))
-import qualified Brig.Types.Intra as Intra
-import Brig.Types.Provider
-import qualified Brig.Types.Provider.External as Ext
-import Brig.Types.Provider.Tag
-import qualified Cassandra as DB
+import Cassandra qualified as DB
 import Control.Arrow ((&&&))
-import qualified Control.Concurrent.Async as Async
+import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.Chan
 import Control.Concurrent.Timeout (threadDelay, timeout)
 import Control.Lens ((^.))
 import Control.Monad.Catch
 import Data.Aeson
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
+import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy.Char8 as LC8
+import Data.ByteString.Lazy.Char8 qualified as LC8
+import Data.Code qualified as Code
 import Data.Domain
-import Data.Handle (Handle (Handle))
-import qualified Data.HashMap.Strict as HashMap
-import Data.Id hiding (client)
+import Data.Handle (parseHandle)
+import Data.HashMap.Strict qualified as HashMap
+import Data.Id
 import Data.Json.Util (toBase64Text)
 import Data.List1 (List1)
-import qualified Data.List1 as List1
-import Data.Misc (PlainTextPassword (..))
+import Data.List1 qualified as List1
+import Data.Map qualified as Map
+import Data.Misc
 import Data.PEM
 import Data.Qualified
 import Data.Range
-import qualified Data.Set as Set
-import qualified Data.Text as Text
-import qualified Data.Text.Ascii as Ascii
+import Data.Set qualified as Set
+import Data.Streaming.Network (bindRandomPortTCP)
+import Data.Text qualified as Text
+import Data.Text.Ascii qualified as Ascii
 import Data.Text.Encoding (encodeUtf8)
-import qualified Data.Text.Encoding as Text
+import Data.Text.Encoding qualified as Text
 import Data.Time.Clock
 import Data.Timeout (TimedOut (..), Timeout, TimeoutUnit (..), (#))
-import qualified Data.UUID as UUID
-import qualified Data.ZAuth.Token as ZAuth
-import Galley.Types
-import Galley.Types.Bot (ServiceRef, newServiceRef, serviceRefId, serviceRefProvider)
-import Galley.Types.Conversations.Roles (roleNameWireAdmin)
-import qualified Galley.Types.Teams as Team
-import Gundeck.Types.Notification
+import Data.UUID qualified as UUID
+import Data.ZAuth.Token qualified as ZAuth
 import Imports hiding (threadDelay)
 import Network.HTTP.Types.Status (status200, status201, status400)
+import Network.Socket
+import Network.Socket qualified as Socket
 import Network.Wai (Application, responseLBS, strictRequestBody)
-import qualified Network.Wai.Handler.Warp as Warp
-import qualified Network.Wai.Handler.Warp.Internal as Warp
-import qualified Network.Wai.Handler.WarpTLS as Warp
-import qualified Network.Wai.Route as Wai
-import qualified Network.Wai.Utilities.Error as Error
+import Network.Wai.Handler.Warp qualified as Warp
+import Network.Wai.Handler.Warp.Internal qualified as Warp
+import Network.Wai.Handler.WarpTLS qualified as Warp
+import Network.Wai.Route qualified as Wai
+import Network.Wai.Utilities.Error qualified as Error
 import OpenSSL.PEM (writePublicKey)
 import OpenSSL.RSA (generateRSAKey')
 import System.IO.Temp (withSystemTempFile)
 import Test.Tasty hiding (Timeout)
-import qualified Test.Tasty.Cannon as WS
+import Test.Tasty.Cannon qualified as WS
 import Test.Tasty.HUnit
 import Util
 import Web.Cookie (SetCookie (..), parseSetCookie)
+import Wire.API.Asset hiding (Asset)
+import Wire.API.Connection
+import Wire.API.Conversation
+import Wire.API.Conversation.Bot
+import Wire.API.Conversation.Role
+import Wire.API.Event.Conversation
+import Wire.API.Event.LeaveReason
+import Wire.API.Internal.Notification
+import Wire.API.Provider
+import Wire.API.Provider.Bot qualified as Ext
+import Wire.API.Provider.External qualified as Ext
+import Wire.API.Provider.Service
+import Wire.API.Provider.Service.Tag
+import Wire.API.Team.Feature (featureNameBS)
+import Wire.API.Team.Feature qualified as Public
+import Wire.API.Team.Permission
+import Wire.API.User as User hiding (EmailUpdate, PasswordChange, mkName)
+import Wire.API.User.Auth (CookieType (..))
+import Wire.API.User.Client
+import Wire.API.User.Client.Prekey
+import Wire.VerificationCode qualified as Code
+import Wire.VerificationCodeGen
+import Wire.VerificationCodeStore.Cassandra qualified as VerificationCodeStore
 
-tests :: Domain -> Config -> Manager -> DB.ClientState -> Brig -> Cannon -> Galley -> IO TestTree
-tests dom conf p db b c g = do
-  return $
+tests :: Domain -> Config -> Manager -> DB.ClientState -> Brig -> Cannon -> Galley -> Nginz -> IO TestTree
+tests dom conf p db b c g n = do
+  pure $
     testGroup
       "provider"
       [ testGroup
@@ -117,8 +133,6 @@ tests dom conf p db b c g = do
           "service whitelist"
           [ test p "search permissions" $
               testWhitelistSearchPermissions conf db b g,
-            test p "update permissions" $
-              testWhitelistUpdatePermissions conf db b g,
             test p "basic functionality" $
               testWhitelistBasic conf db b g,
             test p "search" $ testSearchWhitelist conf db b g,
@@ -127,21 +141,32 @@ tests dom conf p db b c g = do
             test p "de-whitelisted bots are removed" $
               testWhitelistKickout dom conf db b g c,
             test p "de-whitelisting works with deleted conversations" $
-              testDeWhitelistDeletedConv conf db b g c
+              testDeWhitelistDeletedConv conf db b g c,
+            test p "whitelist via nginz" $ testWhitelistNginz conf db b n
           ],
         testGroup
           "bot"
           [ test p "add-remove" $ testAddRemoveBot conf db b g c,
             test p "message" $ testMessageBot conf db b g c,
-            test p "bad fingerprint" $ testBadFingerprint conf db b g c
+            test p "bad fingerprint" $ testBadFingerprint conf db b g c,
+            test p "add bot forbidden" $ testAddBotForbidden conf db b g,
+            test p "claim user prekeys" $ testClaimUserPrekeys conf db b g,
+            test p "list user profiles" $ testListUserProfiles conf db b g,
+            test p "get user clients" $ testGetUserClients conf db b g
           ],
         testGroup
           "bot-teams"
           [ test p "add-remove" $ testAddRemoveBotTeam conf db b g c,
+            test p "add-remove-access-denied-for-non-conv-admin" $ testNonConvAdminCannotAddRemoveBot conf db b g,
             test p "team-only" $ testBotTeamOnlyConv conf db b g c,
             test p "message" $ testMessageBotTeam conf db b g c,
             test p "delete conv" $ testDeleteConvBotTeam conf db b g c,
             test p "delete team" $ testDeleteTeamBotTeam conf db b g c
+          ],
+        testGroup
+          "block bot api if 2nd factor password challenge enabled"
+          [ test p "add" $ testAddBotBlocked conf db b g,
+            test p "GET /bot/conversation (galley endpoint)" $ testGetBotConvBlocked conf db b g c
           ]
       ]
 
@@ -152,8 +177,7 @@ data Config = Config
   { privateKey :: FilePath,
     publicKey :: FilePath,
     cert :: FilePath,
-    botHost :: Text,
-    botPort :: Int
+    botHost :: Text
   }
   deriving (Show, Generic)
 
@@ -219,14 +243,14 @@ testDeleteProvider db brig = do
   getProvider brig pid !!! const 404 === statusCode
   -- The email address must be available again
   let new = defNewProvider (providerEmail prv)
-  registerProvider brig new
-    !!! const 201 === statusCode
+  response <- retryWhileN 10 ((==) 429 . statusCode) $ registerProvider brig new
+  liftIO $ statusCode response @?= 201
 
 testPasswordResetProvider :: DB.ClientState -> Brig -> Http ()
 testPasswordResetProvider db brig = do
   prv <- randomProvider db brig
   let email = providerEmail prv
-  let newPw = PlainTextPassword "newsupersecret"
+  let newPw = plainTextPassword6Unsafe "newsupersecret"
   initiatePasswordResetProvider brig (PasswordReset email) !!! const 201 === statusCode
   -- password reset with same password fails.
   resetPw defProviderPassword email !!! const 409 === statusCode
@@ -237,10 +261,10 @@ testPasswordResetProvider db brig = do
   loginProvider brig email newPw
     !!! const 200 === statusCode
   where
-    resetPw :: PlainTextPassword -> Email -> Http ResponseLBS
+    resetPw :: PlainTextPassword6 -> EmailAddress -> Http ResponseLBS
     resetPw newPw email = do
       -- Get the code directly from the DB
-      gen <- Code.mkGen (Code.ForEmail email)
+      let gen = mkVerificationCodeGen email
       Just vcode <- lookupCode db gen Code.PasswordReset
       let passwordResetData =
             CompletePasswordReset
@@ -258,15 +282,15 @@ testPasswordResetAfterEmailUpdateProvider db brig = do
   initiateEmailUpdateProvider brig pid (EmailUpdate newEmail) !!! const 202 === statusCode
   initiatePasswordResetProvider brig (PasswordReset origEmail) !!! const 201 === statusCode
   -- Get password reset code directly from the DB
-  genOrig <- Code.mkGen (Code.ForEmail origEmail)
+  let genOrig = mkVerificationCodeGen origEmail
   Just vcodePw <- lookupCode db genOrig Code.PasswordReset
   let passwordResetData =
         CompletePasswordReset
           (Code.codeKey vcodePw)
           (Code.codeValue vcodePw)
-          (PlainTextPassword "doesnotmatter")
+          (plainTextPassword6Unsafe "doesnotmatter")
   -- Activate the new email
-  genNew <- Code.mkGen (Code.ForEmail newEmail)
+  let genNew = mkVerificationCodeGen newEmail
   Just vcodeEm <- lookupCode db genNew Code.IdentityVerification
   activateProvider brig (Code.codeKey vcodeEm) (Code.codeValue vcodeEm)
     !!! const 200 === statusCode
@@ -278,8 +302,8 @@ testPasswordResetAfterEmailUpdateProvider db brig = do
   loginProvider brig origEmail defProviderPassword !!! const 403 === statusCode
   loginProvider brig newEmail defProviderPassword !!! const 200 === statusCode
   -- exercise the password change endpoint
-  let newPass = PlainTextPassword "newpass"
-  let pwChangeFail = PasswordChange (PlainTextPassword "notcorrect") newPass
+  let newPass = plainTextPassword6Unsafe "newpass"
+  let pwChangeFail = PasswordChange (plainTextPassword6Unsafe "notcorrect") newPass
   updateProviderPassword brig pid pwChangeFail !!! const 403 === statusCode
   let pwChange = PasswordChange defProviderPassword newPass
   updateProviderPassword brig pid pwChange !!! const 200 === statusCode
@@ -337,6 +361,12 @@ testAddGetService config db brig = do
     assertEqual "assets" (serviceAssets svc) (serviceProfileAssets svp)
     assertEqual "tags" (serviceTags svc) (serviceProfileTags svp)
     assertBool "enabled" (not (serviceProfileEnabled svp))
+  services :: [Service] <- responseJsonError =<< getServices brig pid <!! const 200 === statusCode
+  liftIO $ do
+    assertBool "list of all services should not be empty" (not (null services))
+  providerServices :: [ServiceProfile] <- responseJsonError =<< getProviderServices brig uid pid <!! const 200 === statusCode
+  liftIO $ do
+    assertBool "list of provider services should not be empty" (not (null providerServices))
 
 -- TODO: Check that disabled services can not be found via tag search?
 --       Need to generate a unique service name for that.
@@ -420,7 +450,7 @@ testListServices config db brig = do
         . header "Z-User" (toByteString' uid)
     )
     !!! const 400
-    === statusCode
+      === statusCode
   -- An empty prefix is not sufficient
   listServiceProfilesByPrefix brig uid (Name "") 10 !!! const 400 === statusCode
   -- nb. We use a random name prefix so tests can run concurrently
@@ -436,7 +466,7 @@ testListServices config db brig = do
   -- This is how we're going to call our /services endpoint. Every time we
   -- would call it twice (with tags and without) and assert that results
   -- match.
-  let search :: HasCallStack => Name -> Http ServiceProfilePage
+  let search :: (HasCallStack) => Name -> Http ServiceProfilePage
       search name = do
         r1 <- searchServices brig 20 uid (Just name) Nothing
         r2 <- searchServices brig 20 uid (Just name) (Just (match1 SocialTag))
@@ -448,14 +478,14 @@ testListServices config db brig = do
             ("search for " <> show name <> " without and with tags")
             (serviceProfilePageResults r1)
             (serviceProfilePageResults r2)
-        return r1
+        pure r1
   -- This function searches for a prefix and check that the results match
   -- our known list of services
-  let searchAndCheck :: HasCallStack => Name -> Http [ServiceProfile]
+  let searchAndCheck :: (HasCallStack) => Name -> Http [ServiceProfile]
       searchAndCheck name = do
         result <- search name
         assertServiceDetails ("name " <> show name) (select name services) result
-        return (serviceProfilePageResults result)
+        pure (serviceProfilePageResults result)
   -- Search for our unique prefix and check that all services are found
   search (Name uniq) >>= assertServiceDetails ("all with prefix " <> show uniq) services
   -- Search by exact name and check that only one service is found
@@ -508,36 +538,147 @@ testDeleteService config db brig galley cannon = withTestService config db brig 
       !!! const 202 === statusCode
     _ <- waitFor (5 # Second) not (isMember galley lbuid1 cid)
     _ <- waitFor (5 # Second) not (isMember galley lbuid2 cid)
-    getBotConv galley bid1 cid !!! const 404 === statusCode
-    getBotConv galley bid2 cid !!! const 404 === statusCode
-    wsAssertMemberLeave ws qcid (qUntagged lbuid1) [qUntagged lbuid1]
-    wsAssertMemberLeave ws qcid (qUntagged lbuid2) [qUntagged lbuid2]
+    void $ aFewTimes 12 (getBotConv galley bid1 cid) ((== 404) . statusCode)
+    void $ aFewTimes 12 (getBotConv galley bid2 cid) ((== 404) . statusCode)
+    wsAssertMemberLeave ws qcid (tUntagged lbuid1) [tUntagged lbuid1]
+    wsAssertMemberLeave ws qcid (tUntagged lbuid2) [tUntagged lbuid2]
   -- The service should not be available
-  getService brig pid sid
-    !!! const 404 === statusCode
-  getServiceProfile brig uid1 pid sid
-    !!! const 404 === statusCode
+  void $ aFewTimes 12 (getService brig pid sid) ((== 404) . statusCode)
+  void $ aFewTimes 12 (getServiceProfile brig uid1 pid sid) ((== 404) . statusCode)
 
 testAddRemoveBot :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
 testAddRemoveBot config db brig galley cannon = withTestService config db brig defServiceApp $ \sref buf -> do
+  (pid, sid, u1, u2, h) <- prepareUsers sref brig
+  let uid1 = userId u1
+      quid1 = userQualifiedId u1
+      localDomain = qDomain quid1
+      uid2 = userId u2
+  -- Create conversation
+  _rs <- createConv galley uid1 [uid2] <!! const 201 === statusCode
+  let Just cnv = responseJsonMaybe _rs
+  let cid = qUnqualified . cnvQualifiedId $ cnv
+  testAddRemoveBotUtil localDomain pid sid cid u1 u2 h sref buf brig galley cannon
+
+testAddBotForbidden :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testAddBotForbidden config db brig galley = withTestService config db brig defServiceApp $ \sref _ -> do
+  (pid, sid, userId -> uid1, userId -> uid2, _) <- prepareUsers sref brig
+  -- Create conversation without the service access role
+  let accessRoles = Set.fromList [TeamMemberAccessRole, NonTeamMemberAccessRole, GuestAccessRole]
+  _rs <- createConvWithAccessRoles (Just accessRoles) galley uid1 [uid2] <!! const 201 === statusCode
+  let Just cnv = responseJsonMaybe _rs
+  let cid = qUnqualified . cnvQualifiedId $ cnv
+  addBot brig uid1 pid sid cid !!! do
+    const 403 === statusCode
+    const (Just "invalid-conversation") === fmap Error.label . responseJsonMaybe
+
+testClaimUserPrekeys :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testClaimUserPrekeys config db brig galley = withTestService config db brig defServiceApp $ \sref _ -> do
+  (pid, sid, u1, _u2, _h) <- prepareUsers sref brig
+  cid <- do
+    rs <- createConv galley (User.userId u1) [] <!! const 201 === statusCode
+    let Just cnv = responseJsonMaybe rs
+    let cid = qUnqualified . cnvQualifiedId $ cnv
+    pure cid
+  addBotResponse :: AddBotResponse <- responseJsonError =<< addBot brig (User.userId u1) pid sid cid <!! const 201 === statusCode
+  let bid = addBotResponse.rsAddBotId
+  let new = defNewClient TemporaryClientType (take 1 somePrekeys) (Imports.head someLastPrekeys)
+  c :: Client <- responseJsonError =<< addClient brig (User.userId u1) new
+
+  let userClients = UserClients $ Map.fromList [((User.userId u1), Set.fromList [c.clientId])]
+  actual <- responseJsonError =<< claimUsersPrekeys brig bid userClients <!! const 200 === statusCode
+
+  let expected =
+        UserClientPrekeyMap $
+          UserClientMap $
+            Map.fromList [((User.userId u1), Map.fromList [(c.clientId, Just (Imports.head somePrekeys))])]
+
+  liftIO $ assertEqual "claim prekeys" expected actual
+
+testListUserProfiles :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testListUserProfiles config db brig galley = withTestService config db brig defServiceApp $ \sref _ -> do
+  (pid, sid, u1, u2, _h) <- prepareUsers sref brig
+  cid <- do
+    rs <- createConv galley (User.userId u1) [] <!! const 201 === statusCode
+    let Just cnv = responseJsonMaybe rs
+    let cid = qUnqualified . cnvQualifiedId $ cnv
+    pure cid
+  addBotResponse :: AddBotResponse <- responseJsonError =<< addBot brig (User.userId u1) pid sid cid <!! const 201 === statusCode
+  let bid = addBotResponse.rsAddBotId
+  resp :: [Ext.BotUserView] <- responseJsonError =<< listUserProfiles brig bid [(User.userId u1), (User.userId u2)] <!! const 200 === statusCode
+  liftIO $ Set.fromList (fmap (.botUserViewId) resp) @?= Set.fromList [(User.userId u1), (User.userId u2)]
+
+testGetUserClients :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testGetUserClients config db brig galley = withTestService config db brig defServiceApp $ \sref _ -> do
+  (pid, sid, u1, _u2, _h) <- prepareUsers sref brig
+  cid <- do
+    rs <- createConv galley (User.userId u1) [] <!! const 201 === statusCode
+    let Just cnv = responseJsonMaybe rs
+    let cid = qUnqualified . cnvQualifiedId $ cnv
+    pure cid
+  addBotResponse :: AddBotResponse <- responseJsonError =<< addBot brig (User.userId u1) pid sid cid <!! const 201 === statusCode
+  let bid = addBotResponse.rsAddBotId
+  let new = defNewClient TemporaryClientType (take 1 somePrekeys) (Imports.head someLastPrekeys)
+  expected :: Client <- responseJsonError =<< addClient brig (User.userId u1) new
+  [actual] :: [PubClient] <- responseJsonError =<< getUserClients brig bid (User.userId u1) <!! const 200 === statusCode
+  liftIO $ actual.pubClientId @?= expected.clientId
+
+testAddBotBlocked :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testAddBotBlocked config db brig galley = withTestService config db brig defServiceApp $ \sref _buf -> do
+  (userId -> u1, _, _, tid, cid, pid, sid) <- prepareBotUsersTeam brig galley sref
+  enabled2ndFaForTeamInternal galley tid
+  addBot brig u1 pid sid cid !!! do
+    const 403 === statusCode
+    const (Just "access-denied") === fmap Error.label . responseJsonMaybe
+
+testNonConvAdminCannotAddRemoveBot :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
+testNonConvAdminCannotAddRemoveBot config db brig galley = withTestService config db brig defServiceApp $ \sref _buf -> do
+  let pid = sref ^. serviceRefProvider
+  let sid = sref ^. serviceRefId
+  (ownerId, tid) <- Team.createUserWithTeam brig
+  member <- Team.createTeamMember brig galley ownerId tid fullPermissions
+  let memberId = userId member
+  whitelistService brig ownerId tid pid sid
+  cid <- Team.createTeamConvWithRole roleNameWireMember galley tid ownerId [memberId] Nothing
+  addBot brig memberId pid sid cid !!! do
+    const 403 === statusCode
+    const (Just "access-denied") === fmap Error.label . responseJsonMaybe
+  rs <- responseJsonError =<< addBot brig ownerId pid sid cid <!! const 201 === statusCode
+  let bid = rsAddBotId rs
+      buid = botUserId bid
+  getUser brig ownerId buid !!! const 200 === statusCode
+  removeBot brig memberId cid bid !!! do
+    const 403 === statusCode
+    const (Just "access-denied") === fmap Error.label . responseJsonMaybe
+  -- also check the internal galley API
+  removeBotInternal galley memberId cid bid !!! do
+    const 403 === statusCode
+    const (Just "action-denied") === fmap Error.label . responseJsonMaybe
+
+testGetBotConvBlocked :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
+testGetBotConvBlocked config db brig galley cannon = withTestService config db brig defServiceApp $ \sref buf -> do
+  (user1, userId -> u2, _, tid, cid, pid, sid) <- prepareBotUsersTeam brig galley sref
+  let Qualified u1 localDomain = userQualifiedId user1
+  bid <- addBotConv localDomain brig cannon u1 u2 cid pid sid buf
+  getBotConv galley bid cid !!! const 200 === statusCode
+  enabled2ndFaForTeamInternal galley tid
+  getBotConv galley bid cid !!! do
+    const 403 === statusCode
+    const (Just "access-denied") === fmap Error.label . responseJsonMaybe
+
+prepareUsers :: ServiceRef -> Brig -> Http (ProviderId, ServiceId, User, User, Text)
+prepareUsers sref brig = do
   let pid = sref ^. serviceRefProvider
   let sid = sref ^. serviceRefId
   -- Prepare users
   u1 <- createUser "Ernie" brig
   u2 <- createUser "Bert" brig
   let uid1 = userId u1
-      quid1 = userQualifiedId u1
-      localDomain = qDomain quid1
       uid2 = userId u2
   h <- randomHandle
   putHandle brig uid1 h !!! const 200 === statusCode
   postConnection brig uid1 uid2 !!! const 201 === statusCode
   putConnection brig uid2 uid1 Accepted !!! const 200 === statusCode
-  -- Create conversation
-  _rs <- createConv galley uid1 [uid2] <!! const 201 === statusCode
-  let Just cnv = responseJsonMaybe _rs
-  let cid = qUnqualified . cnvQualifiedId $ cnv
-  testAddRemoveBotUtil localDomain pid sid cid u1 u2 h sref buf brig galley cannon
+  pure (pid, sid, u1, u2, h)
 
 testMessageBot :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
 testMessageBot config db brig galley cannon = withTestService config db brig defServiceApp $ \sref buf -> do
@@ -547,7 +688,7 @@ testMessageBot config db brig galley cannon = withTestService config db brig def
   usr <- createUser "User" brig
   let uid = userId usr
   let quid = userQualifiedId usr
-  let new = defNewClient PermanentClientType [somePrekeys !! 0] (someLastPrekeys !! 0)
+  let new = defNewClient PermanentClientType [head somePrekeys] (head someLastPrekeys)
   _rs <- addClient brig uid new <!! const 201 === statusCode
   let Just uc = clientId <$> responseJsonMaybe _rs
   -- Create conversation
@@ -556,20 +697,20 @@ testMessageBot config db brig galley cannon = withTestService config db brig def
   testMessageBotUtil quid uc cid pid sid sref buf brig galley cannon
 
 testBadFingerprint :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
-testBadFingerprint config db brig galley _cannon = do
+testBadFingerprint config db brig galley _cannon = withFreePortAnyAddr $ \(sPort, sock) -> do
   -- Generate a random key and register a service using that key
   sref <- withSystemTempFile "wire-provider.key" $ \fp h -> do
     ServiceKeyPEM key <- randServiceKey
     liftIO $ BS.hPut h (pemWriteBS key) >> hClose h
-    registerService config {publicKey = fp} db brig
+    registerService config {publicKey = fp} sPort db brig
   -- Run the service with a different key (i.e. the key from the config)
-  runService config defServiceApp $ \_ -> do
+  runService config sPort sock defServiceApp $ \_ -> do
     let pid = sref ^. serviceRefProvider
     let sid = sref ^. serviceRefId
     -- Prepare user with client
     usr <- createUser "User" brig
     let uid = userId usr
-    let new = defNewClient PermanentClientType [somePrekeys !! 0] (someLastPrekeys !! 0)
+    let new = defNewClient PermanentClientType [head somePrekeys] (head someLastPrekeys)
     _rs <- addClient brig uid new <!! const 201 === statusCode
     -- Create conversation
     _rs <- createConv galley uid [] <!! const 201 === statusCode
@@ -594,30 +735,65 @@ testBotTeamOnlyConv config db brig galley cannon = withTestService config db bri
       qcid = Qualified cid localDomain
   -- Make the conversation team-only and check that the bot can't be added
   -- to the conversation
-  setAccessRole uid1 cid TeamAccessRole
+  setAccessRole uid1 qcid (Set.fromList [TeamMemberAccessRole])
   addBot brig uid1 pid sid cid !!! do
     const 403 === statusCode
     const (Just "invalid-conversation") === fmap Error.label . responseJsonMaybe
   -- Make the conversation allowed for guests and add the bot successfully
-  setAccessRole uid1 cid NonActivatedAccessRole
+  setAccessRole uid1 qcid (Set.fromList [TeamMemberAccessRole, NonTeamMemberAccessRole, GuestAccessRole, ServiceAccessRole])
   bid <- addBotConv localDomain brig cannon uid1 uid2 cid pid sid buf
   let lbuid = qualifyAs luid1 . botUserId $ bid
   -- Make the conversation team-only again and check that the bot has been removed
   WS.bracketR cannon uid1 $ \ws -> do
-    setAccessRole uid1 cid TeamAccessRole
+    setAccessRole uid1 qcid (Set.fromList [TeamMemberAccessRole])
     _ <- waitFor (5 # Second) not (isMember galley lbuid cid)
     getBotConv galley bid cid
       !!! const 404 === statusCode
-    svcAssertConvAccessUpdate
-      buf
-      (qUntagged luid1)
-      (ConversationAccessData (Set.singleton InviteAccess) TeamAccessRole)
-      qcid
-    svcAssertMemberLeave buf (qUntagged lbuid) [qUntagged lbuid] qcid
-    wsAssertMemberLeave ws qcid (qUntagged lbuid) [qUntagged lbuid]
+    -- Two events are sent concurrently:
+    -- - ConvAccessUpdate
+    -- - MemberLeave (for the bot)
+    --
+    -- We cannot guarantee the order, so we have to check for both
+    let expectedConvAccessData = ConversationAccessData (Set.singleton InviteAccess) (Set.fromList [TeamMemberAccessRole])
+        expectedMemberLeave = [tUntagged lbuid]
+        assertAndRetrieveEvent = do
+          event <-
+            timeout (5 # Second) (readChan buf)
+              >>= assertJust
+              >>= assertBotMessage
+          assertAccessUpdateOrMemberLeave (tUntagged luid1) expectedConvAccessData (tUntagged lbuid) expectedMemberLeave qcid event
+          pure event
+    event1 <- assertAndRetrieveEvent
+    event2 <- assertAndRetrieveEvent
+    -- Ensure there is exactly one of each types of event
+    liftIO $
+      assertEqual
+        "there should be 1 ConvAccessUpdate and 1 MemberLeave event"
+        (Set.fromList [ConvAccessUpdate, MemberLeave])
+        (Set.fromList (map evtType [event1, event2]))
+    wsAssertMemberLeave ws qcid (tUntagged lbuid) [tUntagged lbuid]
   where
-    setAccessRole uid cid role =
-      updateConversationAccess galley uid cid [InviteAccess] role
+    assertBotMessage :: (HasCallStack, MonadIO m) => TestBotEvent -> m Event
+    assertBotMessage =
+      liftIO . \case
+        TestBotMessage e -> pure e
+        evt -> assertFailure $ "expected TestBotMessage, got: " <> show evt
+    assertAccessUpdateOrMemberLeave :: (HasCallStack, MonadIO m) => Qualified UserId -> ConversationAccessData -> Qualified UserId -> [Qualified UserId] -> Qualified ConvId -> Event -> m ()
+    assertAccessUpdateOrMemberLeave updFrom upd leaveFrom gone cnv e = liftIO $
+      case evtType e of
+        ConvAccessUpdate -> do
+          assertEqual "conv" cnv (evtConv e)
+          assertEqual "user" updFrom (evtFrom e)
+          assertEqual "event data" (EdConvAccessUpdate upd) (evtData e)
+        MemberLeave -> do
+          let msg = QualifiedUserIdList gone
+          assertEqual "conv" cnv (evtConv e)
+          assertEqual "user" leaveFrom (evtFrom e)
+          assertEqual "event data" (EdMembersLeave EdReasonRemoved msg) (evtData e)
+        _ ->
+          assertFailure $ "expected event of type: ConvAccessUpdate or MemberLeave, got: " <> show e
+    setAccessRole uid qcid role =
+      updateConversationAccess galley uid qcid [InviteAccess] role
         !!! const 200 === statusCode
 
 testMessageBotTeam :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
@@ -626,7 +802,7 @@ testMessageBotTeam config db brig galley cannon = withTestService config db brig
   let sid = sref ^. serviceRefId
   -- Prepare user with client
   (uid, tid) <- Team.createUserWithTeam brig
-  let new = defNewClient PermanentClientType [somePrekeys !! 0] (someLastPrekeys !! 0)
+  let new = defNewClient PermanentClientType [head somePrekeys] (head someLastPrekeys)
   _rs <- addClient brig uid new <!! const 201 === statusCode
   let Just uc = clientId <$> responseJsonMaybe _rs
   -- Whitelist the bot
@@ -656,7 +832,7 @@ testDeleteConvBotTeam config db brig galley cannon = withTestService config db b
     svcAssertConvDelete buf quid2 qcid
   -- Check that the conversation no longer exists
   forM_ [uid1, uid2] $ \uid ->
-    getConversation galley uid cid !!! const 404 === statusCode
+    getConversationQualified galley uid qcid !!! const 404 === statusCode
   getBotConv galley bid cid !!! const 404 === statusCode
 
 testDeleteTeamBotTeam :: Config -> DB.ClientState -> Brig -> Galley -> Cannon -> Http ()
@@ -678,9 +854,9 @@ testDeleteTeamBotTeam config db brig galley cannon = withTestService config db b
   svcAssertEventuallyConvDelete buf quid1 qcid
   -- Wait until all users have been deleted (can take a while)
   forM_ [uid1, uid2] $ \uid -> do
-    void $ retryWhileN 20 (/= Intra.Deleted) (getStatus brig uid)
-    chkStatus brig uid Intra.Deleted
-    getConversation galley uid cid !!! const 404 === statusCode
+    void $ retryWhileN 20 (/= User.Deleted) (getStatus brig uid)
+    chkStatus brig uid User.Deleted
+    aFewTimes 11 (getConversationQualified galley uid qcid) ((== 404) . statusCode)
   -- Check the bot cannot see the conversation either
   getBotConv galley bid cid !!! const 404 === statusCode
 
@@ -697,41 +873,15 @@ testWhitelistSearchPermissions _config _db brig galley = do
     const 403 === statusCode
     const (Just "insufficient-permissions") === fmap Error.label . responseJsonMaybe
   -- Check that team members with no permissions can search
-  member <- userId <$> Team.createTeamMember brig galley owner tid Team.noPermissions
+  member <- userId <$> Team.createTeamMember brig galley owner tid noPermissions
   listTeamServiceProfilesByPrefix brig member tid Nothing True 20
     !!! const 200 === statusCode
-
-testWhitelistUpdatePermissions :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
-testWhitelistUpdatePermissions config db brig galley = do
-  -- Create a team
-  (owner, tid) <- Team.createUserWithTeam brig
-  -- Create a team admin
-  let Just adminPermissions = Team.newPermissions Team.serviceWhitelistPermissions mempty
-  admin <- userId <$> Team.createTeamMember brig galley owner tid adminPermissions
-  -- Create a service
-  pid <- providerId <$> randomProvider db brig
-  new <- defNewService config
-  sid <- serviceId <$> addGetService brig pid new
-  enableService brig pid sid
-  -- Check that a random user can't add it to the whitelist
-  _uid <- userId <$> randomUser brig
-  updateServiceWhitelist brig _uid tid (UpdateServiceWhitelist pid sid True) !!! do
-    const 403 === statusCode
-    const (Just "insufficient-permissions") === fmap Error.label . responseJsonMaybe
-  -- Check that a member who's not a team admin also can't add it to the whitelist
-  _uid <- userId <$> Team.createTeamMember brig galley owner tid Team.noPermissions
-  updateServiceWhitelist brig _uid tid (UpdateServiceWhitelist pid sid True) !!! do
-    const 403 === statusCode
-    const (Just "insufficient-permissions") === fmap Error.label . responseJsonMaybe
-  -- Check that a team admin can add and remove from the whitelist
-  whitelistService brig admin tid pid sid
-  dewhitelistService brig admin tid pid sid
 
 testSearchWhitelist :: Config -> DB.ClientState -> Brig -> Galley -> Http ()
 testSearchWhitelist config db brig galley = do
   -- Create a team, a team owner, and a team member with no permissions
   (owner, tid) <- Team.createUserWithTeam brig
-  uid <- userId <$> Team.createTeamMember brig galley owner tid Team.noPermissions
+  uid <- userId <$> Team.createTeamMember brig galley owner tid noPermissions
   -- Create services and add them all to the whitelist
   pid <- providerId <$> randomProvider db brig
   uniq <- UUID.toText . toUUID <$> randomId
@@ -748,7 +898,7 @@ testSearchWhitelist config db brig galley = do
   -- endpoint. Every time we call it twice (with filter_disabled=false and
   -- without) and assert that results match – which should always be the
   -- case since in this test we won't have any disabled services.
-  let search :: HasCallStack => Maybe Text -> Http ServiceProfilePage
+  let search :: (HasCallStack) => Maybe Text -> Http ServiceProfilePage
       search mbName = do
         r1 <- searchServiceWhitelist brig 20 uid tid mbName
         r2 <- searchServiceWhitelistAll brig 20 uid tid mbName
@@ -757,7 +907,7 @@ testSearchWhitelist config db brig galley = do
             ("search for " <> show mbName <> " with and without filtering")
             r1
             r2
-        return r1
+        pure r1
   -- Check that search finds all services that we created
   search (Just uniq)
     >>= assertServiceDetails ("all with prefix " <> show uniq) services
@@ -775,11 +925,11 @@ testSearchWhitelist config db brig galley = do
     liftIO $ assertEqual "has more" True (serviceProfilePageHasMore page)
   -- This function searches for a prefix and check that the results match
   -- our known list of services
-  let searchAndCheck :: HasCallStack => Name -> Http [ServiceProfile]
+  let searchAndCheck :: (HasCallStack) => Name -> Http [ServiceProfile]
       searchAndCheck (Name name) = do
         result <- search (Just name)
         assertServiceDetails ("name " <> show name) (select name services) result
-        return (serviceProfilePageResults result)
+        pure (serviceProfilePageResults result)
   -- Search by exact name and check that only one service is found
   forM_ (take 3 services) $ \(sid, Name name) ->
     search (Just name) >>= assertServiceDetails ("name " <> show name) [(sid, Name name)]
@@ -880,15 +1030,15 @@ testWhitelistKickout localDomain config db brig galley cannon = do
     let bid = rsAddBotId bot
         lbuid = qualifyAs lowner . botUserId $ bid
     _ <- svcAssertBotCreated buf bid cid
-    svcAssertMemberJoin buf qowner [qUntagged lbuid] qcid
+    svcAssertMemberJoin buf qowner [tUntagged lbuid] qcid
     -- De-whitelist the service; both bots should be kicked out
     WS.bracketR cannon owner $ \ws -> do
       dewhitelistService brig owner tid pid sid
       _ <- waitFor (2 # Second) not (isMember galley lbuid cid)
       getBotConv galley bid cid
         !!! const 404 === statusCode
-      wsAssertMemberLeave ws qcid qowner [qUntagged lbuid]
-      svcAssertMemberLeave buf qowner [qUntagged lbuid] qcid
+      wsAssertMemberLeave ws qcid qowner [tUntagged lbuid]
+      svcAssertMemberLeave buf qowner [tUntagged lbuid] qcid
     -- The bot should not get any further events
     liftIO $
       timeout (2 # Second) (readChan buf) >>= \case
@@ -931,7 +1081,7 @@ registerProvider brig new =
 
 getProviderActivationCodeInternal ::
   Brig ->
-  Email ->
+  EmailAddress ->
   Http ResponseLBS
 getProviderActivationCodeInternal brig email =
   get $
@@ -953,8 +1103,8 @@ activateProvider brig key val =
 
 loginProvider ::
   Brig ->
-  Email ->
-  PlainTextPassword ->
+  EmailAddress ->
+  PlainTextPassword6 ->
   Http ResponseLBS
 loginProvider brig email pw =
   post $
@@ -1030,7 +1180,7 @@ completePasswordResetProvider brig e =
 deleteProvider ::
   Brig ->
   ProviderId ->
-  PlainTextPassword ->
+  PlainTextPassword6 ->
   Http ResponseLBS
 deleteProvider brig pid pw =
   delete $
@@ -1089,6 +1239,22 @@ getService brig pid sid =
       . paths ["provider", "services", toByteString' sid]
       . header "Z-Type" "provider"
       . header "Z-Provider" (toByteString' pid)
+
+getServices :: Brig -> ProviderId -> Http ResponseLBS
+getServices brig pid =
+  get $
+    brig
+      . path "/provider/services"
+      . header "Z-Type" "provider"
+      . header "Z-Provider" (toByteString' pid)
+
+getProviderServices :: Brig -> UserId -> ProviderId -> Http ResponseLBS
+getProviderServices brig uid pid =
+  get $
+    brig
+      . paths ["providers", toByteString' pid, "services"]
+      . header "Z-Type" "access"
+      . header "Z-User" (toByteString' uid)
 
 getServiceProfile ::
   Brig ->
@@ -1153,7 +1319,7 @@ deleteService ::
   Brig ->
   ProviderId ->
   ServiceId ->
-  PlainTextPassword ->
+  PlainTextPassword6 ->
   Http ResponseLBS
 deleteService brig pid sid pw =
   delete $
@@ -1231,7 +1397,7 @@ addBot ::
 addBot brig uid pid sid cid =
   post $
     brig
-      . paths ["conversations", toByteString' cid, "bots"]
+      . paths ["bot", "conversations", toByteString' cid]
       . header "Z-Type" "access"
       . header "Z-User" (toByteString' uid)
       . header "Z-Connection" "conn"
@@ -1247,17 +1413,50 @@ removeBot ::
 removeBot brig uid cid bid =
   delete $
     brig
-      . paths ["conversations", toByteString' cid, "bots", toByteString' bid]
+      . paths ["bot", "conversations", toByteString' cid, toByteString' bid]
       . header "Z-Type" "access"
       . header "Z-User" (toByteString' uid)
       . header "Z-Connection" "conn"
+
+data RemoveBot = RemoveBot
+  { _rmBotConv :: !ConvId,
+    _rmBotId :: !BotId
+  }
+
+instance ToJSON RemoveBot where
+  toJSON a =
+    object
+      [ "conversation" .= _rmBotConv a,
+        "bot" .= _rmBotId a
+      ]
+
+removeBotInternal ::
+  Galley ->
+  UserId ->
+  ConvId ->
+  BotId ->
+  Http ResponseLBS
+removeBotInternal galley uid cid bid =
+  delete $
+    galley
+      . paths ["i", "bots"]
+      . header "Z-User" (toByteString' uid)
+      . Bilge.json (RemoveBot cid bid)
 
 createConv ::
   Galley ->
   UserId ->
   [UserId] ->
   Http ResponseLBS
-createConv g u us =
+createConv = createConvWithAccessRoles Nothing
+
+createConvWithAccessRoles ::
+  Maybe (Set AccessRole) ->
+  Galley ->
+  UserId ->
+  [UserId] ->
+  Http ResponseLBS
+createConvWithAccessRoles ars g u us =
   post $
     g
       . path "/conversations"
@@ -1265,9 +1464,9 @@ createConv g u us =
       . header "Z-Type" "access"
       . header "Z-Connection" "conn"
       . contentJson
-      . body (RequestBodyLBS (encode (NewConvUnmanaged conv)))
+      . body (RequestBodyLBS (encode conv))
   where
-    conv = NewConv us [] Nothing Set.empty Nothing Nothing Nothing Nothing roleNameWireAdmin
+    conv = NewConv us [] Nothing Set.empty ars Nothing Nothing Nothing roleNameWireAdmin BaseProtocolProteusTag
 
 postMessage ::
   Galley ->
@@ -1320,14 +1519,19 @@ getBotConv galley bid cid =
 updateConversationAccess ::
   Galley ->
   UserId ->
-  ConvId ->
+  Qualified ConvId ->
   [Access] ->
-  AccessRole ->
+  Set AccessRole ->
   Http ResponseLBS
-updateConversationAccess galley uid cid access role =
+updateConversationAccess galley uid qcid access role =
   put $
     galley
-      . paths ["conversations", toByteString' cid, "access"]
+      . paths
+        [ "conversations",
+          toByteString' (qDomain qcid),
+          toByteString' (qUnqualified qcid),
+          "access"
+        ]
       . header "Z-Type" "access"
       . header "Z-User" (toByteString' uid)
       . header "Z-Connection" "conn"
@@ -1336,11 +1540,89 @@ updateConversationAccess galley uid cid access role =
   where
     upd = ConversationAccessData (Set.fromList access) role
 
+enabled2ndFaForTeamInternal :: Galley -> TeamId -> Http ()
+enabled2ndFaForTeamInternal galley tid = do
+  put
+    ( galley
+        . paths ["i", "teams", toByteString' tid, "features", featureNameBS @Public.SndFactorPasswordChallengeConfig, toByteString' Public.LockStatusUnlocked]
+        . contentJson
+    )
+    !!! const 200 === statusCode
+  put
+    ( galley
+        . paths ["i", "teams", toByteString' tid, "features", featureNameBS @Public.SndFactorPasswordChallengeConfig]
+        . contentJson
+        . Bilge.json (Public.Feature Public.FeatureStatusEnabled Public.SndFactorPasswordChallengeConfig)
+    )
+    !!! const 200 === statusCode
+
+getBotSelf :: Brig -> BotId -> Http ResponseLBS
+getBotSelf brig bid =
+  get $
+    brig
+      . path "/bot/self"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+
+getBotClient :: Brig -> BotId -> Http ResponseLBS
+getBotClient brig bid =
+  get $
+    brig
+      . path "/bot/client"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+      . contentJson
+
+getBotPreKeyIds :: Brig -> BotId -> Http ResponseLBS
+getBotPreKeyIds brig bid =
+  get $
+    brig
+      . path "/bot/client/prekeys"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+
+updateBotPrekeys :: Brig -> BotId -> [Prekey] -> Http ResponseLBS
+updateBotPrekeys brig bid prekeys =
+  post $
+    brig
+      . path "/bot/client/prekeys"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+      . contentJson
+      . body (RequestBodyLBS (encode (UpdateBotPrekeys prekeys)))
+
+claimUsersPrekeys :: Brig -> BotId -> UserClients -> Http ResponseLBS
+claimUsersPrekeys brig bid ucs =
+  post $
+    brig
+      . path "/bot/users/prekeys"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+      . contentJson
+      . body (RequestBodyLBS (encode ucs))
+
+listUserProfiles :: Brig -> BotId -> [UserId] -> Http ResponseLBS
+listUserProfiles brig bid uids =
+  get $
+    brig
+      . path "/bot/users"
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+      . queryItem "ids" (C8.intercalate "," $ toByteString' <$> uids)
+
+getUserClients :: Brig -> BotId -> UserId -> Http ResponseLBS
+getUserClients brig bid uid =
+  get $
+    brig
+      . paths ["bot", "users", toByteString' uid, "clients"]
+      . header "Z-Type" "bot"
+      . header "Z-Bot" (toByteString' bid)
+
 --------------------------------------------------------------------------------
 -- DB Operations
 
-lookupCode :: MonadIO m => DB.ClientState -> Code.Gen -> Code.Scope -> m (Maybe Code.Code)
-lookupCode db gen = liftIO . DB.runClient db . Code.lookup (Code.genKey gen)
+lookupCode :: (MonadIO m) => DB.ClientState -> VerificationCodeGen -> Code.Scope -> m (Maybe Code.Code)
+lookupCode db gen = liftIO . DB.runClient db . VerificationCodeStore.lookupCodeImpl gen.genKey
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -1368,16 +1650,16 @@ testRegisterProvider db' brig = do
   case db' of
     Just db -> do
       -- Activate email
-      gen <- Code.mkGen (Code.ForEmail email)
+      let gen = mkVerificationCodeGen email
       Just vcode <- lookupCode db gen Code.IdentityVerification
       activateProvider brig (Code.codeKey vcode) (Code.codeValue vcode)
         !!! const 200 === statusCode
     Nothing -> do
-      _rs <-
+      rs <-
         getProviderActivationCodeInternal brig email
           <!! const 200 === statusCode
-      let Just pair = responseJsonMaybe _rs :: Maybe Code.KeyValuePair
-      activateProvider brig (Code.kcKey pair) (Code.kcCode pair)
+      let Just pair = responseJsonMaybe rs :: Maybe Code.KeyValuePair
+      activateProvider brig (Code.key pair) (Code.code pair)
         !!! const 200 === statusCode
   -- Login succeeds after activation (due to auto-approval)
   loginProvider brig email defProviderPassword
@@ -1403,10 +1685,10 @@ testRegisterProvider db' brig = do
     assertEqual "description" defProviderDescr (providerDescr p)
     assertEqual "profile" (ProviderProfile p) pp
 
-randomProvider :: HasCallStack => DB.ClientState -> Brig -> Http Provider
+randomProvider :: (HasCallStack) => DB.ClientState -> Brig -> Http Provider
 randomProvider db brig = do
   email <- randomEmail
-  gen <- Code.mkGen (Code.ForEmail email)
+  let gen = mkVerificationCodeGen email
   -- Register
   let new = defNewProvider email
   _rs <-
@@ -1420,18 +1702,18 @@ randomProvider db brig = do
   -- Fetch
   _rs <- getProvider brig pid <!! const 200 === statusCode
   let Just prv = responseJsonMaybe _rs
-  return prv
+  pure prv
 
-addGetService :: HasCallStack => Brig -> ProviderId -> NewService -> Http Service
+addGetService :: (HasCallStack) => Brig -> ProviderId -> NewService -> Http Service
 addGetService brig pid new = do
   _rs <- addService brig pid new <!! const 201 === statusCode
   let Just srs = responseJsonMaybe _rs
   let sid = rsNewServiceId srs
   _rs <- getService brig pid sid <!! const 200 === statusCode
   let Just svc = responseJsonMaybe _rs
-  return svc
+  pure svc
 
-enableService :: HasCallStack => Brig -> ProviderId -> ServiceId -> Http ()
+enableService :: (HasCallStack) => Brig -> ProviderId -> ServiceId -> Http ()
 enableService brig pid sid = do
   let upd =
         (mkUpdateServiceConn defProviderPassword)
@@ -1440,7 +1722,7 @@ enableService brig pid sid = do
   updateServiceConn brig pid sid upd
     !!! const 200 === statusCode
 
-disableService :: HasCallStack => Brig -> ProviderId -> ServiceId -> Http ()
+disableService :: (HasCallStack) => Brig -> ProviderId -> ServiceId -> Http ()
 disableService brig pid sid = do
   let upd =
         (mkUpdateServiceConn defProviderPassword)
@@ -1449,8 +1731,38 @@ disableService brig pid sid = do
   updateServiceConn brig pid sid upd
     !!! const 200 === statusCode
 
+whitelistServiceNginz ::
+  (HasCallStack) =>
+  Nginz ->
+  -- | Team owner
+  User ->
+  -- | Team
+  TeamId ->
+  ProviderId ->
+  ServiceId ->
+  Http ()
+whitelistServiceNginz nginz user tid pid sid =
+  updateServiceWhitelistNginz nginz user tid (UpdateServiceWhitelist pid sid True) !!! const 200 === statusCode
+
+updateServiceWhitelistNginz ::
+  Nginz ->
+  User ->
+  TeamId ->
+  UpdateServiceWhitelist ->
+  Http ResponseLBS
+updateServiceWhitelistNginz nginz user tid upd = do
+  let Just email = userEmail user
+  rs <- login nginz (defEmailLogin email) PersistentCookie <!! const 200 === statusCode
+  let t = decodeToken rs
+  post $
+    nginz
+      . paths ["teams", toByteString' tid, "services", "whitelist"]
+      . header "Authorization" ("Bearer " <> toByteString' t)
+      . contentJson
+      . body (RequestBodyLBS (encode upd))
+
 whitelistService ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   -- | Team owner
   UserId ->
@@ -1466,7 +1778,7 @@ whitelistService brig uid tid pid sid =
     const 200 === statusCode
 
 dewhitelistService ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   -- | Team owner
   UserId ->
@@ -1481,10 +1793,10 @@ dewhitelistService brig uid tid pid sid =
     -- TODO: allow both 200 and 204 here and use it in 'testWhitelistEvents'
     const 200 === statusCode
 
-defNewService :: MonadIO m => Config -> m NewService
+defNewService :: (MonadIO m) => Config -> m NewService
 defNewService config = liftIO $ do
   key <- readServiceKey (publicKey config)
-  return
+  pure
     NewService
       { newServiceName = defServiceName,
         newServiceSummary = unsafeRange defProviderSummary,
@@ -1496,7 +1808,7 @@ defNewService config = liftIO $ do
         newServiceTags = defServiceTags
       }
 
-defNewProvider :: Email -> NewProvider
+defNewProvider :: EmailAddress -> NewProvider
 defNewProvider email =
   NewProvider
     { newProviderEmail = email,
@@ -1518,8 +1830,8 @@ defProviderSummary = "A short summary of the integration test provider"
 defProviderDescr :: Text
 defProviderDescr = "A long description of an integration test provider"
 
-defProviderPassword :: PlainTextPassword
-defProviderPassword = PlainTextPassword "password"
+defProviderPassword :: PlainTextPassword6
+defProviderPassword = plainTextPassword6Unsafe "password"
 
 defServiceName :: Name
 defServiceName = Name "Test Service"
@@ -1534,31 +1846,41 @@ defServiceTags :: Range 1 3 (Set ServiceTag)
 defServiceTags = unsafeRange (Set.singleton SocialTag)
 
 defServiceAssets :: [Asset]
-defServiceAssets = [ImageAsset "key" (Just AssetComplete)]
+defServiceAssets =
+  [ ImageAsset
+      (AssetKeyV3 (Id (fromJust (UUID.fromString "5cd81cc4-c643-4e9c-849c-c596a88c27fd"))) AssetExpiring)
+      (Just AssetComplete)
+  ]
 
 -- TODO: defServiceToken :: ServiceToken
 
-readServiceKey :: MonadIO m => FilePath -> m ServiceKeyPEM
+readServiceKey :: (MonadIO m) => FilePath -> m ServiceKeyPEM
 readServiceKey fp = liftIO $ do
   bs <- BS.readFile fp
   let Right [k] = pemParseBS bs
-  return (ServiceKeyPEM k)
+  pure (ServiceKeyPEM k)
 
-randServiceKey :: MonadIO m => m ServiceKeyPEM
+randServiceKey :: (MonadIO m) => m ServiceKeyPEM
 randServiceKey = liftIO $ do
   kp <- generateRSAKey' 4096 65537
   Right [k] <- pemParseBS . C8.pack <$> writePublicKey kp
-  return (ServiceKeyPEM k)
+  pure (ServiceKeyPEM k)
 
-waitFor :: MonadIO m => Timeout -> (a -> Bool) -> m a -> m a
+waitFor :: (MonadIO m) => Timeout -> (a -> Bool) -> m a -> m a
 waitFor t f ma = do
   a <- ma
   if
-      | f a -> return a
-      | t <= 0 -> liftIO $ throwM TimedOut
-      | otherwise -> do
+    | f a -> pure a
+    | t <= 0 -> liftIO $ throwM TimedOut
+    | otherwise -> do
         liftIO $ threadDelay (1 # Second)
         waitFor (t - 1 # Second) f ma
+
+withFreePortAnyAddr :: (MonadMask m, MonadIO m) => ((Warp.Port, Socket) -> m a) -> m a
+withFreePortAnyAddr = bracket openFreePortAnyAddr (liftIO . Socket.close . snd)
+
+openFreePortAnyAddr :: (MonadIO m) => m (Warp.Port, Socket)
+openFreePortAnyAddr = liftIO $ bindRandomPortTCP "*"
 
 -- | Run a test case with an external service application.
 withTestService ::
@@ -1568,36 +1890,39 @@ withTestService ::
   (Chan e -> Application) ->
   (ServiceRef -> Chan e -> Http a) ->
   Http a
-withTestService config db brig mkApp go = do
-  sref <- registerService config db brig
-  runService config mkApp (go sref)
+withTestService config db brig mkApp go = withFreePortAnyAddr $ \(sPort, sock) -> do
+  sref <- registerService config sPort db brig
+  runService config sPort sock mkApp (go sref)
 
-registerService :: Config -> DB.ClientState -> Brig -> Http ServiceRef
-registerService config db brig = do
+registerService :: Config -> Warp.Port -> DB.ClientState -> Brig -> Http ServiceRef
+registerService config sPort db brig = do
   prv <- randomProvider db brig
   new <- defNewService config
   let Just url =
         fromByteString $
-          encodeUtf8 (botHost config) <> ":"
-            <> C8.pack (show (botPort config))
+          encodeUtf8 (botHost config)
+            <> ":"
+            <> C8.pack (show sPort)
   svc <- addGetService brig (providerId prv) (new {newServiceUrl = url})
   let pid = providerId prv
   let sid = serviceId svc
   enableService brig pid sid
-  return (newServiceRef sid pid)
+  pure (newServiceRef sid pid)
 
 runService ::
   Config ->
+  Warp.Port ->
+  Socket ->
   (Chan e -> Application) ->
   (Chan e -> Http a) ->
   Http a
-runService config mkApp go = do
+runService config sPort sock mkApp go = do
   let tlss = Warp.tlsSettings (cert config) (privateKey config)
-  let defs = Warp.defaultSettings {Warp.settingsPort = botPort config}
+  let defs = Warp.defaultSettings {Warp.settingsPort = sPort}
   buf <- liftIO newChan
   srv <-
     liftIO . Async.async $
-      Warp.runTLS tlss defs $
+      Warp.runTLSSocket tlss defs sock $
         mkApp buf
   go buf `finally` liftIO (Async.cancel srv)
 
@@ -1616,6 +1941,7 @@ data TestBot = TestBot
 data TestBotEvent
   = TestBotCreated TestBot
   | TestBotMessage Event
+  deriving (Show, Eq)
 
 -- TODO: Test that the authorization header is properly set
 defServiceApp :: Chan TestBotEvent -> Application
@@ -1631,8 +1957,8 @@ defServiceApp buf =
       case eitherDecode js of
         Left e -> k $ responseLBS status400 [] (LC8.pack e)
         Right new -> do
-          let pks = [somePrekeys !! 0]
-          let lpk = someLastPrekeys !! 0
+          let pks = [head somePrekeys]
+          let lpk = head someLastPrekeys
           let rsp =
                 Ext.NewBotResponse
                   { Ext.rsNewBotPrekeys = pks,
@@ -1662,7 +1988,7 @@ defServiceApp buf =
           writeChan buf (TestBotMessage ev)
           k $ responseLBS status200 [] "success"
 
-wsAssertMemberJoin :: MonadIO m => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> [Qualified UserId] -> m ()
+wsAssertMemberJoin :: (HasCallStack, MonadIO m) => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> [Qualified UserId] -> m ()
 wsAssertMemberJoin ws conv usr new = void $
   liftIO $
     WS.assertMatch (5 # Second) ws $
@@ -1674,7 +2000,7 @@ wsAssertMemberJoin ws conv usr new = void $
         evtFrom e @?= usr
         evtData e @?= EdMembersJoin (SimpleMembers (fmap (\u -> SimpleMember u roleNameWireAdmin) new))
 
-wsAssertMemberLeave :: MonadIO m => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> [Qualified UserId] -> m ()
+wsAssertMemberLeave :: (HasCallStack, MonadIO m) => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> [Qualified UserId] -> m ()
 wsAssertMemberLeave ws conv usr old = void $
   liftIO $
     WS.assertMatch (5 # Second) ws $
@@ -1684,9 +2010,9 @@ wsAssertMemberLeave ws conv usr old = void $
         evtConv e @?= conv
         evtType e @?= MemberLeave
         evtFrom e @?= usr
-        evtData e @?= EdMembersLeave (QualifiedUserIdList old)
+        evtData e @?= EdMembersLeave EdReasonRemoved (QualifiedUserIdList old)
 
-wsAssertConvDelete :: MonadIO m => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> m ()
+wsAssertConvDelete :: (HasCallStack, MonadIO m) => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> m ()
 wsAssertConvDelete ws conv from = void $
   liftIO $
     WS.assertMatch (5 # Second) ws $
@@ -1698,7 +2024,7 @@ wsAssertConvDelete ws conv from = void $
         evtFrom e @?= from
         evtData e @?= EdConvDelete
 
-wsAssertMessage :: MonadIO m => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> ClientId -> ClientId -> Text -> m ()
+wsAssertMessage :: (HasCallStack, MonadIO m) => WS.WebSocket -> Qualified ConvId -> Qualified UserId -> ClientId -> ClientId -> Text -> m ()
 wsAssertMessage ws conv fromu fromc to txt = void $
   liftIO $
     WS.assertMatch (5 # Second) ws $
@@ -1710,7 +2036,7 @@ wsAssertMessage ws conv fromu fromc to txt = void $
         evtFrom e @?= fromu
         evtData e @?= EdOtrMessage (OtrMessage fromc to txt (Just "data"))
 
-svcAssertMemberJoin :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> [Qualified UserId] -> Qualified ConvId -> m ()
+svcAssertMemberJoin :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> Qualified UserId -> [Qualified UserId] -> Qualified ConvId -> m ()
 svcAssertMemberJoin buf usr new cnv = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1722,7 +2048,7 @@ svcAssertMemberJoin buf usr new cnv = liftIO $ do
       assertEqual "event data" (EdMembersJoin msg) (evtData e)
     _ -> assertFailure "Event timeout (TestBotMessage: member-join)"
 
-svcAssertMemberLeave :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> [Qualified UserId] -> Qualified ConvId -> m ()
+svcAssertMemberLeave :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> Qualified UserId -> [Qualified UserId] -> Qualified ConvId -> m ()
 svcAssertMemberLeave buf usr gone cnv = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1731,23 +2057,10 @@ svcAssertMemberLeave buf usr gone cnv = liftIO $ do
       assertEqual "event type" MemberLeave (evtType e)
       assertEqual "conv" cnv (evtConv e)
       assertEqual "user" usr (evtFrom e)
-      assertEqual "event data" (EdMembersLeave msg) (evtData e)
+      assertEqual "event data" (EdMembersLeave EdReasonRemoved msg) (evtData e)
     _ -> assertFailure "Event timeout (TestBotMessage: member-leave)"
 
-svcAssertConvAccessUpdate :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> ConversationAccessData -> Qualified ConvId -> m ()
-svcAssertConvAccessUpdate buf usr upd cnv = liftIO $ do
-  evt <- timeout (5 # Second) $ readChan buf
-  case evt of
-    Just (TestBotMessage e) -> do
-      -- FUTUREWORK: Sometimes the assertion on the event type fails, but not
-      -- always. See https://wearezeta.atlassian.net/browse/BE-522.
-      assertEqual "event type" ConvAccessUpdate (evtType e)
-      assertEqual "conv" cnv (evtConv e)
-      assertEqual "user" usr (evtFrom e)
-      assertEqual "event data" (EdConvAccessUpdate upd) (evtData e)
-    _ -> assertFailure "Event timeout (TestBotMessage: conv-access-update)"
-
-svcAssertConvDelete :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> Qualified ConvId -> m ()
+svcAssertConvDelete :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> Qualified UserId -> Qualified ConvId -> m ()
 svcAssertConvDelete buf usr cnv = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1758,7 +2071,7 @@ svcAssertConvDelete buf usr cnv = liftIO $ do
       assertEqual "event data" EdConvDelete (evtData e)
     _ -> assertFailure "Event timeout (TestBotMessage: conv-delete)"
 
-svcAssertBotCreated :: MonadIO m => Chan TestBotEvent -> BotId -> ConvId -> m TestBot
+svcAssertBotCreated :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> BotId -> ConvId -> m TestBot
 svcAssertBotCreated buf bid cid = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1767,10 +2080,10 @@ svcAssertBotCreated buf bid cid = liftIO $ do
       assertEqual "conv" cid (testBotConv b ^. Ext.botConvId)
       -- TODO: Verify the conversation name
       -- TODO: Verify the list of members
-      return b
-    _ -> throwM $ HUnitFailure Nothing "Event timeout (TestBotCreated)"
+      pure b
+    _ -> assertFailure "Event timeout (TestBotCreated)"
 
-svcAssertMessage :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> OtrMessage -> Qualified ConvId -> m ()
+svcAssertMessage :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> Qualified UserId -> OtrMessage -> Qualified ConvId -> m ()
 svcAssertMessage buf from msg cnv = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1781,7 +2094,7 @@ svcAssertMessage buf from msg cnv = liftIO $ do
       assertEqual "event data" (EdOtrMessage msg) (evtData e)
     _ -> assertFailure "Event timeout (TestBotMessage: otr-message-add)"
 
-svcAssertEventuallyConvDelete :: MonadIO m => Chan TestBotEvent -> Qualified UserId -> Qualified ConvId -> m ()
+svcAssertEventuallyConvDelete :: (HasCallStack, MonadIO m) => Chan TestBotEvent -> Qualified UserId -> Qualified ConvId -> m ()
 svcAssertEventuallyConvDelete buf usr cnv = liftIO $ do
   evt <- timeout (5 # Second) $ readChan buf
   case evt of
@@ -1807,7 +2120,7 @@ mkMessage fromc rcps =
     ]
   where
     mk (u, c, m) = (text u, HashMap.singleton (text c) m)
-    text :: (FromByteString a, ToByteString a) => a -> Text
+    text :: (ToByteString a) => a -> Text
     text = fromJust . fromByteString . toByteString'
 
 -- | A list of 20 services, all having names that begin with the given prefix.
@@ -1867,14 +2180,22 @@ testAddRemoveBotUtil localDomain pid sid cid u1 u2 h sref buf brig galley cannon
     let Just rs = responseJsonMaybe _rs
         bid = rsAddBotId rs
         qbuid = Qualified (botUserId bid) localDomain
+    getBotSelf brig bid !!! const 200 === statusCode
+    (randomId >>= getBotSelf brig . BotId) !!! const 404 === statusCode
+    botClient :: Client <- responseJsonError =<< getBotClient brig bid <!! const 200 === statusCode
+    liftIO $ assertEqual "bot client" rs.rsAddBotClient botClient.clientId
+    (randomId >>= getBotClient brig . BotId) !!! const 404 === statusCode
     bot <- svcAssertBotCreated buf bid cid
-    liftIO $ assertEqual "bot client" (rsAddBotClient rs) (testBotClient bot)
+    liftIO $ assertEqual "bot client" rs.rsAddBotClient bot.testBotClient
     liftIO $ assertEqual "bot event" MemberJoin (evtType (rsAddBotEvent rs))
+    -- just check that these endpoints works
+    getBotPreKeyIds brig bid !!! const 200 === statusCode
+    updateBotPrekeys brig bid bot.testBotPrekeys !!! const 200 === statusCode
     -- Member join event for both users
     forM_ [ws1, ws2] $ \ws -> wsAssertMemberJoin ws qcid quid1 [qbuid]
     -- Member join event for the bot
     svcAssertMemberJoin buf quid1 [qbuid] qcid
-    return (rs, bot)
+    pure (rs, bot)
   let bid = rsAddBotId rs
       buid = botUserId bid
       -- Check that the bot token grants access to the right user and conversation
@@ -1887,7 +2208,7 @@ testAddRemoveBotUtil localDomain pid sid cid u1 u2 h sref buf brig galley cannon
   -- Check that the preferred locale defaults to the locale of the
   -- user who requsted the bot.
   liftIO $ assertEqual "locale" (userLocale u1) (testBotLocale bot)
-  liftIO $ assertEqual "handle" (Just (Handle h)) u1Handle
+  liftIO $ assertEqual "handle" (Just (fromJust $ parseHandle h)) u1Handle
   -- Check that the bot has access to the conversation
   getBotConv galley bid cid !!! const 200 === statusCode
   -- Check that the bot user exists and can be identified as a bot
@@ -1899,7 +2220,7 @@ testAddRemoveBotUtil localDomain pid sid cid u1 u2 h sref buf brig galley cannon
     assertEqual "colour" defaultAccentId (profileAccentId bp)
     assertEqual "assets" defServiceAssets (profileAssets bp)
   -- Check that the bot client exists and has prekeys
-  let isBotPrekey = (`elem` testBotPrekeys bot) . prekeyData
+  let isBotPrekey = (`elem` bot.testBotPrekeys) . prekeyData
   getPreKey brig buid buid (rsAddBotClient rs) !!! do
     const 200 === statusCode
     const (Just True) === fmap isBotPrekey . responseJsonMaybe
@@ -1943,7 +2264,7 @@ testMessageBotUtil quid uc cid pid sid sref buf brig galley cannon = do
       lbuid = qualifyAs luid buid
   let bc = rsAddBotClient ars
   _ <- svcAssertBotCreated buf bid cid
-  svcAssertMemberJoin buf quid [qUntagged lbuid] qcid
+  svcAssertMemberJoin buf quid [tUntagged lbuid] qcid
   -- The bot can now fetch the conversation
   _rs <- getBotConv galley bid cid <!! const 200 === statusCode
   let Just bcnv = responseJsonMaybe _rs
@@ -1951,18 +2272,18 @@ testMessageBotUtil quid uc cid pid sid sref buf brig galley cannon = do
     assertEqual "id" cid (bcnv ^. Ext.botConvId)
     assertEqual "members" [OtherMember quid Nothing roleNameWireAdmin] (bcnv ^. Ext.botConvMembers)
   -- The user can identify the bot in the member list
-  mems <- fmap cnvMembers . responseJsonError =<< getConversation galley uid cid
+  mems <- fmap cnvMembers . responseJsonError =<< getConversationQualified galley uid qcid
   let other = listToMaybe (cmOthers mems)
   liftIO $ do
     assertEqual "id" (Just buid) (qUnqualified . omQualifiedId <$> other)
     assertEqual "service" (Just sref) (omService =<< other)
   -- The bot greets the user
   WS.bracketR cannon uid $ \ws -> do
-    postBotMessage galley bid bc cid [(uid, uc, (toBase64Text "Hi User!"))]
+    postBotMessage galley bid bc cid [(uid, uc, toBase64Text "Hi User!")]
       !!! const 201 === statusCode
-    wsAssertMessage ws qcid (qUntagged lbuid) bc uc (toBase64Text "Hi User!")
+    wsAssertMessage ws qcid (tUntagged lbuid) bc uc (toBase64Text "Hi User!")
   -- The user replies
-  postMessage galley uid uc cid [(buid, bc, (toBase64Text "Hi Bot"))]
+  postMessage galley uid uc cid [(buid, bc, toBase64Text "Hi Bot")]
     !!! const 201 === statusCode
   let msg = OtrMessage uc bc (toBase64Text "Hi Bot") (Just "data")
   svcAssertMessage buf quid msg qcid
@@ -1973,10 +2294,10 @@ testMessageBotUtil quid uc cid pid sid sref buf brig galley cannon = do
     _ <- waitFor (5 # Second) not (isMember galley lbuid cid)
     getBotConv galley bid cid
       !!! const 404 === statusCode
-    wsAssertMemberLeave ws qcid (qUntagged lbuid) [qUntagged lbuid]
+    wsAssertMemberLeave ws qcid (tUntagged lbuid) [tUntagged lbuid]
 
 prepareBotUsersTeam ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   Galley ->
   ServiceRef ->
@@ -1987,7 +2308,7 @@ prepareBotUsersTeam brig galley sref = do
   -- Prepare users
   (uid1, tid) <- Team.createUserWithTeam brig
   u1 <- selfUser <$> getSelfProfile brig uid1
-  u2 <- Team.createTeamMember brig galley uid1 tid Team.fullPermissions
+  u2 <- Team.createTeamMember brig galley uid1 tid fullPermissions
   let uid2 = userId u2
   h <- randomHandle
   putHandle brig uid1 h !!! const 200 === statusCode
@@ -1995,10 +2316,18 @@ prepareBotUsersTeam brig galley sref = do
   whitelistService brig uid1 tid pid sid
   -- Create conversation
   cid <- Team.createTeamConv galley tid uid1 [uid2] Nothing
-  return (u1, u2, h, tid, cid, pid, sid)
+  pure (u1, u2, h, tid, cid, pid, sid)
+
+testWhitelistNginz :: Config -> DB.ClientState -> Brig -> Nginz -> Http ()
+testWhitelistNginz config db brig nginz = withTestService config db brig defServiceApp $ \sref _ -> do
+  let pid = sref ^. serviceRefProvider
+  let sid = sref ^. serviceRefId
+  (admin, tid) <- Team.createUserWithTeam brig
+  adminUser <- selfUser <$> getSelfProfile brig admin
+  whitelistServiceNginz nginz adminUser tid pid sid
 
 addBotConv ::
-  HasCallStack =>
+  (HasCallStack) =>
   Domain ->
   Brig ->
   WS.Cannon ->
@@ -2026,7 +2355,7 @@ addBotConv localDomain brig cannon uid1 uid2 cid pid sid buf = do
     forM_ [ws1, ws2] $ \ws -> wsAssertMemberJoin ws qcid quid1 [qbotId]
     -- Member join event for the bot
     svcAssertMemberJoin buf quid1 [qbotId] qcid
-    return (rsAddBotId rs)
+    pure (rsAddBotId rs)
 
 ----------------------------------------------------------------------------
 -- Service search utilities (abstracted out because we have more than one
@@ -2035,7 +2364,7 @@ addBotConv localDomain brig cannon uid1 uid2 cid pid sid buf = do
 -- | Given some endpoint that can search for services by name prefix, check
 -- that it doesn't break when service name changes.
 searchAndAssertNameChange ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   -- | Service provider
   ProviderId ->
@@ -2101,7 +2430,7 @@ assertServiceDetails testName expected page = liftIO $ do
 
 -- | Call the endpoint that searches through all services.
 searchServices ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   Int ->
   UserId ->
@@ -2124,7 +2453,7 @@ searchServices brig size uid mbStart mbTags = case (mbStart, mbTags) of
 
 -- | Call the endpoint that searches through whitelisted services.
 searchServiceWhitelist ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   Int ->
   UserId ->
@@ -2140,7 +2469,7 @@ searchServiceWhitelist brig size uid tid mbStart =
 -- | Call the endpoint that searches through whitelisted services, and don't
 -- filter out disabled services.
 searchServiceWhitelistAll ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   Int ->
   UserId ->

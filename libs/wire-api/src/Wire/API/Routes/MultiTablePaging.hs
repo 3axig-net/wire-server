@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,11 +26,11 @@ where
 import Control.Lens ((?~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Kind
+import Data.OpenApi qualified as S
 import Data.Proxy
 import Data.Range
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import GHC.TypeLits
 import Imports
 import Wire.API.Routes.MultiTablePaging.State
@@ -62,24 +62,27 @@ data GetMultiTablePageRequest (name :: Symbol) (tables :: Type) (max :: Nat) (de
 -- 24 |   deriving ToJSON via Schema (GetMultiTablePageRequest name tables max def)
 --    |            ^^^^^^
 
-type RequestSchemaConstraint name tables max def = (KnownNat max, KnownNat def, Within Int32 1 max, LTE 1 def, LTE def max, PagingTable tables, KnownSymbol name)
+type RequestSchemaConstraint name tables max def = (KnownNat max, KnownNat def, Within Int32 1 max, 1 <= def, def <= max, PagingTable tables, KnownSymbol name)
 
 deriving via
   Schema (GetMultiTablePageRequest name tables max def)
   instance
-    RequestSchemaConstraint name tables max def => ToJSON (GetMultiTablePageRequest name tables max def)
+    (RequestSchemaConstraint name tables max def) => ToJSON (GetMultiTablePageRequest name tables max def)
 
 deriving via
   Schema (GetMultiTablePageRequest name tables max def)
   instance
-    RequestSchemaConstraint name tables max def => FromJSON (GetMultiTablePageRequest name tables max def)
+    (RequestSchemaConstraint name tables max def) => FromJSON (GetMultiTablePageRequest name tables max def)
 
 deriving via
   Schema (GetMultiTablePageRequest name tables max def)
   instance
-    RequestSchemaConstraint name tables max def => S.ToSchema (GetMultiTablePageRequest name tables max def)
+    ( Typeable tables,
+      RequestSchemaConstraint name tables max def
+    ) =>
+    S.ToSchema (GetMultiTablePageRequest name tables max def)
 
-instance RequestSchemaConstraint name tables max def => ToSchema (GetMultiTablePageRequest name tables max def) where
+instance (RequestSchemaConstraint name tables max def) => ToSchema (GetMultiTablePageRequest name tables max def) where
   schema =
     let addPagingStateDoc =
           description
@@ -90,13 +93,13 @@ instance RequestSchemaConstraint name tables max def => ToSchema (GetMultiTableP
           ("GetPaginated_" <> textFromSymbol @name)
           (description ?~ "A request to list some or all of a user's " <> textFromSymbol @name <> ", including remote ones")
           $ GetMultiTablePageRequest
-            <$> gmtprSize .= (fieldWithDocModifier "size" addSizeDoc schema <|> pure (toRange (Proxy @def)))
-            <*> gmtprState .= optFieldWithDocModifier "paging_state" Nothing addPagingStateDoc schema
+            <$> gmtprSize .= (fromMaybe (toRange (Proxy @def)) <$> optFieldWithDocModifier "size" addSizeDoc schema)
+            <*> gmtprState .= maybe_ (optFieldWithDocModifier "paging_state" addPagingStateDoc schema)
 
-textFromNat :: forall n. KnownNat n => Text
+textFromNat :: forall n. (KnownNat n) => Text
 textFromNat = Text.pack . show . natVal $ Proxy @n
 
-textFromSymbol :: forall s. KnownSymbol s => Text
+textFromSymbol :: forall s. (KnownSymbol s) => Text
 textFromSymbol = Text.pack . symbolVal $ Proxy @s
 
 -- | The result of a multi-table paginated query. Contains the list of results,
@@ -114,19 +117,19 @@ type PageSchemaConstraints name resultsKey tables a = (KnownSymbol resultsKey, K
 deriving via
   (Schema (MultiTablePage name resultsKey tables a))
   instance
-    PageSchemaConstraints name resultsKey tables a =>
+    (PageSchemaConstraints name resultsKey tables a) =>
     ToJSON (MultiTablePage name resultsKey tables a)
 
 deriving via
   (Schema (MultiTablePage name resultsKey tables a))
   instance
-    PageSchemaConstraints name resultsKey tables a =>
+    (PageSchemaConstraints name resultsKey tables a) =>
     FromJSON (MultiTablePage name resultsKey tables a)
 
 deriving via
   (Schema (MultiTablePage name resultsKey tables a))
   instance
-    PageSchemaConstraints name resultsKey tables a =>
+    (Typeable tables, Typeable a, PageSchemaConstraints name resultsKey tables a) =>
     S.ToSchema (MultiTablePage name resultsKey tables a)
 
 instance

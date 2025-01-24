@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,11 +16,14 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.UpdateClient_user where
 
-import Imports (Maybe (Just, Nothing))
-import Wire.API.User.Client (ClientCapability (ClientSupportsLegalholdImplicitConsent), UpdateClient (..))
-import Wire.API.User.Client.Prekey (Prekey (Prekey, prekeyId, prekeyKey), PrekeyId (PrekeyId, keyId), lastPrekey)
+import Data.Map qualified as Map
+import Imports
+import Wire.API.MLS.CipherSuite
+import Wire.API.User.Client
+import Wire.API.User.Client.Prekey
 
 testObject_UpdateClient_user_1 :: UpdateClient
 testObject_UpdateClient_user_1 =
@@ -29,9 +32,10 @@ testObject_UpdateClient_user_1 =
         [ Prekey {prekeyId = PrekeyId {keyId = 2}, prekeyKey = ","},
           Prekey {prekeyId = PrekeyId {keyId = 1}, prekeyKey = "G\1039380"}
         ],
-      updateClientLastKey = Just (lastPrekey ("")),
+      updateClientLastKey = Just (lastPrekey ""),
       updateClientLabel = Nothing,
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_2 :: UpdateClient
@@ -43,7 +47,8 @@ testObject_UpdateClient_user_2 =
         ],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "\14793\13068\SOH\74214\US",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_3 :: UpdateClient
@@ -53,9 +58,10 @@ testObject_UpdateClient_user_3 =
         [ Prekey {prekeyId = PrekeyId {keyId = 1}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "vi"}
         ],
-      updateClientLastKey = Just (lastPrekey ("L\100005")),
+      updateClientLastKey = Just (lastPrekey "L\100005"),
       updateClientLabel = Just "\NUL\12245B\ACK",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_4 :: UpdateClient
@@ -67,9 +73,10 @@ testObject_UpdateClient_user_4 =
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "u"}
         ],
-      updateClientLastKey = Just (lastPrekey ("")),
+      updateClientLastKey = Just (lastPrekey ""),
       updateClientLabel = Just "M\1066358^YH:l",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_5 :: UpdateClient
@@ -80,9 +87,10 @@ testObject_UpdateClient_user_5 =
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "\1022268"},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""}
         ],
-      updateClientLastKey = Just (lastPrekey ("Cs \74536=")),
+      updateClientLastKey = Just (lastPrekey "Cs \74536="),
       updateClientLabel = Just "I\1038139\tCzGW\1034813",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_6 :: UpdateClient
@@ -93,9 +101,10 @@ testObject_UpdateClient_user_6 =
           Prekey {prekeyId = PrekeyId {keyId = 1}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "+"}
         ],
-      updateClientLastKey = Just (lastPrekey ("")),
+      updateClientLastKey = Just (lastPrekey ""),
       updateClientLabel = Nothing,
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_7 :: UpdateClient
@@ -113,7 +122,8 @@ testObject_UpdateClient_user_7 =
         ],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "D9",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_8 :: UpdateClient
@@ -122,7 +132,8 @@ testObject_UpdateClient_user_8 =
     { updateClientPrekeys = [Prekey {prekeyId = PrekeyId {keyId = 4}, prekeyKey = "_Xx;"}],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "8\NAKD\57788\111128",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = Map.fromList [(Ed25519, "bm90IHJlYWxseSBhIHB1YmxpYyBrZXk=")]
     }
 
 testObject_UpdateClient_user_9 :: UpdateClient
@@ -138,7 +149,8 @@ testObject_UpdateClient_user_9 =
         ],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "a\24415\\<c\1047390.\1050080",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_10 :: UpdateClient
@@ -150,9 +162,10 @@ testObject_UpdateClient_user_10 =
           Prekey {prekeyId = PrekeyId {keyId = 1}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 1}, prekeyKey = ""}
         ],
-      updateClientLastKey = Just (lastPrekey ("")),
+      updateClientLastKey = Just (lastPrekey ""),
       updateClientLabel = Nothing,
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_11 :: UpdateClient
@@ -167,7 +180,8 @@ testObject_UpdateClient_user_11 =
         ],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "`9q)\24055",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_12 :: UpdateClient
@@ -176,25 +190,28 @@ testObject_UpdateClient_user_12 =
     { updateClientPrekeys = [Prekey {prekeyId = PrekeyId {keyId = 3}, prekeyKey = "W\24095S"}],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "o\SUB",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_13 :: UpdateClient
 testObject_UpdateClient_user_13 =
   UpdateClient
     { updateClientPrekeys = [Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "z\28560]"}],
-      updateClientLastKey = Just (lastPrekey ("/\CAN\1031188\DLEk")),
+      updateClientLastKey = Just (lastPrekey "/\CAN\1031188\DLEk"),
       updateClientLabel = Just "",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_14 :: UpdateClient
 testObject_UpdateClient_user_14 =
   UpdateClient
     { updateClientPrekeys = [Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = "1h"}],
-      updateClientLastKey = Just (lastPrekey ("'S\asm")),
+      updateClientLastKey = Just (lastPrekey "'S\asm"),
       updateClientLabel = Nothing,
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_15 :: UpdateClient
@@ -203,16 +220,18 @@ testObject_UpdateClient_user_15 =
     { updateClientPrekeys = [],
       updateClientLastKey = Nothing,
       updateClientLabel = Nothing,
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_16 :: UpdateClient
 testObject_UpdateClient_user_16 =
   UpdateClient
     { updateClientPrekeys = [Prekey {prekeyId = PrekeyId {keyId = 2}, prekeyKey = "Q}"}],
-      updateClientLastKey = Just (lastPrekey ("Ll\SO\996866k\176052\EOTf\DC2")),
+      updateClientLastKey = Just (lastPrekey "Ll\SO\996866k\176052\EOTf\DC2"),
       updateClientLabel = Just "\993565\&6",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_17 :: UpdateClient
@@ -221,7 +240,8 @@ testObject_UpdateClient_user_17 =
     { updateClientPrekeys = [],
       updateClientLastKey = Nothing,
       updateClientLabel = Just "c\1003571S\NAK\DLE}0 6\RS",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_18 :: UpdateClient
@@ -231,9 +251,10 @@ testObject_UpdateClient_user_18 =
         [ Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ">\1068703"},
           Prekey {prekeyId = PrekeyId {keyId = 2}, prekeyKey = "E"}
         ],
-      updateClientLastKey = Just (lastPrekey ("\1010230\1006024\&4/")),
+      updateClientLastKey = Just (lastPrekey "\1010230\1006024\&4/"),
       updateClientLabel = Just "\SOH\n\16789?a\1034213\DC4O",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_19 :: UpdateClient
@@ -246,9 +267,10 @@ testObject_UpdateClient_user_19 =
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""}
         ],
-      updateClientLastKey = Just (lastPrekey ("\191090t\96624\113765i")),
+      updateClientLastKey = Just (lastPrekey "\191090t\96624\113765i"),
       updateClientLabel = Just "\f&QO\"u\t-\\",
-      updateClientCapabilities = Nothing
+      updateClientCapabilities = Nothing,
+      updateClientMLSPublicKeys = mempty
     }
 
 testObject_UpdateClient_user_20 :: UpdateClient
@@ -263,7 +285,8 @@ testObject_UpdateClient_user_20 =
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""},
           Prekey {prekeyId = PrekeyId {keyId = 0}, prekeyKey = ""}
         ],
-      updateClientLastKey = Just (lastPrekey ("\DC4 }Kg\ve3")),
+      updateClientLastKey = Just (lastPrekey "\DC4 }Kg\ve3"),
       updateClientLabel = Just "\ESC\EOT\SOHccn\US{Y5",
-      updateClientCapabilities = Just [ClientSupportsLegalholdImplicitConsent]
+      updateClientCapabilities = Just (ClientCapabilityList [ClientSupportsLegalholdImplicitConsent]),
+      updateClientMLSPublicKeys = mempty
     }

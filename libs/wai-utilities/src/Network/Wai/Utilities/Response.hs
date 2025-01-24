@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,7 +20,7 @@
 module Network.Wai.Utilities.Response where
 
 import Data.Aeson hiding (Error, json)
-import qualified Data.ByteString.Lazy as Lazy
+import Data.ByteString.Lazy qualified as Lazy
 import Imports
 import Network.HTTP.Types
 import Network.Wai
@@ -30,26 +30,26 @@ import Network.Wai.Utilities.Error
 empty :: Response
 empty = plain ""
 
-noContent :: Response
-noContent = empty & setStatus status204
-
 plain :: Lazy.ByteString -> Response
 plain = responseLBS status200 [plainContent]
 
 plainContent :: Header
 plainContent = (hContentType, "text/plain; charset=UTF-8")
 
-json :: ToJSON a => a -> Response
+json :: (ToJSON a) => a -> Response
 json = responseLBS status200 [jsonContent] . encode
 
 jsonContent :: Header
 jsonContent = (hContentType, "application/json")
 
-errorRs :: Status -> LText -> LText -> Response
-errorRs s l m = errorRs' (mkError s l m)
+html :: Lazy.ByteString -> Response
+html = responseLBS status200 [htmlContent]
 
-errorRs' :: Error -> Response
-errorRs' e = setStatus (code e) (json e)
+htmlContent :: Header
+htmlContent = (hContentType, "text/html; charset=UTF-8")
+
+errorRs :: Error -> Response
+errorRs e = setStatus (code e) (json e)
 
 addHeader :: HeaderName -> ByteString -> Response -> Response
 addHeader k v (ResponseFile s h f ff) = ResponseFile s ((k, v) : h) f ff

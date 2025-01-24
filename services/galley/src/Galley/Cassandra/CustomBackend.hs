@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,24 +22,35 @@ module Galley.Cassandra.CustomBackend (interpretCustomBackendStoreToCassandra) w
 import Cassandra
 import Data.Domain (Domain)
 import Galley.Cassandra.Instances ()
-import qualified Galley.Cassandra.Queries as Cql
+import Galley.Cassandra.Queries qualified as Cql
 import Galley.Cassandra.Store
+import Galley.Cassandra.Util
 import Galley.Effects.CustomBackendStore (CustomBackendStore (..))
-import Galley.Types
 import Imports
 import Polysemy
 import Polysemy.Input
+import Polysemy.TinyLog
+import Wire.API.CustomBackend
 
 interpretCustomBackendStoreToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (CustomBackendStore ': r) a ->
   Sem r a
 interpretCustomBackendStoreToCassandra = interpret $ \case
-  GetCustomBackend dom -> embedClient $ getCustomBackend dom
-  SetCustomBackend dom b -> embedClient $ setCustomBackend dom b
-  DeleteCustomBackend dom -> embedClient $ deleteCustomBackend dom
+  GetCustomBackend dom -> do
+    logEffect "CustomBackendStore.GetCustomBackend"
+    embedClient $ getCustomBackend dom
+  SetCustomBackend dom b -> do
+    logEffect "CustomBackendStore.SetCustomBackend"
+    embedClient $ setCustomBackend dom b
+  DeleteCustomBackend dom -> do
+    logEffect "CustomBackendStore.DeleteCustomBackend"
+    embedClient $ deleteCustomBackend dom
 
-getCustomBackend :: MonadClient m => Domain -> m (Maybe CustomBackend)
+getCustomBackend :: (MonadClient m) => Domain -> m (Maybe CustomBackend)
 getCustomBackend domain =
   fmap toCustomBackend <$> do
     retry x1 $ query1 Cql.selectCustomBackend (params LocalQuorum (Identity domain))
@@ -47,10 +58,10 @@ getCustomBackend domain =
     toCustomBackend (backendConfigJsonUrl, backendWebappWelcomeUrl) =
       CustomBackend {..}
 
-setCustomBackend :: MonadClient m => Domain -> CustomBackend -> m ()
+setCustomBackend :: (MonadClient m) => Domain -> CustomBackend -> m ()
 setCustomBackend domain CustomBackend {..} = do
-  retry x5 $ write Cql.updateCustomBackend (params LocalQuorum (backendConfigJsonUrl, backendWebappWelcomeUrl, domain))
+  retry x5 $ write Cql.upsertCustomBackend (params LocalQuorum (backendConfigJsonUrl, backendWebappWelcomeUrl, domain))
 
-deleteCustomBackend :: MonadClient m => Domain -> m ()
+deleteCustomBackend :: (MonadClient m) => Domain -> m ()
 deleteCustomBackend domain = do
   retry x5 $ write Cql.deleteCustomBackend (params LocalQuorum (Identity domain))

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,67 +22,49 @@ module Brig.API.Types
     Activation (..),
     ActivationError (..),
     ClientDataError (..),
-    PropertiesDataError (..),
     AuthError (..),
     ReAuthError (..),
     LegalHoldLoginError (..),
     RetryAfter (..),
-    foldKey,
+    ListUsersById (..),
   )
 where
 
-import Brig.Data.Activation (Activation (..), ActivationError (..))
+import Brig.Data.Activation (ActivationError (..))
 import Brig.Data.Client (ClientDataError (..))
-import Brig.Data.Properties (PropertiesDataError (..))
-import Brig.Data.User (AuthError (..), ReAuthError (..))
-import Brig.Data.UserKey (UserKey, foldKey)
-import Brig.Types
-import Brig.Types.Code (Timeout)
 import Brig.Types.Intra
-import Brig.User.Auth.Cookie (RetryAfter (..))
+import Data.Code
 import Data.Id
+import Data.Jwt.Tools (DPoPTokenGenerationError (..))
 import Data.Qualified
+import Data.RetryAfter
 import Imports
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.Wai.Utilities.Error qualified as Wai
 import Wire.API.Federation.Error
+import Wire.API.User
+import Wire.API.User.Activation
+import Wire.AuthenticationSubsystem.Error
+import Wire.UserKeyStore
 
 -------------------------------------------------------------------------------
 -- Successes
 
 data CreateUserResult = CreateUserResult
   { -- | The newly created user account.
-    createdAccount :: !UserAccount,
+    createdAccount :: !User,
     -- | Activation data for the registered email address, if any.
     createdEmailActivation :: !(Maybe Activation),
-    -- | Activation data for the registered phone number, if any.
-    createdPhoneActivation :: !(Maybe Activation),
     -- | Info of a team just created/joined
     createdUserTeam :: !(Maybe CreateUserTeam)
   }
-
-data CreateUserTeam = CreateUserTeam
-  { createdTeamId :: !TeamId,
-    createdTeamName :: !Text
-  }
+  deriving (Show)
 
 data ActivationResult
   = -- | The key/code was valid and successfully activated.
     ActivationSuccess !(Maybe UserIdentity) !Bool
   | -- | The key/code was valid but already recently activated.
     ActivationPass
-
--- | Outcome of the invariants check in 'Brig.API.User.changeEmail'.
-data ChangeEmailResult
-  = -- | The request was successful, user needs to verify the new email address
-    ChangeEmailNeedsActivation !(User, Activation, Email)
-  | -- | The user asked to change the email address to the one already owned
-    ChangeEmailIdempotent
-
--- | Typed response of the @put /self/email@ end-point (returned in
--- 'Brig.API.User.changeSelfEmail'.
-data ChangeEmailResponse
-  = ChangeEmailResponseIdempotent
-  | ChangeEmailResponseNeedsActivation
+  deriving (Show)
 
 -------------------------------------------------------------------------------
 -- Failures
@@ -92,23 +74,19 @@ data CreateUserError
   | MissingIdentity
   | EmailActivationError ActivationError
   | PhoneActivationError ActivationError
-  | InvalidEmail Email String
+  | InvalidEmail EmailAddress String
   | InvalidPhone Phone
-  | DuplicateUserKey UserKey
-  | BlacklistedUserKey UserKey
+  | DuplicateUserKey EmailKey
+  | BlacklistedUserKey EmailKey
   | TooManyTeamMembers
   | UserCreationRestricted
   | -- | Some precondition on another Wire service failed. We propagate this error.
     ExternalPreconditionFailed Wai.Error
 
-data UpdateProfileError
-  = DisplayNameManagedByScim
-  | ProfileNotFound UserId
-
 data InvitationError
   = InviteeEmailExists UserId
-  | InviteInvalidEmail Email
-  | InviteBlacklistedEmail Email
+  | InviteInvalidEmail EmailAddress
+  | InviteBlacklistedEmail EmailAddress
 
 data ConnectionError
   = -- | Max. # of 'Accepted' / 'Sent' connections reached
@@ -124,17 +102,21 @@ data ConnectionError
     -- no verified user identity.
     ConnectNoIdentity
   | -- | An attempt at creating an invitation to a blacklisted user key.
-    ConnectBlacklistedUserKey UserKey
+    ConnectBlacklistedUserKey EmailKey
   | -- | An attempt at creating an invitation to an invalid email address.
-    ConnectInvalidEmail Email String
+    ConnectInvalidEmail EmailAddress String
   | -- | An attempt at creating an invitation to an invalid phone nbumber.
     ConnectInvalidPhone Phone
   | -- | An attempt at creating a connection with another user from the same binding team.
     ConnectSameBindingTeamUsers
   | -- | Something doesn't work because somebody has a LH device and somebody else has not granted consent.
     ConnectMissingLegalholdConsent
+  | -- | Same as above, but because old clients that don't support LH are still in the game.
+    ConnectMissingLegalholdConsentOldClients
   | -- | Remote connection creation or update failed because of a federation error
     ConnectFederationError FederationError
+  | -- | The teams of the users that want to connect do not federate
+    ConnectTeamFederationError
 
 data PasswordResetError
   = PasswordResetInProgress (Maybe Timeout)
@@ -155,37 +137,19 @@ data LoginError
   | LoginPendingActivation
   | LoginThrottled RetryAfter
   | LoginBlocked RetryAfter
+  | LoginCodeRequired
+  | LoginCodeInvalid
+  | LoginPasswordUpdateRequired
 
-data ChangePasswordError
-  = InvalidCurrentPassword
-  | ChangePasswordNoIdentity
-  | ChangePasswordMustDiffer
-
-data ChangePhoneError
-  = PhoneExists !Phone
-  | InvalidNewPhone !Phone
-  | BlacklistedNewPhone !Phone
-
-data ChangeEmailError
-  = InvalidNewEmail !Email !String
-  | EmailExists !Email
-  | ChangeBlacklistedEmail !Email
-  | EmailManagedByScim
-
-data ChangeHandleError
-  = ChangeHandleNoIdentity
-  | ChangeHandleExists
-  | ChangeHandleInvalid
-  | ChangeHandleManagedByScim
+data VerificationCodeError
+  = VerificationCodeRequired
+  | VerificationCodeNoPendingCode
+  | VerificationCodeNoEmail
 
 data SendActivationCodeError
-  = InvalidRecipient UserKey
-  | UserKeyInUse UserKey
-  | ActivationBlacklistedUserKey UserKey
-
-data SendLoginCodeError
-  = SendLoginInvalidPhone Phone
-  | SendLoginPasswordExists
+  = InvalidRecipient EmailKey
+  | UserKeyInUse EmailKey
+  | ActivationBlacklistedUserKey EmailKey
 
 data ClientError
   = ClientNotFound
@@ -193,14 +157,15 @@ data ClientError
   | ClientUserNotFound !UserId
   | ClientLegalHoldCannotBeRemoved
   | ClientLegalHoldCannotBeAdded
+  | -- | this error is thrown if legalhold if incompatible with different features
+    --   for now, this is the case for MLS and federation
+    ClientLegalHoldIncompatible
   | ClientFederationError FederationError
   | ClientCapabilitiesCannotBeRemoved
+  | ClientMissingLegalholdConsentOldClients
   | ClientMissingLegalholdConsent
-
-data RemoveIdentityError
-  = LastIdentity
-  | NoPassword
-  | NoIdentity
+  | ClientCodeAuthenticationFailed
+  | ClientCodeAuthenticationRequired
 
 data DeleteUserError
   = DeleteUserInvalid
@@ -209,15 +174,30 @@ data DeleteUserError
   | DeleteUserMissingPassword
   | DeleteUserPendingCode Timeout
   | DeleteUserOwnerDeletingSelf
+  | DeleteUserVerificationCodeThrottled RetryAfter
 
 data AccountStatusError
   = InvalidAccountStatus
+  | AccountNotFound
+
+data VerificationCodeThrottledError
+  = VerificationCodeThrottled RetryAfter
+
+data CertEnrollmentError
+  = NonceNotFound
+  | RustError DPoPTokenGenerationError
+  | KeyBundleError
+  | MisconfiguredRequestUrl
+  | ClientIdSyntaxError
+  | NotATeamUser
+  | MissingHandle
+  | MissingName
 
 -------------------------------------------------------------------------------
 -- Exceptions
 
 -- | A user name was unexpectedly not found for an existing user ID.
-data UserDisplayNameNotFound = UserDisplayNameNotFound !UserId
+newtype UserDisplayNameNotFound = UserDisplayNameNotFound UserId
   deriving (Typeable)
 
 instance Exception UserDisplayNameNotFound
@@ -225,7 +205,7 @@ instance Exception UserDisplayNameNotFound
 instance Show UserDisplayNameNotFound where
   show (UserDisplayNameNotFound uid) = "User name not found for user: " ++ show uid
 
-data UserProfileNotFound = UserProfileNotFound !UserId
+newtype UserProfileNotFound = UserProfileNotFound UserId
   deriving (Typeable)
 
 instance Exception UserProfileNotFound

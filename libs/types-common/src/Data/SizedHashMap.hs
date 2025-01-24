@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,7 +29,7 @@ module Data.SizedHashMap
   )
 where
 
-import qualified Data.HashMap.Strict as M
+import Data.HashMap.Strict qualified as M
 import Data.Hashable (Hashable)
 import Imports hiding (lookup, toList)
 
@@ -44,7 +44,7 @@ size (SizedHashMap s _) = s
 empty :: forall k v. SizedHashMap k v
 empty = SizedHashMap 0 M.empty
 
-insert :: forall k v. (Eq k, Hashable k) => k -> v -> SizedHashMap k v -> SizedHashMap k v
+insert :: forall k v. (Hashable k) => k -> v -> SizedHashMap k v -> SizedHashMap k v
 insert k v (SizedHashMap n hm) = SizedHashMap n' hm'
   where
     n' = if M.member k hm then n else n + 1
@@ -59,10 +59,10 @@ elems (SizedHashMap _ hm) = M.elems hm
 toList :: forall k v. SizedHashMap k v -> [(k, v)]
 toList (SizedHashMap _ hm) = M.toList hm
 
-lookup :: forall k v. (Eq k, Hashable k) => k -> SizedHashMap k v -> Maybe v
+lookup :: forall k v. (Hashable k) => k -> SizedHashMap k v -> Maybe v
 lookup k (SizedHashMap _ hm) = M.lookup k hm
 
-delete :: forall k v. (Eq k, Hashable k) => k -> SizedHashMap k v -> SizedHashMap k v
+delete :: forall k v. (Hashable k) => k -> SizedHashMap k v -> SizedHashMap k v
 delete k (SizedHashMap n hm) = SizedHashMap n' hm'
   where
     n' = if M.member k hm then n - 1 else n

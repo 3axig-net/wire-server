@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,7 +25,7 @@ import Brig.Index.Options
 import Imports
 import Options.Applicative
 import System.Exit
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 
 main :: IO ()
 main = do

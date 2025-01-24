@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -33,6 +35,7 @@ module Galley.Effects.BrigAccess
     deleteUser,
     getContactList,
     getRichInfoMultiUser,
+    getUserExportData,
 
     -- * Teams
     getSize,
@@ -45,15 +48,17 @@ module Galley.Effects.BrigAccess
     addLegalHoldClientToUser,
     removeLegalHoldClientFromUser,
 
+    -- * MLS
+    getLocalMLSClients,
+
     -- * Features
-    getAccountFeatureConfigClient,
+    getAccountConferenceCallingConfigClient,
+    updateSearchVisibilityInbound,
   )
 where
 
-import Brig.Types.Client
 import Brig.Types.Connection
 import Brig.Types.Intra
-import Brig.Types.User
 import Data.Id
 import Data.Misc
 import Data.Qualified
@@ -61,10 +66,18 @@ import Galley.External.LegalHoldService.Types
 import Imports
 import Network.HTTP.Types.Status
 import Polysemy
+import Polysemy.Error
+import Wire.API.Connection
+import Wire.API.Error.Galley
+import Wire.API.MLS.CipherSuite
 import Wire.API.Routes.Internal.Brig.Connection
+import Wire.API.Routes.Internal.Galley.TeamFeatureNoConfigMulti qualified as Multi
+import Wire.API.Team.Export
 import Wire.API.Team.Feature
 import Wire.API.Team.Size
+import Wire.API.User.Auth.ReAuth
 import Wire.API.User.Client
+import Wire.API.User.Client.Prekey
 import Wire.API.User.RichInfo
 
 data BrigAccess m a where
@@ -85,9 +98,9 @@ data BrigAccess m a where
     Maybe Relation ->
     BrigAccess m [ConnectionStatusV2]
   PutConnectionInternal :: UpdateConnectionsInternal -> BrigAccess m Status
-  ReauthUser :: UserId -> ReAuthUser -> BrigAccess m Bool
+  ReauthUser :: UserId -> ReAuthUser -> BrigAccess m (Either AuthenticationError ())
   LookupActivatedUsers :: [UserId] -> BrigAccess m [User]
-  GetUsers :: [UserId] -> BrigAccess m [UserAccount]
+  GetUsers :: [UserId] -> BrigAccess m [User]
   DeleteUser :: UserId -> BrigAccess m ()
   GetContactList :: UserId -> BrigAccess m [UserId]
   GetRichInfoMultiUser :: [UserId] -> BrigAccess m [(UserId, RichInfo)]
@@ -101,18 +114,34 @@ data BrigAccess m a where
     BrigAccess m ()
   GetLegalHoldAuthToken ::
     UserId ->
-    Maybe PlainTextPassword ->
+    Maybe PlainTextPassword6 ->
     BrigAccess m OpaqueAuthToken
-  AddLegalHoldClientToUser ::
+  AddLegalHoldClientToUserEither ::
     UserId ->
     ConnId ->
     [Prekey] ->
     LastPrekey ->
-    BrigAccess m ClientId
+    BrigAccess m (Either AuthenticationError ClientId)
   RemoveLegalHoldClientFromUser :: UserId -> BrigAccess m ()
-  GetAccountFeatureConfigClient :: UserId -> BrigAccess m TeamFeatureStatusNoConfig
+  GetAccountConferenceCallingConfigClient :: UserId -> BrigAccess m (Feature ConferenceCallingConfig)
+  GetLocalMLSClients :: Local UserId -> CipherSuiteTag -> BrigAccess m (Set ClientInfo)
+  UpdateSearchVisibilityInbound ::
+    Multi.TeamStatus SearchVisibilityInboundConfig ->
+    BrigAccess m ()
+  GetUserExportData :: UserId -> BrigAccess m (Maybe TeamExportUser)
 
 makeSem ''BrigAccess
 
-getUser :: Member BrigAccess r => UserId -> Sem r (Maybe UserAccount)
+getUser :: (Member BrigAccess r) => UserId -> Sem r (Maybe User)
 getUser = fmap listToMaybe . getUsers . pure
+
+addLegalHoldClientToUser ::
+  (Member BrigAccess r, Member (Error AuthenticationError) r) =>
+  UserId ->
+  ConnId ->
+  [Prekey] ->
+  LastPrekey ->
+  Sem r ClientId
+addLegalHoldClientToUser uid con pks lpk =
+  addLegalHoldClientToUserEither uid con pks lpk
+    >>= either throw pure

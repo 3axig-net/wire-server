@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,26 +15,20 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Wire.API.Federation.Component where
+module Wire.API.Federation.Component
+  ( module Wire.API.Federation.Component,
+    Component (..),
+  )
+where
 
+import Data.Proxy
 import Imports
-import Test.QuickCheck (Arbitrary)
-import Wire.API.Arbitrary (GenericUniform (..))
-
-data Component
-  = Brig
-  | Galley
-  deriving (Show, Eq, Generic)
-  deriving (Arbitrary) via (GenericUniform Component)
-
-parseComponent :: Text -> Maybe Component
-parseComponent "brig" = Just Brig
-parseComponent "galley" = Just Galley
-parseComponent _ = Nothing
+import Wire.API.Component (Component (..))
 
 componentName :: Component -> Text
 componentName Brig = "brig"
 componentName Galley = "galley"
+componentName Cargohold = "cargohold"
 
 class KnownComponent (c :: Component) where
   componentVal :: Component
@@ -44,3 +38,14 @@ instance KnownComponent 'Brig where
 
 instance KnownComponent 'Galley where
   componentVal = Galley
+
+instance KnownComponent 'Cargohold where
+  componentVal = Cargohold
+
+data SomeComponent where
+  SomeComponent :: (KnownComponent c) => Proxy c -> SomeComponent
+
+someComponent :: Component -> SomeComponent
+someComponent Brig = SomeComponent (Proxy @'Brig)
+someComponent Galley = SomeComponent (Proxy @'Galley)
+someComponent Cargohold = SomeComponent (Proxy @'Cargohold)

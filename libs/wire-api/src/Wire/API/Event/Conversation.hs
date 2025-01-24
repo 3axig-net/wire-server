@@ -1,9 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,8 +22,10 @@
 module Wire.API.Event.Conversation
   ( -- * Event
     Event (..),
+    evtType,
     EventType (..),
     EventData (..),
+    AddCodeResult (..),
 
     -- * Event lenses
     _EdMembersJoin,
@@ -39,6 +42,8 @@ module Wire.API.Event.Conversation
     _EdConversation,
     _EdTyping,
     _EdOtrMessage,
+    _EdMLSMessage,
+    _EdMLSWelcome,
 
     -- * Event data helpers
     SimpleMember (..),
@@ -54,28 +59,7 @@ module Wire.API.Event.Conversation
     ConversationAccessData (..),
     ConversationMessageTimerUpdate (..),
     ConversationCode (..),
-    Conversation (..),
-    TypingData (..),
     QualifiedUserIdList (..),
-
-    -- * Swagger
-    modelEvent,
-    modelMemberEvent,
-    modelConnectEvent,
-    modelConversationReceiptModeUpdateEvent,
-    modelConversationNameUpdateEvent,
-    modelConversationAccessUpdateEvent,
-    modelConversationMessageTimerUpdateEvent,
-    modelConversationCodeUpdateEvent,
-    modelConversationCodeDeleteEvent,
-    modelMemberUpdateEvent,
-    modelTypingEvent,
-    modelOtrMessageEvent,
-    modelMembers,
-    modelConnect,
-    modelMemberUpdateData,
-    modelOtrMessage,
-    typeEventType,
   )
 where
 
@@ -83,70 +67,53 @@ import Control.Applicative
 import Control.Arrow ((&&&))
 import Control.Lens (makePrisms, (?~), _1)
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
-import qualified Data.HashMap.Strict as HashMap
+import Data.Aeson qualified as A
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Id
-import Data.Json.Util (ToJSONObject (toJSONObject), UTCTimeMillis (fromUTCTimeMillis), toUTCTimeMillis)
+import Data.Json.Util
+import Data.OpenApi (deprecated)
+import Data.OpenApi qualified as S
 import Data.Qualified
+import Data.SOP
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
 import Data.Time
 import Imports
-import qualified Test.QuickCheck as QC
+import Test.QuickCheck qualified as QC
 import URI.ByteString ()
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 import Wire.API.Conversation
-import Wire.API.Conversation.Code (ConversationCode (..), modelConversationCode)
+import Wire.API.Conversation.Code (ConversationCode (..), ConversationCodeInfo)
+import Wire.API.Conversation.Protocol (ProtocolUpdate (unProtocolUpdate))
+import Wire.API.Conversation.Protocol qualified as P
 import Wire.API.Conversation.Role
-import Wire.API.Conversation.Typing (TypingData (..), modelTyping)
-import Wire.API.User (QualifiedUserIdList (..))
+import Wire.API.Conversation.Typing
+import Wire.API.Event.LeaveReason
+import Wire.API.MLS.SubConversation
+import Wire.API.Routes.MultiVerb
+import Wire.API.Routes.Version
+import Wire.API.User (QualifiedUserIdList (..), qualifiedUserIdListObjectSchema)
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- Event
 
 data Event = Event
-  { evtType :: EventType,
-    evtConv :: Qualified ConvId,
+  { evtConv :: Qualified ConvId,
+    evtSubConv :: Maybe SubConvId,
     evtFrom :: Qualified UserId,
     evtTime :: UTCTime,
     evtData :: EventData
   }
   deriving stock (Eq, Show, Generic)
 
-modelEvent :: Doc.Model
-modelEvent = Doc.defineModel "Event" $ do
-  Doc.description "Event data"
-  Doc.property "type" typeEventType $
-    Doc.description "Event type"
-  Doc.property "conversation" Doc.bytes' $
-    Doc.description "Conversation ID"
-  Doc.property "from" Doc.bytes' $
-    Doc.description "User ID"
-  Doc.property "time" Doc.dateTime' $
-    Doc.description "Date and time this event occurred"
-  -- This doesn't really seem to work in swagger-ui.
-  -- The children/subTypes are not displayed.
-  Doc.children
-    "type"
-    [ modelMemberEvent,
-      modelConnectEvent,
-      modelConversationReceiptModeUpdateEvent,
-      modelConversationNameUpdateEvent,
-      modelConversationAccessUpdateEvent,
-      modelConversationMessageTimerUpdateEvent,
-      modelConversationCodeUpdateEvent,
-      modelConversationCodeDeleteEvent,
-      modelMemberUpdateEvent,
-      modelTypingEvent,
-      modelOtrMessageEvent
-    ]
+evtType :: Event -> EventType
+evtType = eventDataType . evtData
 
 instance Arbitrary Event where
   arbitrary = do
     typ <- arbitrary
-    Event typ
+    Event
       <$> arbitrary
+      <*> arbitrary
       <*> arbitrary
       <*> (milli <$> arbitrary)
       <*> genEventData typ
@@ -167,8 +134,11 @@ data EventType
   | ConvDelete
   | ConvReceiptModeUpdate
   | OtrMessageAdd
+  | MLSMessageAdd
+  | MLSWelcome
   | Typing
-  deriving stock (Eq, Show, Generic, Enum, Bounded)
+  | ProtocolUpdate
+  deriving stock (Eq, Show, Generic, Enum, Bounded, Ord)
   deriving (Arbitrary) via (GenericUniform EventType)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema EventType
 
@@ -189,105 +159,36 @@ instance ToSchema EventType where
           element "conversation.delete" ConvDelete,
           element "conversation.connect-request" ConvConnect,
           element "conversation.typing" Typing,
-          element "conversation.otr-message-add" OtrMessageAdd
+          element "conversation.otr-message-add" OtrMessageAdd,
+          element "conversation.mls-message-add" MLSMessageAdd,
+          element "conversation.mls-welcome" MLSWelcome,
+          element "conversation.protocol-update" ProtocolUpdate
         ]
-
-typeEventType :: Doc.DataType
-typeEventType =
-  Doc.string $
-    Doc.enum
-      [ "conversation.member-join",
-        "conversation.member-leave",
-        "conversation.member-update",
-        "conversation.rename",
-        "conversation.access-update",
-        "conversation.receipt-mode-update",
-        "conversation.message-timer-update",
-        "conversation.code-update",
-        "conversation.code-delete",
-        "conversation.create",
-        "conversation.delete",
-        "conversation.connect-request",
-        "conversation.typing",
-        "conversation.otr-message-add"
-      ]
 
 data EventData
   = EdMembersJoin SimpleMembers
-  | EdMembersLeave QualifiedUserIdList
+  | EdMembersLeave EdMemberLeftReason QualifiedUserIdList
   | EdConnect Connect
   | EdConvReceiptModeUpdate ConversationReceiptModeUpdate
   | EdConvRename ConversationRename
   | EdConvDelete
   | EdConvAccessUpdate ConversationAccessData
   | EdConvMessageTimerUpdate ConversationMessageTimerUpdate
-  | EdConvCodeUpdate ConversationCode
+  | EdConvCodeUpdate ConversationCodeInfo
   | EdConvCodeDelete
   | EdMemberUpdate MemberUpdateData
   | EdConversation Conversation
-  | EdTyping TypingData
+  | EdTyping TypingStatus
   | EdOtrMessage OtrMessage
+  | EdMLSMessage ByteString
+  | EdMLSWelcome ByteString
+  | EdProtocolUpdate P.ProtocolTag
   deriving stock (Eq, Show, Generic)
-
-modelMemberEvent :: Doc.Model
-modelMemberEvent = Doc.defineModel "MemberEvent" $ do
-  Doc.description "member event"
-  Doc.property "data" (Doc.ref modelMembers) $ Doc.description "members data"
-
-modelConnectEvent :: Doc.Model
-modelConnectEvent = Doc.defineModel "ConnectEvent" $ do
-  Doc.description "connect event"
-  Doc.property "data" (Doc.ref modelConnect) $ Doc.description "connect data"
-
-modelConversationReceiptModeUpdateEvent :: Doc.Model
-modelConversationReceiptModeUpdateEvent = Doc.defineModel "ConversationReceiptModeUpdateEvent" $ do
-  Doc.description "conversation receipt mode update event"
-  Doc.property "data" (Doc.ref modelConversationReceiptModeUpdate) $ Doc.description "conversation receipt mode data"
-
-modelConversationNameUpdateEvent :: Doc.Model
-modelConversationNameUpdateEvent = Doc.defineModel "ConversationNameUpdateEvent" $ do
-  Doc.description "conversation update event"
-  Doc.property "data" (Doc.ref modelConversationUpdateName) $ Doc.description "conversation name"
-
-modelConversationAccessUpdateEvent :: Doc.Model
-modelConversationAccessUpdateEvent = Doc.defineModel "ConversationAccessUpdateEvent" $ do
-  Doc.description "conversation access update event"
-  Doc.property "data" (Doc.ref modelConversationAccessData) $ Doc.description "conversation access data"
-
-modelConversationMessageTimerUpdateEvent :: Doc.Model
-modelConversationMessageTimerUpdateEvent = Doc.defineModel "ConversationMessageTimerUpdateEvent" $ do
-  Doc.description "conversation message timer update event"
-  Doc.property "data" (Doc.ref modelConversationMessageTimerUpdate) $ Doc.description "conversation message timer data"
-
-modelConversationCodeUpdateEvent :: Doc.Model
-modelConversationCodeUpdateEvent = Doc.defineModel "ConversationCodeUpdateEvent" $ do
-  Doc.description "conversation code update event"
-  Doc.property "data" (Doc.ref modelConversationCode) $ Doc.description "conversation code data"
-
-modelConversationCodeDeleteEvent :: Doc.Model
-modelConversationCodeDeleteEvent =
-  Doc.defineModel "ConversationCodeDeleteEvent" $
-    Doc.description "conversation code delete event"
-
-modelMemberUpdateEvent :: Doc.Model
-modelMemberUpdateEvent = Doc.defineModel "MemberUpdateEvent" $ do
-  Doc.description "member update event"
-  Doc.property "data" (Doc.ref modelMemberUpdateData) $ Doc.description "member data"
-
-modelTypingEvent :: Doc.Model
-modelTypingEvent = Doc.defineModel "TypingEvent" $ do
-  Doc.description "typing event"
-  Doc.property "data" (Doc.ref modelTyping) $ Doc.description "typing data"
-
-modelOtrMessageEvent :: Doc.Model
-modelOtrMessageEvent = Doc.defineModel "OtrMessage" $ do
-  Doc.description "off-the-record message event"
-  Doc.property "data" (Doc.ref modelOtrMessage) $ Doc.description "OTR message"
 
 genEventData :: EventType -> QC.Gen EventData
 genEventData = \case
   MemberJoin -> EdMembersJoin <$> arbitrary
-  MemberLeave -> EdMembersLeave <$> arbitrary
+  MemberLeave -> EdMembersLeave <$> arbitrary <*> arbitrary
   MemberStateUpdate -> EdMemberUpdate <$> arbitrary
   ConvRename -> EdConvRename <$> arbitrary
   ConvAccessUpdate -> EdConvAccessUpdate <$> arbitrary
@@ -299,7 +200,29 @@ genEventData = \case
   ConvReceiptModeUpdate -> EdConvReceiptModeUpdate <$> arbitrary
   Typing -> EdTyping <$> arbitrary
   OtrMessageAdd -> EdOtrMessage <$> arbitrary
+  MLSMessageAdd -> EdMLSMessage <$> arbitrary
+  MLSWelcome -> EdMLSWelcome <$> arbitrary
   ConvDelete -> pure EdConvDelete
+  ProtocolUpdate -> EdProtocolUpdate <$> arbitrary
+
+eventDataType :: EventData -> EventType
+eventDataType (EdMembersJoin _) = MemberJoin
+eventDataType (EdMembersLeave _ _) = MemberLeave
+eventDataType (EdMemberUpdate _) = MemberStateUpdate
+eventDataType (EdConvRename _) = ConvRename
+eventDataType (EdConvAccessUpdate _) = ConvAccessUpdate
+eventDataType (EdConvMessageTimerUpdate _) = ConvMessageTimerUpdate
+eventDataType (EdConvCodeUpdate _) = ConvCodeUpdate
+eventDataType EdConvCodeDelete = ConvCodeDelete
+eventDataType (EdConnect _) = ConvConnect
+eventDataType (EdConversation _) = ConvCreate
+eventDataType (EdConvReceiptModeUpdate _) = ConvReceiptModeUpdate
+eventDataType (EdTyping _) = Typing
+eventDataType (EdOtrMessage _) = OtrMessageAdd
+eventDataType (EdMLSMessage _) = MLSMessageAdd
+eventDataType (EdMLSWelcome _) = MLSWelcome
+eventDataType EdConvDelete = ConvDelete
+eventDataType (EdProtocolUpdate _) = ProtocolUpdate
 
 --------------------------------------------------------------------------------
 -- Event data helpers
@@ -320,16 +243,11 @@ instance ToSchema SimpleMembers where
           .= optional
             ( fieldWithDocModifier
                 "user_ids"
-                (description ?~ "deprecated")
+                ( (description ?~ "deprecated")
+                    . (deprecated ?~ True)
+                )
                 (array schema)
             )
-
--- | Used both for 'SimpleMembers' and 'UserIdList'.
-modelMembers :: Doc.Model
-modelMembers =
-  Doc.defineModel "Members" $
-    Doc.property "users" (Doc.unique $ Doc.array Doc.bytes') $
-      Doc.description "List of user IDs"
 
 data SimpleMember = SimpleMember
   { smQualifiedId :: Qualified UserId,
@@ -371,23 +289,10 @@ connectObjectSchema :: ObjectSchema SwaggerDoc Connect
 connectObjectSchema =
   Connect
     <$> cRecipient .= field "qualified_recipient" schema
-    <* (Just . qUnqualified . cRecipient) .= optField "recipient" Nothing schema
-    <*> cMessage .= lax (field "message" (optWithDefault A.Null schema))
-    <*> cName .= lax (field "name" (optWithDefault A.Null schema))
-    <*> cEmail .= lax (field "email" (optWithDefault A.Null schema))
-
-modelConnect :: Doc.Model
-modelConnect = Doc.defineModel "Connect" $ do
-  Doc.description "user to user connection request"
-  Doc.property "recipient" Doc.bytes' $
-    Doc.description "The user ID to connect to"
-  Doc.property "message" Doc.string' $
-    Doc.description "Initial message to send to user"
-  Doc.property "name" Doc.string' $
-    Doc.description "Name of requestor"
-  Doc.property "email" Doc.string' $ do
-    Doc.description "E-Mail of requestor"
-    Doc.optional
+    <* (qUnqualified . cRecipient) .= optional (field "recipient" schema)
+    <*> cMessage .= optField "message" (maybeWithDefault A.Null schema)
+    <*> cName .= optField "name" (maybeWithDefault A.Null schema)
+    <*> cEmail .= optField "email" (maybeWithDefault A.Null schema)
 
 -- | Outbound member updates. When a user A acts upon a user B,
 -- then a user event is generated where B's user ID is set
@@ -416,39 +321,18 @@ memberUpdateDataObjectSchema :: ObjectSchema SwaggerDoc MemberUpdateData
 memberUpdateDataObjectSchema =
   MemberUpdateData
     <$> misTarget .= field "qualified_target" schema
-    <* (Just . qUnqualified . misTarget) .= optField "target" Nothing schema
-    <*> misOtrMutedStatus .= opt (field "otr_muted_status" schema)
-    <*> misOtrMutedRef .= opt (field "otr_muted_ref" schema)
-    <*> misOtrArchived .= opt (field "otr_archived" schema)
-    <*> misOtrArchivedRef .= opt (field "otr_archived_ref" schema)
-    <*> misHidden .= opt (field "hidden" schema)
-    <*> misHiddenRef .= opt (field "hidden_ref" schema)
-    <*> misConvRoleName .= opt (field "conversation_role" schema)
+    <* (qUnqualified . misTarget) .= optional (field "target" schema)
+    <*> misOtrMutedStatus .= maybe_ (optField "otr_muted_status" schema)
+    <*> misOtrMutedRef .= maybe_ (optField "otr_muted_ref" schema)
+    <*> misOtrArchived .= maybe_ (optField "otr_archived" schema)
+    <*> misOtrArchivedRef .= maybe_ (optField "otr_archived_ref" schema)
+    <*> misHidden .= maybe_ (optField "hidden" schema)
+    <*> misHiddenRef .= maybe_ (optField "hidden_ref" schema)
+    <*> misConvRoleName .= maybe_ (optField "conversation_role" schema)
 
-modelMemberUpdateData :: Doc.Model
-modelMemberUpdateData = Doc.defineModel "MemberUpdateData" $ do
-  Doc.description "Event data on member updates"
-  Doc.property "target" Doc.bytes' $ do
-    Doc.description "Target ID of the user that the action was performed on"
-    Doc.optional
-  Doc.property "otr_muted_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)muting"
-    Doc.optional
-  Doc.property "otr_archived" Doc.bool' $ do
-    Doc.description "Whether to notify on conversation updates"
-    Doc.optional
-  Doc.property "otr_archived_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)archiving"
-    Doc.optional
-  Doc.property "hidden" Doc.bool' $ do
-    Doc.description "Whether the conversation is hidden"
-    Doc.optional
-  Doc.property "hidden_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)hiding"
-    Doc.optional
-  Doc.property "conversation_role" Doc.string' $ do
-    Doc.description "Name of the conversation role to update to"
-    Doc.optional
+data AddCodeResult
+  = CodeAdded Event
+  | CodeAlreadyExisted ConversationCodeInfo
 
 data OtrMessage = OtrMessage
   { otrSender :: ClientId,
@@ -478,8 +362,8 @@ otrMessageObjectSchema =
         (description ?~ textDesc)
         schema
     <*> otrData
-      .= opt
-        ( fieldWithDocModifier
+      .= maybe_
+        ( optFieldWithDocModifier
             "data"
             (description ?~ dataDesc)
             schema
@@ -489,21 +373,6 @@ otrMessageObjectSchema =
     dataDesc =
       "Extra (symmetric) data (i.e. ciphertext, Base64 in JSON) \
       \that is common with all other recipients."
-
-modelOtrMessage :: Doc.Model
-modelOtrMessage = Doc.defineModel "OtrMessage" $ do
-  Doc.description "Encrypted message of a conversation"
-  Doc.property "sender" Doc.bytes' $
-    Doc.description "The sender's client ID"
-  Doc.property "recipient" Doc.bytes' $
-    Doc.description "The recipient's client ID"
-  Doc.property "text" Doc.bytes' $
-    Doc.description "The ciphertext for the recipient (Base64 in JSON)"
-  Doc.property "data" Doc.bytes' $ do
-    Doc.description
-      "Extra (symmetric) data (i.e. ciphertext, Base64 in JSON) \
-      \that is common with all other recipients."
-    Doc.optional
 
 makePrisms ''EventData
 
@@ -515,19 +384,33 @@ taggedEventDataSchema =
   where
     edata = dispatch $ \case
       MemberJoin -> tag _EdMembersJoin (unnamed schema)
-      MemberLeave -> tag _EdMembersLeave (unnamed schema)
+      MemberLeave -> tag _EdMembersLeave (unnamed memberLeaveSchema)
       MemberStateUpdate -> tag _EdMemberUpdate (unnamed schema)
       ConvRename -> tag _EdConvRename (unnamed schema)
-      ConvAccessUpdate -> tag _EdConvAccessUpdate (unnamed schema)
+      -- FUTUREWORK: when V2 is dropped, it is fine to change this schema to
+      -- V3, since V3 clients are guaranteed to know how to parse V2 and V3
+      -- conversation access update events.
+      ConvAccessUpdate ->
+        tag
+          _EdConvAccessUpdate
+          (unnamed (conversationAccessDataSchema (Just V2)))
       ConvCodeUpdate -> tag _EdConvCodeUpdate (unnamed schema)
       ConvConnect -> tag _EdConnect (unnamed schema)
-      ConvCreate -> tag _EdConversation (unnamed schema)
+      ConvCreate -> tag _EdConversation (unnamed (conversationSchema (Just V2)))
       ConvMessageTimerUpdate -> tag _EdConvMessageTimerUpdate (unnamed schema)
       ConvReceiptModeUpdate -> tag _EdConvReceiptModeUpdate (unnamed schema)
       OtrMessageAdd -> tag _EdOtrMessage (unnamed schema)
+      MLSMessageAdd -> tag _EdMLSMessage base64Schema
+      MLSWelcome -> tag _EdMLSWelcome base64Schema
       Typing -> tag _EdTyping (unnamed schema)
       ConvCodeDelete -> tag _EdConvCodeDelete null_
       ConvDelete -> tag _EdConvDelete null_
+      ProtocolUpdate -> tag _EdProtocolUpdate (unnamed (unProtocolUpdate <$> P.ProtocolUpdate .= schema))
+
+memberLeaveSchema :: ValueSchema NamedSwaggerDoc (EdMemberLeftReason, QualifiedUserIdList)
+memberLeaveSchema =
+  object "QualifiedUserIdList_with_EdMemberLeftReason" $
+    (,) <$> fst .= field "reason" schema <*> snd .= qualifiedUserIdListObjectSchema
 
 instance ToSchema Event where
   schema = object "Event" eventObjectSchema
@@ -538,15 +421,16 @@ eventObjectSchema =
     <$> (evtType &&& evtData) .= taggedEventDataSchema
     <* (qUnqualified . evtConv) .= optional (field "conversation" schema)
     <*> evtConv .= field "qualified_conversation" schema
+    <*> evtSubConv .= maybe_ (optField "subconv" schema)
     <* (qUnqualified . evtFrom) .= optional (field "from" schema)
     <*> evtFrom .= field "qualified_from" schema
     <*> (toUTCTimeMillis . evtTime) .= field "time" (fromUTCTimeMillis <$> schema)
   where
-    mk (ty, d) cid uid tm = Event ty cid uid tm d
+    mk (_, d) cid sconvid uid tm = Event cid sconvid uid tm d
 
 instance ToJSONObject Event where
   toJSONObject =
-    HashMap.fromList
+    KeyMap.fromList
       . fromMaybe []
       . schemaOut eventObjectSchema
 
@@ -558,3 +442,17 @@ instance ToJSON Event where
 
 instance S.ToSchema Event where
   declareNamedSchema = schemaToSwagger
+
+--------------------------------------------------------------------------------
+-- MultiVerb instances
+
+instance
+  (ResponseType r1 ~ ConversationCodeInfo, ResponseType r2 ~ Event) =>
+  AsUnion '[r1, r2] AddCodeResult
+  where
+  toUnion (CodeAlreadyExisted c) = Z (I c)
+  toUnion (CodeAdded e) = S (Z (I e))
+
+  fromUnion (Z (I c)) = CodeAlreadyExisted c
+  fromUnion (S (Z (I e))) = CodeAdded e
+  fromUnion (S (S x)) = case x of {}

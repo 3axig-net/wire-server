@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,29 +20,31 @@ module Main
   )
 where
 
-import qualified API
-import Bilge hiding (body, header)
+import API qualified
+import Bilge hiding (body, header, host, port)
+import Bilge qualified
 import Cassandra.Util
 import Control.Lens
 import Data.Aeson
 import Data.Proxy
 import Data.Tagged
-import Data.Text (pack)
 import Data.Text.Encoding (encodeUtf8)
 import Data.Yaml (decodeFileEither)
-import Gundeck.Options
+import Gundeck.Options hiding (host, port)
 import Imports hiding (local)
-import qualified Metrics
+import Metrics qualified
 import Network.HTTP.Client (responseTimeoutMicro)
 import Network.HTTP.Client.TLS
 import OpenSSL (withOpenSSL)
 import Options.Applicative
-import qualified System.Logger as Logger
+import System.Logger qualified as Logger
 import Test.Tasty
+import Test.Tasty.Ingredients
 import Test.Tasty.Options
+import Test.Tasty.Runners
+import Test.Tasty.Runners.AntXML
 import TestSetup
 import Util.Options
-import Util.Options.Common
 import Util.Test
 
 data IntegrationConfig = IntegrationConfig
@@ -50,7 +52,8 @@ data IntegrationConfig = IntegrationConfig
   { gundeck :: Endpoint,
     cannon :: Endpoint,
     cannon2 :: Endpoint,
-    brig :: Endpoint
+    brig :: Endpoint,
+    redis2 :: RedisEndpoint
   }
   deriving (Show, Generic)
 
@@ -62,12 +65,12 @@ newtype ServiceConfigFile = ServiceConfigFile String
 instance IsOption ServiceConfigFile where
   defaultValue = ServiceConfigFile "/etc/wire/gundeck/conf/gundeck.yaml"
   parseValue = fmap ServiceConfigFile . safeRead
-  optionName = return "service-config"
-  optionHelp = return "Service config file to read from"
+  optionName = pure "service-config"
+  optionHelp = pure "Service config file to read from"
   optionCLParser =
-    fmap ServiceConfigFile $
-      strOption $
-        ( short (untag (return 's' :: Tagged ServiceConfigFile Char))
+    ServiceConfigFile
+      <$> strOption
+        ( short (untag (pure 's' :: Tagged ServiceConfigFile Char))
             <> long (untag (optionName :: Tagged ServiceConfigFile String))
             <> help (untag (optionHelp :: Tagged ServiceConfigFile String))
         )
@@ -82,8 +85,10 @@ runTests run = defaultMainWithIngredients ings $
       includingOptions
         [ Option (Proxy :: Proxy ServiceConfigFile),
           Option (Proxy :: Proxy IntegrationConfigFile)
-        ] :
-      defaultIngredients
+        ]
+        : listingTests
+        : composeReporters antXMLRunner consoleTestReporter
+        : defaultIngredients
 
 main :: IO ()
 main = withOpenSSL $ runTests go
@@ -101,18 +106,14 @@ main = withOpenSSL $ runTests go
           tlsManagerSettings
             { managerResponseTimeout = responseTimeoutMicro 300000000
             }
-      let local p = Endpoint {_epHost = "127.0.0.1", _epPort = p}
       gConf <- handleParseError =<< decodeFileEither gFile
       iConf <- handleParseError =<< decodeFileEither iFile
-      g <- GundeckR . mkRequest <$> optOrEnv gundeck iConf (local . read) "GUNDECK_WEB_PORT"
-      c <- CannonR . mkRequest <$> optOrEnv cannon iConf (local . read) "CANNON_WEB_PORT"
-      c2 <- CannonR . mkRequest <$> optOrEnv cannon2 iConf (local . read) "CANNON2_WEB_PORT"
-      b <- BrigR . mkRequest <$> optOrEnv brig iConf (local . read) "BRIG_WEB_PORT"
-      ch <- optOrEnv (\v -> v ^. optCassandra . casEndpoint . epHost) gConf pack "GUNDECK_CASSANDRA_HOST"
-      cp <- optOrEnv (\v -> v ^. optCassandra . casEndpoint . epPort) gConf read "GUNDECK_CASSANDRA_PORT"
-      ck <- optOrEnv (\v -> v ^. optCassandra . casKeyspace) gConf pack "GUNDECK_CASSANDRA_KEYSPACE"
+      let g = GundeckR $ mkRequest iConf.gundeck
+          c = CannonR . mkRequest $ cannon iConf
+          c2 = CannonR . mkRequest $ cannon2 iConf
+          b = BrigR $ mkRequest iConf.brig
       lg <- Logger.new Logger.defSettings
-      db <- defInitCassandra ck ch cp lg
-      return $ TestSetup m g c c2 b db lg
-    releaseOpts _ = return ()
-    mkRequest (Endpoint h p) = host (encodeUtf8 h) . port p
+      db <- defInitCassandra (gConf ^. cassandra) lg
+      pure $ TestSetup m g c c2 b db lg gConf (redis2 iConf)
+    releaseOpts _ = pure ()
+    mkRequest (Endpoint h p) = Bilge.host (encodeUtf8 h) . Bilge.port p

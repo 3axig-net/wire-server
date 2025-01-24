@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -42,7 +42,7 @@ tests = do
   (p3, s3) <- newKeyPair
   z <- C.mkEnv s1 [s2, s3]
   let v = V.mkEnv p1 [p2, p3]
-  return $
+  pure $
     testGroup
       "ZAuth"
       [ testGroup
@@ -69,10 +69,10 @@ defDuration :: Integer
 defDuration = 1
 
 testUserIsNotLegalHoldUser :: Token LegalHoldUser -> Bool
-testUserIsNotLegalHoldUser t = fromByteString @(Token User) (toByteString' t) == Nothing
+testUserIsNotLegalHoldUser t = isNothing (fromByteString @(Token User) (toByteString' t))
 
 testUserIsNotLegalHoldUser' :: Token User -> Bool
-testUserIsNotLegalHoldUser' t = fromByteString @(Token LegalHoldUser) (toByteString' t) == Nothing
+testUserIsNotLegalHoldUser' t = isNothing (fromByteString @(Token LegalHoldUser) (toByteString' t))
 
 testDecEncAccessToken :: Token Access -> Bool
 testDecEncAccessToken t = fromByteString (toByteString' t) == Just t
@@ -89,30 +89,36 @@ testDecEncLegalHoldAccessToken t = fromByteString (toByteString' t) == Just t
 testNotExpired :: V.Env -> Create ()
 testNotExpired p = do
   u <- liftIO nextRandom
-  t <- userToken defDuration u 100
+  t <- userToken defDuration u Nothing 100
   x <- liftIO $ runValidate p $ check t
   liftIO $ assertBool "testNotExpired: validation failed" (isRight x)
 
+-- The testExpired test conforms to the following testing standards:
+-- @SF.Channel @TSFI.RESTfulAPI @TSFI.NTP @S2 @S3
+--
+-- Using an expired access token should fail
 testExpired :: V.Env -> Create ()
 testExpired p = do
   u <- liftIO nextRandom
-  t <- userToken 0 u 100
+  t <- userToken 0 u Nothing 100
   waitSeconds 1
   x <- liftIO $ runValidate p $ check t
   liftIO $ Left Expired @=? x
 
+-- @END
+
 testSignAndVerify :: V.Env -> Create ()
 testSignAndVerify p = do
   u <- liftIO nextRandom
-  t <- userToken defDuration u 100
+  t <- userToken defDuration u Nothing 100
   x <- liftIO $ runValidate p $ check t
   liftIO $ assertBool "testSignAndVerify: validation failed" (isRight x)
 
 testRandDevIds :: Create ()
 testRandDevIds = do
   u <- liftIO nextRandom
-  t1 <- (view body) <$> accessToken1 defDuration u
-  t2 <- (view body) <$> accessToken1 defDuration u
+  t1 <- view body <$> accessToken1 defDuration u Nothing
+  t2 <- view body <$> accessToken1 defDuration u Nothing
   liftIO $ assertBool "unexpected: Same device ID." (t1 ^. connection /= t2 ^. connection)
 
 -- Helpers:

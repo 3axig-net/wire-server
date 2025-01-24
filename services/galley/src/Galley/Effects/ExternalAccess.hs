@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -31,8 +33,8 @@ import Polysemy
 import Wire.API.Event.Conversation
 
 data ExternalAccess m a where
-  Deliver :: Foldable f => f (BotMember, Event) -> ExternalAccess m [BotMember]
-  DeliverAsync :: Foldable f => f (BotMember, Event) -> ExternalAccess m ()
-  DeliverAndDeleteAsync :: Foldable f => ConvId -> f (BotMember, Event) -> ExternalAccess m ()
+  Deliver :: (Foldable f) => f (BotMember, Event) -> ExternalAccess m [BotMember]
+  DeliverAsync :: (Foldable f) => f (BotMember, Event) -> ExternalAccess m ()
+  DeliverAndDeleteAsync :: (Foldable f) => ConvId -> f (BotMember, Event) -> ExternalAccess m ()
 
 makeSem ''ExternalAccess

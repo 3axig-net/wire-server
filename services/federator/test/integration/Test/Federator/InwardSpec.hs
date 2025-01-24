@@ -1,6 +1,9 @@
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,26 +24,29 @@ import Bilge
 import Bilge.Assert
 import Control.Lens (view)
 import Data.Aeson
-import qualified Data.Aeson.Types as Aeson
-import qualified Data.ByteString as BS
+import Data.Aeson.Types qualified as Aeson
+import Data.ByteString qualified as BS
 import Data.ByteString.Conversion (toByteString')
-import qualified Data.ByteString.Lazy as LBS
-import Data.Handle
+import Data.ByteString.Lazy qualified as LBS
 import Data.LegalHold (UserLegalHoldStatus (UserLegalHoldNoConsent))
 import Data.Text.Encoding
-import Federator.Options
+import Federator.Options hiding (federatorExternal)
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai.Utilities.Error as E
+import Network.HTTP.Types qualified as HTTP
 import Test.Federator.Util
 import Test.Hspec
+import Test.QuickCheck (arbitrary, generate)
 import Util.Options (Endpoint (Endpoint))
+import Wire.API.Federation.API.Cargohold
 import Wire.API.Federation.Domain
 import Wire.API.User
 
 -- FUTUREWORK(federation): move these tests to brig-integration (benefit: avoid duplicating all of the brig helper code)
+-- FUTUREWORK(fisx): better yet, reorganize integration tests (or at least the helpers) so
+-- they don't spread out over the different sevices.
 
--- | Path covered by this test
+-- | This module contains tests for the interface between federator and brig.  The tests call
+-- federator directly, circumventing ingress:
 --
 --  +----------+
 --  |federator-|          +------+--+
@@ -63,21 +69,32 @@ spec env =
       runTestFederator env $ do
         brig <- view teBrig <$> ask
         user <- randomUser brig
-        hdl <- randomHandle
-        _ <- putHandle brig (userId user) hdl
 
-        let expectedProfile = (publicProfile user UserLegalHoldNoConsent) {profileHandle = Just (Handle hdl)}
+        let expectedProfile = mkUserProfile EmailVisibleToSelf user UserLegalHoldNoConsent
         bdy <-
-          responseJsonError =<< inwardCall "/federation/brig/get-user-by-handle" (encode hdl)
-            <!! const 200 === statusCode
-        liftIO $ bdy `shouldBe` expectedProfile
+          responseJsonError
+            =<< inwardCall "/federation/brig/get-users-by-ids" (encode [userId user])
+              <!! do
+                const 200 === statusCode
+
+        liftIO $ bdy `shouldBe` [expectedProfile]
+
+    it "testShouldRejectMissmatchingOriginDomainInward" (testShouldRejectMissmatchingOriginDomainInward env)
+
+    it "should be able to call cargohold" $
+      runTestFederator env $ do
+        uid <- liftIO $ generate arbitrary
+        key <- liftIO $ generate arbitrary
+        let ga = GetAsset uid key Nothing
+        inwardCall "/federation/cargohold/get-asset" (encode ga)
+          !!! const 200 === statusCode
 
     it "should return 404 'no-endpoint' response from Brig" $
       runTestFederator env $ do
-        err <-
-          responseJsonError =<< inwardCall "/federation/brig/this-endpoint-does-not-exist" (encode Aeson.emptyObject)
+        resp <-
+          inwardCall "/federation/brig/this-endpoint-does-not-exist" (encode Aeson.emptyObject)
             <!! const 404 === statusCode
-        liftIO $ E.label err `shouldBe` "no-endpoint"
+        liftIO $ resp.responseBody `shouldBe` Nothing
 
     -- Note: most tests for forbidden endpoints are in the unit tests of ExternalService
     -- The integration tests are just another safeguard.
@@ -85,25 +102,40 @@ spec env =
       runTestFederator env $ do
         let o = object ["name" .= ("fakeNewUser" :: Text)]
         inwardCall "/federation/brig/../i/users" (encode o)
-          !!! const 403 === statusCode
+          !!! const 404 === statusCode
 
     it "should only accept /federation/ paths" $
       runTestFederator env $ do
         let o = object ["name" .= ("fakeNewUser" :: Text)]
         inwardCall "/i/users" (encode o)
-          !!! const 403 === statusCode
+          !!! const 404 === statusCode
 
-    -- Matching client certificates against domain names is better tested in
-    -- unit tests.
-    it "should reject requests without a client certificate" $
-      runTestFederator env $ do
-        originDomain <- cfgOriginDomain <$> view teTstOpts
-        hdl <- randomHandle
-        inwardCallWithHeaders
-          "federation/brig/get-user-by-handle"
-          [(originDomainHeaderName, toByteString' originDomain)]
-          (encode hdl)
-          !!! const 403 === statusCode
+    it "testRejectRequestsWithoutClientCertInward" (testRejectRequestsWithoutClientCertInward env)
+
+-- @SF.Federation @TSFI.RESTfulAPI @S2 @S3 @S7
+--
+-- This test is covered by the unit tests 'validateDomainCertWrongDomain' because
+-- the domain matching is checked on certificate validation.
+testShouldRejectMissmatchingOriginDomainInward :: TestEnv -> IO ()
+testShouldRejectMissmatchingOriginDomainInward env = runTestFederator env $ pure ()
+
+-- @END
+
+-- @SF.Federation @TSFI.RESTfulAPI @S2 @S3 @S7
+--
+-- See related tests in unit tests (for matching client certificates against domain names)
+-- and "IngressSpec".
+testRejectRequestsWithoutClientCertInward :: TestEnv -> IO ()
+testRejectRequestsWithoutClientCertInward env = runTestFederator env $ do
+  originDomain <- originDomain <$> view teTstOpts
+  hdl <- randomHandle
+  inwardCallWithHeaders
+    "federation/brig/get-user-by-handle"
+    [(originDomainHeaderName, toByteString' originDomain)]
+    (encode hdl)
+    !!! const 400 === statusCode
+
+-- @END
 
 inwardCallWithHeaders ::
   (MonadIO m, MonadHttp m, MonadReader TestEnv m, HasCallStack) =>
@@ -112,7 +144,7 @@ inwardCallWithHeaders ::
   LBS.ByteString ->
   m (Response (Maybe LByteString))
 inwardCallWithHeaders requestPath hh payload = do
-  Endpoint fedHost fedPort <- cfgFederatorExternal <$> view teTstOpts
+  Endpoint fedHost fedPort <- federatorExternal <$> view teTstOpts
   post
     ( host (encodeUtf8 fedHost)
         . port fedPort
@@ -127,8 +159,17 @@ inwardCall ::
   LBS.ByteString ->
   m (Response (Maybe LByteString))
 inwardCall requestPath payload = do
-  Endpoint fedHost fedPort <- cfgFederatorExternal <$> view teTstOpts
-  originDomain <- cfgOriginDomain <$> view teTstOpts
+  originDomain :: Text <- originDomain <$> view teTstOpts
+  inwardCallWithOriginDomain (toByteString' originDomain) requestPath payload
+
+inwardCallWithOriginDomain ::
+  (MonadIO m, MonadHttp m, MonadReader TestEnv m, HasCallStack) =>
+  ByteString ->
+  ByteString ->
+  LBS.ByteString ->
+  m (Response (Maybe LByteString))
+inwardCallWithOriginDomain originDomain requestPath payload = do
+  Endpoint fedHost fedPort <- federatorExternal <$> view teTstOpts
   clientCertFilename <- clientCertificate . optSettings . view teOpts <$> ask
   clientCert <- liftIO $ BS.readFile clientCertFilename
   post
@@ -136,6 +177,6 @@ inwardCall requestPath payload = do
         . port fedPort
         . path requestPath
         . header "X-SSL-Certificate" (HTTP.urlEncode True clientCert)
-        . header originDomainHeaderName (toByteString' originDomain)
+        . header originDomainHeaderName originDomain
         . bytes (toByteString' payload)
     )

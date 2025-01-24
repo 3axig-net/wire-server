@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,7 +21,6 @@
 module Wire.API.User.Auth
   ( -- * Login
     Login (..),
-    loginLabel,
     LoginCode (..),
     LoginId (..),
     PendingLoginCode (..),
@@ -35,129 +34,94 @@ module Wire.API.User.Auth
     Cookie (..),
     CookieLabel (..),
     RemoveCookies (..),
+    toUnitCookie,
 
     -- * Token
     AccessToken (..),
     bearerToken,
     TokenType (..),
+    SomeUserToken (..),
+    SomeAccessToken (..),
+    UserTokenCookie (..),
+    ProviderToken (..),
+    ProviderTokenCookie (..),
 
-    -- * Swagger
-    modelSendLoginCode,
-    modelLoginCodeResponse,
-    modelLogin,
-    modelRemoveCookies,
-    modelCookie,
-    modelCookieList,
-    modelAccessToken,
+    -- * Access
+    AccessWithCookie (..),
+    Access,
+    SomeAccess,
+
+    -- * Servant
+    TokenResponse,
   )
 where
 
-import Data.Aeson
-import qualified Data.Aeson.Types as Aeson
+import Cassandra
+import Control.Applicative
+import Control.Lens ((?~), (^.))
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson.Types qualified as A
+import Data.Bifunctor
+import Data.ByteString.Builder
 import Data.ByteString.Conversion
-import qualified Data.Code as Code
+import Data.ByteString.Lazy qualified as LBS
+import Data.Code as Code
+import Data.Functor.Alt
 import Data.Handle (Handle)
-import Data.Id (UserId)
-import Data.Misc (PlainTextPassword (..))
-import Data.Schema (ToSchema)
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
-import Data.Text.Lazy.Encoding (decodeUtf8, encodeUtf8)
+import Data.Id
+import Data.Json.Util
+import Data.Misc (PlainTextPassword6)
+import Data.OpenApi qualified as S
+import Data.SOP
+import Data.Schema
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
+import Data.Text.Lazy.Encoding qualified as LT
 import Data.Time.Clock (UTCTime)
+import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Tuple.Extra hiding (first)
+import Data.ZAuth.Token (header, time)
+import Data.ZAuth.Token qualified as ZAuth
 import Imports
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
-import Wire.API.User.Identity (Email, Phone)
-
---------------------------------------------------------------------------------
--- Login
-
--- | Different kinds of logins.
-data Login
-  = PasswordLogin LoginId PlainTextPassword (Maybe CookieLabel)
-  | SmsLogin Phone LoginCode (Maybe CookieLabel)
-  deriving stock (Eq, Show, Generic)
-  deriving (Arbitrary) via (GenericUniform Login)
-
-modelLogin :: Doc.Model
-modelLogin = Doc.defineModel "Login" $ do
-  Doc.description "Payload for performing a login."
-  Doc.property "email" Doc.string' $ do
-    Doc.description "The email address for a password login."
-    Doc.optional
-  Doc.property "phone" Doc.string' $ do
-    Doc.description "The phone number for a password or SMS login."
-    Doc.optional
-  Doc.property "handle" Doc.string' $ do
-    Doc.description "The handle for a password login."
-    Doc.optional
-  Doc.property "password" Doc.string' $ do
-    Doc.description "The password for a password login."
-    Doc.optional
-  Doc.property "code" Doc.string' $ do
-    Doc.description "The login code for an SMS login."
-    Doc.optional
-  Doc.property "label" Doc.string' $ do
-    Doc.description
-      "A label to associate with the returned cookie. \
-      \Every client should have a unique and stable (persistent) label \
-      \to allow targeted revocation of all cookies granted to that \
-      \specific client."
-    Doc.optional
-
-instance ToJSON Login where
-  toJSON (SmsLogin p c l) = object ["phone" .= p, "code" .= c, "label" .= l]
-  toJSON (PasswordLogin login password label) =
-    object ["password" .= password, "label" .= label, loginIdPair login]
-
-instance FromJSON Login where
-  parseJSON = withObject "Login" $ \o -> do
-    passw <- o .:? "password"
-    case passw of
-      Nothing ->
-        SmsLogin <$> o .: "phone" <*> o .: "code" <*> o .:? "label"
-      Just pw -> do
-        loginId <- parseJSON (Object o)
-        PasswordLogin loginId pw <$> o .:? "label"
-
-loginLabel :: Login -> Maybe CookieLabel
-loginLabel (PasswordLogin _ _ l) = l
-loginLabel (SmsLogin _ _ l) = l
+import Servant
+import Web.Cookie
+import Wire.API.Routes.MultiVerb
+import Wire.API.User.Identity (EmailAddress, Phone)
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- LoginId
 
+-- | The login ID for client API versions v0..v5
 data LoginId
-  = LoginByEmail Email
-  | LoginByPhone Phone
+  = LoginByEmail EmailAddress
   | LoginByHandle Handle
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform LoginId)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema LoginId
 
-instance FromJSON LoginId where
-  parseJSON = withObject "LoginId" $ \o -> do
-    email <- fmap LoginByEmail <$> (o .:? "email")
-    phone <- fmap LoginByPhone <$> (o .:? "phone")
-    handle <- fmap LoginByHandle <$> (o .:? "handle")
-    maybe
-      (fail "'email', 'phone' or 'handle' required")
-      pure
-      (email <|> phone <|> handle)
+-- NB. this should fail if (e.g.) the email is present but unparseable even if
+-- the JSON contains a valid handle.
+instance ToSchema LoginId where
+  schema = object "LoginId" loginObjectSchema
 
--- NB. You might be tempted to rewrite this by applying (<|>) to
--- parsers themselves. However, the code as it is right now has a
--- property that if (e.g.) the email is present but unparseable,
--- parsing will fail. If you change it to use (<|>), unparseable
--- email (or phone, etc) will just cause the next parser to be
--- chosen, instead of failing early.
-
-loginIdPair :: LoginId -> Aeson.Pair
-loginIdPair = \case
-  LoginByEmail s -> "email" .= s
-  LoginByPhone s -> "phone" .= s
-  LoginByHandle s -> "handle" .= s
-
-instance ToJSON LoginId where
-  toJSON loginId = object [loginIdPair loginId]
+loginObjectSchema :: ObjectSchema SwaggerDoc LoginId
+loginObjectSchema =
+  fromLoginId .= tupleSchema `withParser` validate
+  where
+    fromLoginId :: LoginId -> (Maybe EmailAddress, Maybe Handle)
+    fromLoginId = \case
+      LoginByEmail e -> (Just e, Nothing)
+      LoginByHandle h -> (Nothing, Just h)
+    tupleSchema :: ObjectSchema SwaggerDoc (Maybe EmailAddress, Maybe Handle)
+    tupleSchema =
+      (,)
+        <$> fst .= maybe_ (optField "email" schema)
+        <*> snd .= maybe_ (optField "handle" schema)
+    validate :: (Maybe EmailAddress, Maybe Handle) -> A.Parser LoginId
+    validate (mEmail, mHandle) =
+      maybe (fail "'email' or 'handle' required") pure $
+        (LoginByEmail <$> mEmail) <|> (LoginByHandle <$> mHandle)
 
 --------------------------------------------------------------------------------
 -- LoginCode
@@ -166,7 +130,13 @@ instance ToJSON LoginId where
 newtype LoginCode = LoginCode
   {fromLoginCode :: Text}
   deriving stock (Eq, Show)
-  deriving newtype (FromJSON, ToJSON, Arbitrary)
+  deriving newtype (Arbitrary)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema LoginCode
+
+deriving instance Cql LoginCode
+
+instance ToSchema LoginCode where
+  schema = LoginCode <$> fromLoginCode .= text "LoginCode"
 
 -- | Used for internal endpoint only.
 data PendingLoginCode = PendingLoginCode
@@ -175,17 +145,14 @@ data PendingLoginCode = PendingLoginCode
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform PendingLoginCode)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema PendingLoginCode
 
-instance ToJSON PendingLoginCode where
-  toJSON (PendingLoginCode c t) =
-    object
-      ["code" .= c, "expires_in" .= t]
-
-instance FromJSON PendingLoginCode where
-  parseJSON = withObject "PendingLoginCode" $ \o ->
-    PendingLoginCode
-      <$> o .: "code"
-      <*> o .: "expires_in"
+instance ToSchema PendingLoginCode where
+  schema =
+    object "PendingLoginCode" $
+      PendingLoginCode
+        <$> pendingLoginCode .= field "code" schema
+        <*> pendingLoginTimeout .= field "expires_in" schema
 
 --------------------------------------------------------------------------------
 -- SendLoginCode
@@ -198,30 +165,28 @@ data SendLoginCode = SendLoginCode
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform SendLoginCode)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema SendLoginCode
 
-modelSendLoginCode :: Doc.Model
-modelSendLoginCode = Doc.defineModel "SendLoginCode" $ do
-  Doc.description "Payload for requesting a login code to be sent."
-  Doc.property "phone" Doc.string' $
-    Doc.description "E.164 phone number to send the code to."
-  Doc.property "voice_call" Doc.bool' $ do
-    Doc.description "Request the code with a call instead (default is SMS)."
-    Doc.optional
-
-instance ToJSON SendLoginCode where
-  toJSON (SendLoginCode p c f) =
-    object
-      [ "phone" .= p,
-        "voice_call" .= c,
-        "force" .= f
-      ]
-
-instance FromJSON SendLoginCode where
-  parseJSON = withObject "SendLoginCode" $ \o ->
-    SendLoginCode
-      <$> o .: "phone"
-      <*> o .:? "voice_call" .!= False
-      <*> o .:? "force" .!= True
+instance ToSchema SendLoginCode where
+  schema =
+    objectWithDocModifier
+      "SendLoginCode"
+      (description ?~ "Payload for requesting a login code to be sent")
+      $ SendLoginCode
+        <$> lcPhone
+          .= fieldWithDocModifier
+            "phone"
+            (description ?~ "E.164 phone number to send the code to")
+            (unnamed schema)
+        <*> lcCall
+          .= fmap
+            (fromMaybe False)
+            ( optFieldWithDocModifier
+                "voice_call"
+                (description ?~ "Request the code with a call instead (default is SMS)")
+                schema
+            )
+        <*> lcForce .= fmap (fromMaybe True) (optField "force" schema)
 
 --------------------------------------------------------------------------------
 -- LoginCodeTimeout
@@ -231,19 +196,19 @@ newtype LoginCodeTimeout = LoginCodeTimeout
   {fromLoginCodeTimeout :: Code.Timeout}
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema LoginCodeTimeout
 
-modelLoginCodeResponse :: Doc.Model
-modelLoginCodeResponse = Doc.defineModel "LoginCodeResponse" $ do
-  Doc.description "A response for a successfully sent login code."
-  Doc.property "expires_in" Doc.int32' $
-    Doc.description "Number of seconds before the login code expires."
-
-instance ToJSON LoginCodeTimeout where
-  toJSON (LoginCodeTimeout t) = object ["expires_in" .= t]
-
-instance FromJSON LoginCodeTimeout where
-  parseJSON = withObject "LoginCodeTimeout" $ \o ->
-    LoginCodeTimeout <$> o .: "expires_in"
+instance ToSchema LoginCodeTimeout where
+  schema =
+    objectWithDocModifier
+      "LoginCodeTimeout"
+      (description ?~ "A response for a successfully sent login code")
+      $ LoginCodeTimeout
+        <$> fromLoginCodeTimeout
+          .= fieldWithDocModifier
+            "expires_in"
+            (description ?~ "Number of seconds before the login code expires")
+            (unnamed schema)
 
 --------------------------------------------------------------------------------
 -- Cookie
@@ -253,18 +218,15 @@ data CookieList = CookieList
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform CookieList)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema CookieList
 
-modelCookieList :: Doc.Model
-modelCookieList = Doc.defineModel "CookieList" $ do
-  Doc.description "List of cookie information"
-  Doc.property "cookies" (Doc.array (Doc.ref modelCookie)) Doc.end
-
-instance ToJSON CookieList where
-  toJSON c = object ["cookies" .= cookieList c]
-
-instance FromJSON CookieList where
-  parseJSON = withObject "CookieList" $ \o ->
-    CookieList <$> o .: "cookies"
+instance ToSchema CookieList where
+  schema =
+    objectWithDocModifier
+      "CookieList"
+      (description ?~ "List of cookie information")
+      $ CookieList
+        <$> cookieList .= field "cookies" (array schema)
 
 -- | A (long-lived) cookie scoped to a specific user for obtaining new
 -- 'AccessToken's.
@@ -280,41 +242,23 @@ data Cookie a = Cookie
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform (Cookie a))
 
-modelCookie :: Doc.Model
-modelCookie = Doc.defineModel "Cookie" $ do
-  Doc.description "Cookie information"
-  Doc.property "id" Doc.int32' $
-    Doc.description "The primary cookie identifier"
-  Doc.property "type" modelTypeCookieType $
-    Doc.description "The cookie's type"
-  Doc.property "created" Doc.dateTime' $
-    Doc.description "The cookie's creation time"
-  Doc.property "expires" Doc.dateTime' $
-    Doc.description "The cookie's expiration time"
-  Doc.property "label" Doc.bytes' $
-    Doc.description "The cookie's label"
+instance ToSchema (Cookie ()) where
+  schema =
+    object "Cookie" $
+      Cookie
+        <$> cookieId .= field "id" schema
+        <*> cookieType .= field "type" schema
+        <*> cookieCreated .= field "created" utcTimeSchema
+        <*> cookieExpires .= field "expires" utcTimeSchema
+        <*> cookieLabel .= optField "label" (maybeWithDefault A.Null schema)
+        <*> cookieSucc .= optField "successor" (maybeWithDefault A.Null schema)
+        <*> cookieValue .= pure ()
 
-instance ToJSON (Cookie ()) where
-  toJSON c =
-    object
-      [ "id" .= cookieId c,
-        "created" .= cookieCreated c,
-        "expires" .= cookieExpires c,
-        "label" .= cookieLabel c,
-        "type" .= cookieType c,
-        "successor" .= cookieSucc c
-      ]
+deriving via Schema (Cookie ()) instance FromJSON (Cookie ())
 
-instance FromJSON (Cookie ()) where
-  parseJSON = withObject "cookie" $ \o ->
-    Cookie
-      <$> o .: "id"
-      <*> o .: "type"
-      <*> o .: "created"
-      <*> o .: "expires"
-      <*> o .:? "label"
-      <*> o .:? "successor"
-      <*> pure ()
+deriving via Schema (Cookie ()) instance ToJSON (Cookie ())
+
+deriving via Schema (Cookie ()) instance S.ToSchema (Cookie ())
 
 -- | A device-specific identifying label for one or more cookies.
 -- Cookies can be listed and deleted based on their labels.
@@ -332,10 +276,19 @@ newtype CookieLabel = CookieLabel
       ToSchema
     )
 
+deriving instance Cql CookieLabel
+
 newtype CookieId = CookieId
   {cookieIdNum :: Word32}
   deriving stock (Eq, Show, Generic)
-  deriving newtype (FromJSON, ToJSON, Arbitrary)
+  deriving newtype (ToSchema, FromJSON, ToJSON, Arbitrary)
+
+instance Cql CookieId where
+  ctype = Cassandra.Tagged BigIntColumn
+  toCql = CqlBigInt . fromIntegral . cookieIdNum
+
+  fromCql (CqlBigInt i) = pure (CookieId (fromIntegral i))
+  fromCql _ = Left "fromCql: invalid cookie id"
 
 data CookieType
   = -- | A session cookie. These are mainly intended for clients
@@ -350,61 +303,88 @@ data CookieType
     PersistentCookie
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform CookieType)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema CookieType
 
-modelTypeCookieType :: Doc.DataType
-modelTypeCookieType =
-  Doc.string $
-    Doc.enum
-      [ "session",
-        "persistent"
-      ]
+instance Cql CookieType where
+  ctype = Cassandra.Tagged IntColumn
 
-instance ToJSON CookieType where
-  toJSON SessionCookie = "session"
-  toJSON PersistentCookie = "persistent"
+  toCql SessionCookie = CqlInt 0
+  toCql PersistentCookie = CqlInt 1
 
-instance FromJSON CookieType where
-  parseJSON (String "session") = return SessionCookie
-  parseJSON (String "persistent") = return PersistentCookie
-  parseJSON _ = fail "Invalid cookie type"
+  fromCql (CqlInt 0) = pure SessionCookie
+  fromCql (CqlInt 1) = pure PersistentCookie
+  fromCql _ = Left "fromCql: invalid cookie type"
+
+instance ToSchema CookieType where
+  schema =
+    enum @Text "CookieType" $
+      element "session" SessionCookie
+        <> element "persistent" PersistentCookie
+
+toUnitCookie :: Cookie a -> Cookie ()
+toUnitCookie c = c {cookieValue = ()}
+
+--------------------------------------------------------------------------------
+-- Login
+
+data Login = MkLogin
+  { lId :: LoginId,
+    lPassword :: PlainTextPassword6,
+    lLabel :: Maybe CookieLabel,
+    lCode :: Maybe Code.Value
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving (Arbitrary) via (GenericUniform Login)
+  deriving (ToJSON, FromJSON, S.ToSchema) via (Schema Login)
+
+instance ToSchema Login where
+  schema =
+    object "Login" $
+      MkLogin
+        <$> lId .= loginObjectSchema
+        <*> lPassword .= field "password" schema
+        <*> lLabel .= optField "label" (maybeWithDefault A.Null schema)
+        <*> lCode .= optField "verification_code" (maybeWithDefault A.Null schema)
 
 --------------------------------------------------------------------------------
 -- RemoveCookies
 
 data RemoveCookies = RemoveCookies
-  { rmCookiesPassword :: PlainTextPassword,
+  { rmCookiesPassword :: PlainTextPassword6,
     rmCookiesLabels :: [CookieLabel],
     rmCookiesIdents :: [CookieId]
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform RemoveCookies)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema RemoveCookies
 
-modelRemoveCookies :: Doc.Model
-modelRemoveCookies = Doc.defineModel "RemoveCookies" $ do
-  Doc.description "Data required to remove cookies"
-  Doc.property "password" Doc.bytes' $
-    Doc.description "The user's password"
-  Doc.property "labels" (Doc.array Doc.bytes') $ do
-    Doc.description "A list of cookie labels for which to revoke the cookies."
-    Doc.optional
-  Doc.property "ids" (Doc.array Doc.int32') $ do
-    Doc.description "A list of cookie IDs to revoke."
-    Doc.optional
-
-instance ToJSON RemoveCookies where
-  toJSON (RemoveCookies password labels ids) =
-    object
-      [ "password" .= password,
-        "labels" .= labels,
-        "ids" .= ids
-      ]
-
-instance FromJSON RemoveCookies where
-  parseJSON = withObject "remove" $ \o ->
-    RemoveCookies
-      <$> o .: "password"
-      <*> o .:? "labels" .!= []
-      <*> o .:? "ids" .!= []
+instance ToSchema RemoveCookies where
+  schema =
+    objectWithDocModifier
+      "RemoveCookies"
+      (description ?~ "Data required to remove cookies")
+      $ RemoveCookies
+        <$> rmCookiesPassword
+          .= fieldWithDocModifier
+            "password"
+            (description ?~ "The user's password")
+            schema
+        <*> rmCookiesLabels
+          .= fmap
+            fold
+            ( optFieldWithDocModifier
+                "labels"
+                (description ?~ "A list of cookie labels for which to revoke the cookies")
+                (array schema)
+            )
+        <*> rmCookiesIdents
+          .= fmap
+            fold
+            ( optFieldWithDocModifier
+                "ids"
+                (description ?~ "A list of cookie IDs to revoke")
+                (array schema)
+            )
 
 --------------------------------------------------------------------------------
 -- Cookies & Access Tokens
@@ -418,53 +398,215 @@ data AccessToken = AccessToken
     expiresIn :: Integer
   }
   deriving stock (Eq, Show, Generic)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema AccessToken
+
+instance ToSchema AccessToken where
+  schema =
+    object "AccessToken" $
+      AccessToken
+        <$> user .= field "user" schema
+        <*>
+        -- FUTUREWORK: if we assume it's valid UTF-8, why not make it 'Text'?
+        access
+          .= fieldWithDocModifier
+            "access_token"
+            (description ?~ "The opaque access token string")
+            ( LBS.fromStrict . T.encodeUtf8
+                <$> (T.decodeUtf8 . LBS.toStrict)
+                  .= schema
+            )
+        <*> tokenType .= field "token_type" schema
+        <*> expiresIn
+          .= fieldWithDocModifier
+            "expires_in"
+            (description ?~ "The number of seconds this token is valid")
+            schema
 
 bearerToken :: UserId -> LByteString -> Integer -> AccessToken
 bearerToken u a = AccessToken u a Bearer
-
-modelAccessToken :: Doc.Model
-modelAccessToken = Doc.defineModel "AccessToken" $ do
-  Doc.description "An API access token."
-  Doc.property "access_token" Doc.bytes' $
-    Doc.description "The opaque access token string."
-  Doc.property "token_type" (Doc.string $ Doc.enum ["Bearer"]) $
-    Doc.description "The type of the access token."
-  Doc.property "expires_in" Doc.int64' $
-    Doc.description "The number of seconds this token is valid."
-
-instance ToJSON AccessToken where
-  toJSON (AccessToken u t tt e) =
-    object
-      [ "user" .= u,
-        -- FUTUREWORK: if we assume it's valid UTF-8, why not make it 'Text'?
-        "access_token" .= decodeUtf8 t,
-        "token_type" .= tt,
-        "expires_in" .= e
-      ]
-
-instance FromJSON AccessToken where
-  parseJSON = withObject "AccessToken" $ \o ->
-    AccessToken
-      <$> o .: "user"
-      <*> (encodeUtf8 <$> o .: "access_token")
-      <*> o .: "token_type"
-      <*> o .: "expires_in"
 
 instance Arbitrary AccessToken where
   arbitrary =
     AccessToken
       <$> arbitrary
-      <*> (encodeUtf8 <$> arbitrary)
+      <*> (LT.encodeUtf8 <$> arbitrary)
       <*> arbitrary
       <*> arbitrary
 
 data TokenType = Bearer
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform TokenType)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema TokenType
 
-instance ToJSON TokenType where
-  toJSON Bearer = toJSON ("Bearer" :: Text)
+instance ToSchema TokenType where
+  schema = enum @Text "TokenType" $ element "Bearer" Bearer
 
-instance FromJSON TokenType where
-  parseJSON (String "Bearer") = return Bearer
-  parseJSON _ = fail "Invalid token type"
+--------------------------------------------------------------------------------
+-- Access
+
+-- summary of types involved:
+--
+-- user tokens     SomeUserToken = Token User + Token LHUser
+-- access tokens   SomeAccessToken = Token Access + Token LHAccess
+
+-- session: Cookie (Token u) (used in DB)
+
+-- cookie: UserTokenCookie
+
+data AccessWithCookie c = Access
+  { accessToken :: !AccessToken,
+    accessCookie :: !(Maybe c)
+  }
+  deriving (Functor, Foldable, Traversable)
+
+type Access u = AccessWithCookie (Cookie (ZAuth.Token u))
+
+type SomeAccess = AccessWithCookie UserTokenCookie
+
+instance AsHeaders '[Maybe UserTokenCookie] AccessToken SomeAccess where
+  toHeaders (Access at c) = (I c :* Nil, at)
+  fromHeaders (I c :* Nil, at) = Access at c
+
+--------------------------------------------------------------------------------
+-- Token sum types
+
+data SomeUserToken
+  = PlainUserToken (ZAuth.Token ZAuth.User)
+  | LHUserToken (ZAuth.Token ZAuth.LegalHoldUser)
+  deriving (Show)
+
+instance FromHttpApiData SomeUserToken where
+  parseHeader h =
+    first T.pack $
+      fmap PlainUserToken (runParser parser h)
+        <!> fmap LHUserToken (runParser parser h)
+  parseUrlPiece = parseHeader . T.encodeUtf8
+
+instance FromByteString SomeUserToken where
+  parser =
+    PlainUserToken <$> parser
+      <|> LHUserToken <$> parser
+
+instance ToByteString SomeUserToken where
+  builder (PlainUserToken t) = builder t
+  builder (LHUserToken t) = builder t
+
+data SomeAccessToken
+  = PlainAccessToken (ZAuth.Token ZAuth.Access)
+  | LHAccessToken (ZAuth.Token ZAuth.LegalHoldAccess)
+  deriving (Show)
+
+instance FromHttpApiData SomeAccessToken where
+  parseHeader h =
+    first T.pack $
+      fmap PlainAccessToken (runParser parser h)
+        <!> fmap LHAccessToken (runParser parser h)
+  parseUrlPiece = parseHeader . T.encodeUtf8
+
+-- | Data that is returned to the client in the form of a cookie containing a
+-- user token.
+data UserTokenCookie = UserTokenCookie
+  { utcExpires :: Maybe UTCTime,
+    utcToken :: SomeUserToken,
+    utcSecure :: Bool
+  }
+
+utcFromSetCookie :: SetCookie -> Either Text UserTokenCookie
+utcFromSetCookie c = do
+  v <- first T.pack $ runParser parser (setCookieValue c)
+  pure
+    UserTokenCookie
+      { utcToken = v,
+        utcExpires = setCookieExpires c,
+        utcSecure = setCookieSecure c
+      }
+
+utcToSetCookie :: UserTokenCookie -> SetCookie
+utcToSetCookie c =
+  def
+    { setCookieName = "zuid",
+      setCookieValue = toByteString' (utcToken c),
+      setCookiePath = Just "/access",
+      setCookieExpires = utcExpires c,
+      setCookieSecure = utcSecure c,
+      setCookieHttpOnly = True
+    }
+
+instance S.ToParamSchema UserTokenCookie where
+  toParamSchema _ = mempty & S.type_ ?~ S.OpenApiString
+
+instance FromHttpApiData UserTokenCookie where
+  parseHeader = utcFromSetCookie . parseSetCookie
+  parseUrlPiece = parseHeader . T.encodeUtf8
+
+instance ToHttpApiData UserTokenCookie where
+  toHeader =
+    LBS.toStrict
+      . toLazyByteString
+      . renderSetCookie
+      . utcToSetCookie
+  toUrlPiece = T.decodeUtf8 . toHeader
+
+--------------------------------------------------------------------------------
+-- Provider
+
+data ProviderToken = ProviderToken (ZAuth.Token ZAuth.Provider)
+  deriving (Show)
+
+instance FromByteString ProviderToken where
+  parser = ProviderToken <$> parser
+
+data ProviderTokenCookie = ProviderTokenCookie
+  { ptcToken :: ProviderToken,
+    ptcSecure :: Bool
+  }
+
+instance FromHttpApiData ProviderTokenCookie where
+  parseHeader = ptcFromSetCookie . parseSetCookie
+  parseUrlPiece = parseHeader . T.encodeUtf8
+
+ptcFromSetCookie :: SetCookie -> Either Text ProviderTokenCookie
+ptcFromSetCookie c = do
+  v <- first T.pack $ runParser parser (setCookieValue c)
+  pure
+    ProviderTokenCookie
+      { ptcToken = v,
+        ptcSecure = setCookieSecure c
+      }
+
+instance ToHttpApiData ProviderTokenCookie where
+  toHeader =
+    LBS.toStrict
+      . toLazyByteString
+      . renderSetCookie
+      . ptcToSetCookie
+  toUrlPiece = T.decodeUtf8 . toHeader
+
+ptcToSetCookie :: ProviderTokenCookie -> SetCookie
+ptcToSetCookie c =
+  def
+    { setCookieName = "zprovider",
+      setCookieValue = toByteString' (providerToken (ptcToken c)),
+      setCookiePath = Just "/provider",
+      setCookieExpires = Just (tokenExpiresUTC (providerToken (ptcToken c))),
+      setCookieSecure = ptcSecure c,
+      setCookieHttpOnly = True
+    }
+  where
+    providerToken :: ProviderToken -> ZAuth.Token ZAuth.Provider
+    providerToken (ProviderToken t) = t
+
+    tokenExpiresUTC :: ZAuth.Token a -> UTCTime
+    tokenExpiresUTC t = posixSecondsToUTCTime (fromIntegral (t ^. header . time))
+
+instance S.ToParamSchema ProviderTokenCookie where
+  toParamSchema _ = mempty & S.type_ ?~ S.OpenApiString
+
+--------------------------------------------------------------------------------
+-- Servant
+
+type TokenResponse =
+  WithHeaders
+    '[OptHeader (Header "Set-Cookie" UserTokenCookie)]
+    SomeAccess
+    (Respond 200 "OK" AccessToken)

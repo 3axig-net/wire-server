@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,14 +24,14 @@ import Control.Arrow ((&&&))
 import Control.Lens (Prism', at, ix, makePrisms, nullOf, prism', (?~), (^.), _1)
 import Data.Aeson (FromJSON (..), Result (..), ToJSON (..), Value (..), decode, encode, fromJSON)
 import Data.Aeson.QQ
-import qualified Data.Aeson.Types as A
-import qualified Data.HashMap.Strict.InsOrd as InsOrdHashMap
+import Data.Aeson.Types qualified as A
+import Data.HashMap.Strict.InsOrd qualified as InsOrdHashMap
 import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.OpenApi qualified as S
+import Data.OpenApi.Declare qualified as S
 import Data.Proxy
 import Data.Schema hiding (getName)
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Declare as S
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Imports
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -65,7 +67,8 @@ tests =
       testRefField,
       testRmClientWrong,
       testRmClient,
-      testEnumType
+      testEnumType,
+      testNullable
     ]
 
 testFooToJSON :: TestTree
@@ -287,7 +290,7 @@ testNonEmptySchema =
       Nothing -> assertFailure "expected schema to have a property called 'nl'"
       Just (S.Ref _) -> assertFailure "expected property 'nl' to have inline schema"
       Just (S.Inline nlSch) -> do
-        assertEqual "type should be Array" (Just S.SwaggerArray) (nlSch ^. S.type_)
+        assertEqual "type should be Array" (Just S.OpenApiArray) (nlSch ^. S.type_)
         assertEqual "minItems should be 1" (Just 1) (nlSch ^. S.minItems)
 
 testRefField :: TestTree
@@ -295,7 +298,8 @@ testRefField =
   testCase "Reference in a field" $ do
     let (defs, _) = S.runDeclare (S.declareSchemaRef (Proxy @Named)) mempty
     assertBool "Referenced schema should be declared" $
-      not . nullOf (ix "Name") $ defs
+      not . nullOf (ix "Name") $
+        defs
 
 testRmClientWrong :: TestTree
 testRmClientWrong =
@@ -328,7 +332,7 @@ testEnumType =
     assertEqual
       "Text enum has Swagger type \"string\""
       (s1 ^. S.type_)
-      (Just S.SwaggerString)
+      (Just S.OpenApiString)
 
     let e2 :: ValueSchema NamedSwaggerDoc Integer
         e2 = enum @Integer "IntEnum" (element (3 :: Integer) (3 :: Integer))
@@ -336,7 +340,24 @@ testEnumType =
     assertEqual
       "Integer enum has Swagger type \"integer\""
       (s2 ^. S.type_)
-      (Just S.SwaggerInteger)
+      (Just S.OpenApiInteger)
+
+testNullable :: TestTree
+testNullable =
+  let sch = nullable (unnamed schema) :: ValueSchema SwaggerDoc (Maybe Int)
+   in testGroup
+        "Nullable schemas"
+        [ testCase "Nullable schemas should parse both null and non-null values" $ do
+            A.parse (schemaIn sch) (A.Number 5) @?= Success (Just 5)
+            A.parse (schemaIn sch) A.Null @?= Success Nothing,
+          testCase "Nullable schemas should produce either a value or null" $ do
+            schemaOut sch (Just 5) @?= Just (A.Number 5)
+            schemaOut sch Nothing @?= Just A.Null,
+          testCase "Nullable schemas should return an error when parsing invalid non-null values" $ do
+            case A.parse (schemaIn sch) (A.String "foo") of
+              Success _ -> assertFailure "fromJSON should fail"
+              Error _ -> pure ()
+        ]
 
 ---
 
@@ -445,8 +466,8 @@ instance ToSchema User where
     object "User" $
       User
         <$> userName .= field "name" schema
-        <*> userHandle .= opt (field "handle" schema)
-        <*> userExpire .= opt (field "expire" schema)
+        <*> userHandle .= maybe_ (optField "handle" schema)
+        <*> userExpire .= maybe_ (optField "expire" schema)
 
 exampleUser1 :: User
 exampleUser1 = User "Alice" (Just "alice") Nothing
@@ -491,10 +512,11 @@ instance ToSchema Tag where
 instance ToSchema TaggedObject where
   schema =
     object "TaggedObject" $
-      uncurry TO <$> (toTag &&& toObj)
-        .= bind
-          (fst .= field "tag" schema)
-          (snd .= fieldOver _1 "obj" (objectOver _1 "UntaggedObject" untaggedSchema))
+      uncurry TO
+        <$> (toTag &&& toObj)
+          .= bind
+            (fst .= field "tag" schema)
+            (snd .= fieldOver _1 "obj" (objectOver _1 "UntaggedObject" untaggedSchema))
     where
       untaggedSchema = dispatch $ \case
         Tag1 -> tag _Obj1 (field "tag1_data" schema)
@@ -554,13 +576,13 @@ rmClientSchema :: ValueSchema NamedSwaggerDoc RmClient
 rmClientSchema =
   object "RmClient" $
     RmClient
-      <$> rmPassword .= lax (field "password" (optWithDefault Null passwordSchema))
+      <$> rmPassword .= optional (field "password" (maybeWithDefault Null passwordSchema))
 
 instance ToSchema RmClient where
   schema =
     object "RmClient" $
       RmClient
-        <$> rmPassword .= optField "password" Nothing passwordSchema
+        <$> rmPassword .= maybe_ (optField "password" passwordSchema)
 
 -- examples from documentation (only type-checked)
 
@@ -581,10 +603,11 @@ tagSchema =
 detailSchema :: ValueSchema NamedSwaggerDoc Detail
 detailSchema =
   object "Detail" $
-    fromTagged <$> toTagged
-      .= bind
-        (fst .= field "tag" tagSchema)
-        (snd .= fieldOver _1 "value" untaggedSchema)
+    fromTagged
+      <$> toTagged
+        .= bind
+          (fst .= field "tag" tagSchema)
+          (snd .= fieldOver _1 "value" untaggedSchema)
   where
     toTagged :: Detail -> (DetailTag, Detail)
     toTagged d@(Name _) = (NameTag, d)
@@ -601,9 +624,9 @@ userSchemaWithDefaultName' :: ValueSchema NamedSwaggerDoc User
 userSchemaWithDefaultName' =
   object "User" $
     User
-      <$> (getOptText . userName) .= (fromMaybe "" <$> opt (field "name" schema))
-      <*> userHandle .= opt (field "handle" schema)
-      <*> userExpire .= opt (field "expire" schema)
+      <$> (getOptText . userName) .= maybe_ (fromMaybe "" <$> optField "name" schema)
+      <*> userHandle .= maybe_ (optField "handle" schema)
+      <*> userExpire .= maybe_ (optField "expire" schema)
   where
     getOptText :: Text -> Maybe Text
     getOptText "" = Nothing
@@ -614,5 +637,5 @@ userSchemaWithDefaultName =
   object "User" $
     User
       <$> userName .= (field "name" schema <|> pure "")
-      <*> userHandle .= opt (field "handle" schema)
-      <*> userExpire .= opt (field "expire" schema)
+      <*> userHandle .= maybe_ (optField "handle" schema)
+      <*> userExpire .= maybe_ (optField "expire" schema)

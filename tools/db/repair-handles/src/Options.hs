@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,10 +17,9 @@
 
 module Options where
 
-import Brig.Data.Instances ()
 import Cassandra hiding (Set)
 import Data.Id
-import Data.String.Conversions (cs)
+import Data.Text qualified as T
 import Data.UUID
 import Imports
 import Options.Applicative hiding (action)
@@ -36,7 +35,7 @@ settingsParser =
     <*> option auto (short 's' <> long "page-size" <> value 1000)
     <*> (Id . parseUUID <$> strArgument (metavar "TEAM-UUID"))
 
-parseUUID :: HasCallStack => String -> UUID
+parseUUID :: (HasCallStack) => String -> UUID
 parseUUID = fromJust . Data.UUID.fromString
 
 cassandraSettingsParser :: String -> Parser CassandraSettings
@@ -57,7 +56,7 @@ cassandraSettingsParser ks =
           <> value 9042
           <> showDefault
       )
-    <*> ( Keyspace . cs
+    <*> ( Keyspace . T.pack
             <$> strOption
               ( long ("cassandra-keyspace-" ++ ks)
                   <> metavar "STRING"

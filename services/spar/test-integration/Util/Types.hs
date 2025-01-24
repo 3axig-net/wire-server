@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -42,21 +43,18 @@ where
 
 import Bilge
 import Cassandra as Cas
-import Control.Exception
 import Control.Lens (makeLenses, view)
 import Crypto.Random.Types (MonadRandom (..))
 import Data.Aeson
 import qualified Data.Aeson as Aeson
 import Data.Aeson.TH
-import Data.String.Conversions
 import Imports
-import SAML2.WebSSO.Types.TH (deriveJSONOptions)
 import Spar.API ()
 import qualified Spar.App as Spar
+import Spar.Options
 import Test.Hspec (pendingWith)
 import Util.Options
 import Wire.API.User.IdentityProvider (WireIdPAPIVersion)
-import Wire.API.User.Saml
 
 type BrigReq = Request -> Request
 
@@ -93,18 +91,18 @@ data TestEnv = TestEnv
 type Select = TestEnv -> (Request -> Request)
 
 data IntegrationConfig = IntegrationConfig
-  { cfgBrig :: Endpoint,
-    cfgGalley :: Endpoint,
-    cfgSpar :: Endpoint,
-    cfgBrigSettingsTeamInvitationTimeout :: Int
+  { brig :: Endpoint,
+    galley :: Endpoint,
+    spar :: Endpoint,
+    brigSettingsTeamInvitationTimeout :: Int
   }
   deriving (Show, Generic)
 
-deriveFromJSON deriveJSONOptions ''IntegrationConfig
+deriveFromJSON Aeson.defaultOptions ''IntegrationConfig
 
 makeLenses ''TestEnv
 
-newtype TestErrorLabel = TestErrorLabel {fromTestErrorLabel :: ST}
+newtype TestErrorLabel = TestErrorLabel {fromTestErrorLabel :: Text}
   deriving (Eq, Show, IsString)
 
 instance FromJSON TestErrorLabel where
@@ -112,13 +110,13 @@ instance FromJSON TestErrorLabel where
 
 -- A quick unit test that serves two purposes: (1) shows that it works (and helped with debugging);
 -- (2) demonstrates how to use it.
-_unitTestTestErrorLabel :: IO ()
-_unitTestTestErrorLabel = do
-  let val :: Either String TestErrorLabel
-      val = Aeson.eitherDecode "{\"code\":404,\"message\":\"Not found.\",\"label\":\"not-found\"}"
-  unless (val == Right "not-found") $
-    throwIO . ErrorCall . show $
-      val
+-- _unitTestTestErrorLabel :: IO ()
+-- _unitTestTestErrorLabel = do
+--   let val :: Either String TestErrorLabel
+--       val = Aeson.eitherDecode "{\"code\":404,\"message\":\"Not found.\",\"label\":\"not-found\"}"
+--   unless (val == Right "not-found") $
+--     throwIO . ErrorCall . show $
+--       val
 
 -- | FUTUREWORK(fisx): we're running all tests for all constructors of `WireIdPAPIVersion`,
 -- which sometimes makes little sense.  'skipIdPAPIVersions' can be used to pend individual

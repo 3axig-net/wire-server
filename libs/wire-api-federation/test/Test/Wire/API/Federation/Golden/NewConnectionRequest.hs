@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,22 +18,24 @@
 module Test.Wire.API.Federation.Golden.NewConnectionRequest where
 
 import Data.Id
-import qualified Data.UUID as UUID
+import Data.UUID qualified as UUID
 import Imports
 import Wire.API.Federation.API.Brig
 
 testObject_NewConnectionRequest1 :: NewConnectionRequest
 testObject_NewConnectionRequest1 =
   NewConnectionRequest
-    { ncrFrom = Id (fromJust (UUID.fromString "69f66843-6cf1-48fb-8c05-1cf58c23566a")),
-      ncrTo = Id (fromJust (UUID.fromString "1669240c-c510-43e0-bf1a-33378fa4ba55")),
-      ncrAction = RemoteConnect
+    { from = Id (fromJust (UUID.fromString "69f66843-6cf1-48fb-8c05-1cf58c23566a")),
+      fromTeam = Just . Id . fromJust . UUID.fromString $ "59f66843-6af1-48fb-8c05-1cf58c23566b",
+      to = Id (fromJust (UUID.fromString "1669240c-c510-43e0-bf1a-33378fa4ba55")),
+      action = RemoteConnect
     }
 
 testObject_NewConnectionRequest2 :: NewConnectionRequest
 testObject_NewConnectionRequest2 =
   NewConnectionRequest
-    { ncrFrom = Id (fromJust (UUID.fromString "69f66843-6cf1-48fb-8c05-1cf58c23566a")),
-      ncrTo = Id (fromJust (UUID.fromString "1669240c-c510-43e0-bf1a-33378fa4ba55")),
-      ncrAction = RemoteRescind
+    { from = Id (fromJust (UUID.fromString "69f66843-6cf1-48fb-8c05-1cf58c23566a")),
+      fromTeam = Nothing,
+      to = Id (fromJust (UUID.fromString "1669240c-c510-43e0-bf1a-33378fa4ba55")),
+      action = RemoteRescind
     }

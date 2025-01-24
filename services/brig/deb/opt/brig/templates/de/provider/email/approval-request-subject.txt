@@ -1,1 +1,1 @@
-Anfrage genehmigen: ${brand_service}
+Genehmigungsanfrage: ${brand_service}

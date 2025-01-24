@@ -1,10 +1,11 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TupleSections #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -52,13 +53,14 @@ where
 
 import qualified Control.Retry as Retry
 import Data.Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.QQ
 import Data.Aeson.Types (JSONPathElement (Key))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as L
-import qualified Data.HashMap.Strict as SMap
 import Data.Proxy
 import Data.Text
 import Data.UUID as UUID
@@ -81,17 +83,17 @@ import Web.Scim.Schema.User (UserTypes (..))
 -- FUTUREWORK: make this a PR upstream.  (while we're at it, we can also patch 'WaiSession'
 -- and 'request' to keep track of the 'SRequest', and add that to the error message here with
 -- the response.)
-shouldRespondWith :: HasCallStack => WaiSession SResponse -> ResponseMatcher -> WaiExpectation
+shouldRespondWith :: (HasCallStack) => WaiSession st SResponse -> ResponseMatcher -> WaiExpectation st
 shouldRespondWith action matcher =
   either (liftIO . expectationFailure) pure =<< doesRespondWith action matcher
 
-doesRespondWith :: HasCallStack => WaiSession SResponse -> ResponseMatcher -> WaiSession (Either String ())
+doesRespondWith :: (HasCallStack) => WaiSession st SResponse -> ResponseMatcher -> WaiSession st (Either String ())
 doesRespondWith action matcher = do
   r <- action
   let extmsg = "  details:  " <> show r <> "\n"
   pure $ maybe (Right ()) (Left . (<> extmsg)) (match r matcher)
 
-shouldEventuallyRespondWith :: HasCallStack => WaiSession SResponse -> ResponseMatcher -> WaiExpectation
+shouldEventuallyRespondWith :: (HasCallStack) => WaiSession st SResponse -> ResponseMatcher -> WaiExpectation st
 shouldEventuallyRespondWith action matcher =
   either (liftIO . expectationFailure) pure
     =<< Retry.retrying
@@ -149,31 +151,31 @@ defAcceptanceQueryConfig = AcceptanceQueryConfig {..}
     a' = maybe a (\(t, l) -> if l == '/' then t else a) $ BS8.unsnoc a
     b' = maybe b (\(h, t) -> if h == '/' then t else b) $ BS8.uncons b
 
-post :: ByteString -> L.ByteString -> WaiSession SResponse
+post :: ByteString -> L.ByteString -> WaiSession st SResponse
 post path = request methodPost path [(hContentType, "application/scim+json")]
 
-put :: ByteString -> L.ByteString -> WaiSession SResponse
+put :: ByteString -> L.ByteString -> WaiSession st SResponse
 put path = request methodPut path [(hContentType, "application/scim+json")]
 
-patch :: ByteString -> L.ByteString -> WaiSession SResponse
+patch :: ByteString -> L.ByteString -> WaiSession st SResponse
 patch path = request methodPatch path [(hContentType, "application/scim+json")]
 
-request' :: Method -> AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession SResponse
+request' :: Method -> AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession st SResponse
 request' method (AcceptanceQueryConfig prefix token) path = request method (prefix <//> path) [(hAuthorization, token), (hContentType, "application/scim+json")]
 
-get' :: AcceptanceQueryConfig tag -> ByteString -> WaiSession SResponse
+get' :: AcceptanceQueryConfig tag -> ByteString -> WaiSession st SResponse
 get' cfg path = request' methodGet cfg path ""
 
-post' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession SResponse
+post' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession st SResponse
 post' = request' methodPost
 
-put' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession SResponse
+put' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession st SResponse
 put' = request' methodPut
 
-patch' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession SResponse
+patch' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession st SResponse
 patch' = request' methodPatch
 
-delete' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession SResponse
+delete' :: AcceptanceQueryConfig tag -> ByteString -> L.ByteString -> WaiSession st SResponse
 delete' = request' methodDelete
 
 ----------------------------------------------------------------------------
@@ -231,16 +233,16 @@ getField (Field a) = a
 -- Copied from https://hackage.haskell.org/package/aeson-extra-0.4.1.1/docs/src/Data.Aeson.Extra.SingObject.html
 instance (KnownSymbol s, FromJSON a) => FromJSON (Field s a) where
   parseJSON = withObject ("Field " <> show key) $ \obj ->
-    case SMap.lookup key obj of
+    case KeyMap.lookup key obj of
       Nothing -> fail $ "key " ++ show key ++ " not present"
       Just v -> Field <$> parseJSON v <?> Key key
     where
-      key = pack $ symbolVal (Proxy :: Proxy s)
+      key = Key.fromString $ symbolVal (Proxy :: Proxy s)
 
 instance (KnownSymbol s, ToJSON a) => ToJSON (Field s a) where
   toJSON (Field x) = object [key .= x]
     where
-      key = pack $ symbolVal (Proxy :: Proxy s)
+      key = Key.fromString $ symbolVal (Proxy :: Proxy s)
 
 ----------------------------------------------------------------------------
 -- Tag

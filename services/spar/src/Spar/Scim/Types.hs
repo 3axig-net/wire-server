@@ -1,23 +1,13 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE PackageImports #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -40,11 +30,13 @@
 -- * Request and response types for SCIM-related endpoints.
 module Spar.Scim.Types where
 
-import Brig.Types.Intra (AccountStatus (..))
+import Brig.Types.Test.Arbitrary (Arbitrary (..))
 import Control.Lens (view)
 import Imports
+import Test.QuickCheck.Gen (elements)
 import qualified Web.Scim.Schema.Common as Scim
 import qualified Web.Scim.Schema.User as Scim.User
+import Wire.API.User (AccountStatus (..))
 import Wire.API.User.RichInfo (RichInfo (..), normalizeRichInfoAssocList)
 import Wire.API.User.Scim (ScimUserExtra (..), SparTag, sueRichInfo)
 
@@ -96,4 +88,10 @@ normalizeLikeStored usr =
     tweakExtra = ScimUserExtra . RichInfo . normalizeRichInfoAssocList . unRichInfo . view sueRichInfo
 
     tweakActive :: Maybe Scim.ScimBool -> Maybe Scim.ScimBool
-    tweakActive = fmap Scim.ScimBool . maybe (Just True) Just . fmap Scim.unScimBool
+    tweakActive = Just . Scim.ScimBool . maybe True Scim.unScimBool
+
+data ScimUserCreationStatus = ScimUserCreating | ScimUserCreated
+  deriving (Eq, Show, Generic)
+
+instance Arbitrary ScimUserCreationStatus where
+  arbitrary = elements [ScimUserCreating, ScimUserCreated]

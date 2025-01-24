@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,27 +16,23 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.QueuedNotification_user where
 
 import Data.Aeson (Value (Array))
 import Data.Id (Id (Id))
-import qualified Data.List.NonEmpty as NonEmpty (fromList)
-import Data.List1 (List1 (List1))
-import qualified Data.UUID as UUID (fromString)
+import Data.List.NonEmpty qualified as NonEmpty (fromList)
+import Data.UUID qualified as UUID (fromString)
 import GHC.Exts (IsList (fromList))
 import Imports (fromJust)
 import Wire.API.Notification (QueuedNotification, queuedNotification)
 
 testObject_QueuedNotification_user_1 :: QueuedNotification
 testObject_QueuedNotification_user_1 =
-  ( queuedNotification
-      (Id (fromJust (UUID.fromString "0000005f-0000-007b-0000-001a0000000a")))
-      ( ( List1
-            ( NonEmpty.fromList
-                [ fromList [],
-                  fromList [("\179372\&3", Array [])]
-                ]
-            )
-        )
-      )
-  )
+  queuedNotification
+    (Id (fromJust (UUID.fromString "0000005f-0000-007b-0000-001a0000000a")))
+    ( NonEmpty.fromList
+        [ fromList [],
+          fromList [("\179372\&3", Array [])]
+        ]
+    )

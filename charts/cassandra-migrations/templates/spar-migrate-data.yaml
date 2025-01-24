@@ -1,12 +1,13 @@
 # This jobs runs data migrations for the spar DB using the spar-migrate-data tool.
 # The source for the tool can be found at services/spar/migrate-data
 #
+{{- if (and .Values.enableSparMigrations .Values.enableBrigMigrations) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: spar-migrate-data
   labels:
-    wireService: "cassandra-migrations"
+    app: "cassandra-migrations"
     chart: "{{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}"
     release: "{{ .Release.Name }}"
     heritage: "{{ .Release.Service }}"
@@ -19,7 +20,6 @@ spec:
     metadata:
       name: "{{.Release.Name}}"
       labels:
-        wireService: spar-migrate-data
         app: spar-migrate-data
         heritage: {{.Release.Service | quote }}
         release: {{.Release.Name | quote }}
@@ -32,14 +32,43 @@ spec:
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
           args:
              - --cassandra-host-spar
-             - "{{ .Values.cassandra.host }}"
+             - "{{ template "cassandraSparHost" . }}"
              - --cassandra-port-spar
              - "9042"
              - --cassandra-keyspace-spar
              - spar
              - --cassandra-host-brig
-             - "{{ .Values.cassandra.host }}"
+             - "{{ template "cassandraBrigHost" . }}"
              - --cassandra-port-brig
              - "9042"
              - --cassandra-keyspace-brig
              - brig
+             {{- if eq (include "useTlsBrig" .) "true" }}
+             - --tls-ca-certificate-file-brig
+             - /certs/brig/{{- (include "tlsSecretRefBrig" . | fromYaml).key }}
+             {{- end }}
+             {{- if eq (include "useTlsSpar" .) "true" }}
+             - --tls-ca-certificate-file-spar
+             - /certs/spar/{{- (include "tlsSecretRefSpar" . | fromYaml).key }}
+             {{- end }}
+          volumeMounts:
+          {{- if eq (include "useTlsBrig" .) "true" }}
+            - name: brig-cassandra-cert
+              mountPath: "/certs/brig"
+          {{- end }}
+          {{- if eq (include "useTlsSpar" .) "true" }}
+            - name: spar-cassandra-cert
+              mountPath: "/certs/spar"
+          {{- end }}
+      volumes:
+      {{- if eq (include "useTlsBrig" .) "true" }}
+        - name: brig-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefBrig" . | fromYaml).name }}
+      {{- end }}
+      {{- if eq (include "useTlsSpar" .) "true" }}
+        - name: spar-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefSpar" . | fromYaml).name }}
+      {{- end }}
+{{- end }}

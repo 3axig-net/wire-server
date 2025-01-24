@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,45 +20,73 @@
 module Wire.API.Properties
   ( PropertyKeysAndValues (..),
     PropertyKey (..),
-    PropertyValue (..),
-
-    -- * Swagger
-    modelPropertyValue,
-    modelPropertyDictionary,
+    RawPropertyValue (..),
   )
 where
 
-import Data.Aeson
+import Cassandra qualified as C
+import Control.Lens ((?~))
+import Data.Aeson (FromJSON (..), ToJSON (..), Value)
+import Data.Aeson qualified as A
 import Data.ByteString.Conversion
 import Data.Hashable (Hashable)
-import qualified Data.Swagger.Build.Api as Doc
+import Data.OpenApi qualified as S
 import Data.Text.Ascii
 import Imports
-import Wire.API.Arbitrary (Arbitrary)
+import Servant
+import Test.QuickCheck
 
-newtype PropertyKeysAndValues = PropertyKeysAndValues [(PropertyKey, PropertyValue)]
-  deriving stock (Eq, Show, Generic)
-  deriving newtype (Hashable)
+newtype PropertyKeysAndValues = PropertyKeysAndValues (Map PropertyKey Value)
+  deriving stock (Eq, Show)
+  deriving newtype (ToJSON)
 
-modelPropertyDictionary :: Doc.Model
-modelPropertyDictionary =
-  Doc.defineModel "PropertyDictionary" $
-    Doc.description "A JSON object with properties as attribute/value pairs."
-
-instance ToJSON PropertyKeysAndValues where
-  toJSON (PropertyKeysAndValues kvs) = object [toText k .= v | (PropertyKey k, v) <- kvs]
+instance S.ToSchema PropertyKeysAndValues where
+  declareNamedSchema _ =
+    pure $
+      S.NamedSchema (Just "PropertyKeysAndValues") $
+        mempty & S.type_ ?~ S.OpenApiObject
 
 newtype PropertyKey = PropertyKey
   {propertyKeyName :: AsciiPrintable}
   deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (FromByteString, ToByteString, FromJSON, ToJSON, FromJSONKey, ToJSONKey, Hashable, Arbitrary)
+  deriving newtype
+    ( FromByteString,
+      ToByteString,
+      FromJSON,
+      ToJSON,
+      S.ToSchema,
+      A.FromJSONKey,
+      A.ToJSONKey,
+      FromHttpApiData,
+      Hashable,
+      Arbitrary
+    )
 
-newtype PropertyValue = PropertyValue
-  {propertyValueJson :: Value}
-  deriving stock (Eq, Show, Generic)
-  deriving newtype (FromJSON, ToJSON, Hashable, Arbitrary)
+instance S.ToParamSchema PropertyKey where
+  toParamSchema _ =
+    mempty
+      & S.type_ ?~ S.OpenApiString
+      & S.format ?~ "printable"
 
-modelPropertyValue :: Doc.Model
-modelPropertyValue =
-  Doc.defineModel "PropertyValue" $
-    Doc.description "A property value is any valid JSON value."
+deriving instance C.Cql PropertyKey
+
+-- | A raw, unparsed property value.
+newtype RawPropertyValue = RawPropertyValue {rawPropertyBytes :: LByteString}
+  deriving (Eq, Show)
+
+instance C.Cql RawPropertyValue where
+  ctype = C.Tagged C.BlobColumn
+  toCql = C.toCql . C.Blob . rawPropertyBytes
+  fromCql (C.CqlBlob v) = pure (RawPropertyValue v)
+  fromCql _ = Left "PropertyValue: Blob expected"
+
+instance {-# OVERLAPPING #-} MimeUnrender JSON RawPropertyValue where
+  mimeUnrender _ = pure . RawPropertyValue
+
+instance {-# OVERLAPPING #-} MimeRender JSON RawPropertyValue where
+  mimeRender _ = rawPropertyBytes
+
+instance S.ToSchema RawPropertyValue where
+  declareNamedSchema _ =
+    pure . S.NamedSchema (Just "PropertyValue") $
+      mempty & S.description ?~ "An arbitrary JSON value for a property"

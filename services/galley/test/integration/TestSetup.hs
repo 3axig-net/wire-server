@@ -1,9 +1,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -fprint-potential-instances #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,17 +28,18 @@ module TestSetup
     tsGConf,
     tsIConf,
     tsManager,
-    tsGalley,
-    tsBrig,
+    tsUnversionedGalley,
+    tsUnversionedBrig,
     tsCannon,
     tsAwsEnv,
     tsMaxConvSize,
     tsCass,
     tsFedGalleyClient,
-    mkFedGalleyClient,
+    tsTeamEventWatcher,
     TestM (..),
     TestSetup (..),
-    FedGalleyClient,
+    FedClient (..),
+    runFedClient,
     GalleyR,
     BrigR,
     CannonR,
@@ -42,26 +47,29 @@ module TestSetup
 where
 
 import Bilge (Manager, MonadHttp (..), Request, withResponse)
-import qualified Cassandra as Cql
-import Control.Lens (makeLenses, view, (^.))
+import Cassandra qualified as Cql
+import Control.Lens (makeLenses, view)
 import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Data.Aeson
 import Data.ByteString.Conversion
 import Data.Domain
-import qualified Data.Text as Text
-import qualified Galley.Aws as Aws
+import Data.Proxy
+import Data.Text qualified as Text
+import Galley.Aws qualified as Aws
 import Galley.Options (Opts)
 import Imports
-import qualified Network.HTTP.Client as HTTP
-import qualified Servant.Client as Servant
-import Servant.Client.Core.BaseUrl
-import qualified Servant.Client.Core.Request as Client
-import Servant.Client.Generic (AsClientT)
-import qualified Servant.Client.Generic as Servant
+import Network.HTTP.Client qualified as HTTP
+import Proto.TeamEvents (TeamEvent)
+import Servant.Client
+import Servant.Client qualified as Servant
+import Servant.Client.Core qualified as Servant
 import Test.Tasty.HUnit
 import Util.Options
+import Util.Test.SQS qualified as SQS
 import Wire.API.Federation.API
 import Wire.API.Federation.Domain
+import Wire.API.Federation.Version
+import Wire.API.VersionInfo
 
 type GalleyR = Request -> Request
 
@@ -85,8 +93,7 @@ data LegalHoldConfig = LegalHoldConfig
   { privateKey :: FilePath,
     publicKey :: FilePath,
     cert :: FilePath,
-    botHost :: Text,
-    botPort :: Int
+    botHost :: Text
   }
   deriving (Show, Generic)
 
@@ -106,19 +113,20 @@ newtype TestM a = TestM {runTestM :: ReaderT TestSetup IO a}
       MonadFail
     )
 
-type FedGalleyClient = FedApi 'Galley (AsClientT TestM)
+data FedClient (comp :: Component) = FedClient HTTP.Manager Endpoint
 
 data TestSetup = TestSetup
   { _tsGConf :: Opts,
     _tsIConf :: IntegrationConfig,
     _tsManager :: Manager,
-    _tsGalley :: GalleyR,
-    _tsBrig :: BrigR,
+    _tsUnversionedGalley :: GalleyR,
+    _tsUnversionedBrig :: BrigR,
     _tsCannon :: CannonR,
     _tsAwsEnv :: Maybe Aws.Env,
     _tsMaxConvSize :: Word16,
     _tsCass :: Cql.ClientState,
-    _tsFedGalleyClient :: Domain -> FedGalleyClient
+    _tsFedGalleyClient :: FedClient 'Galley,
+    _tsTeamEventWatcher :: Maybe (SQS.SQSWatcher TeamEvent)
   }
 
 makeLenses ''TestSetup
@@ -128,24 +136,42 @@ instance MonadHttp TestM where
     manager <- view tsManager
     liftIO $ withResponse req manager handler
 
-mkFedGalleyClient :: Endpoint -> Domain -> FedGalleyClient
-mkFedGalleyClient galleyEndpoint originDomain = Servant.genericClientHoist servantClienMToHttp
+instance VersionedMonad v ClientM where
+  guardVersion _ = pure ()
+
+runFedClient ::
+  forall name comp m api.
+  ( HasUnsafeFedEndpoint comp api name,
+    Servant.HasClient Servant.ClientM api,
+    MonadIO m,
+    HasCallStack
+  ) =>
+  FedClient comp ->
+  Domain ->
+  Servant.Client m api
+runFedClient (FedClient mgr ep) domain =
+  Servant.hoistClient (Proxy @api) (servantClientMToHttp domain) $
+    Servant.clientIn (Proxy @api) (Proxy @Servant.ClientM)
   where
-    servantClienMToHttp :: Servant.ClientM a -> TestM a
-    servantClienMToHttp act = do
-      let galleyHost = Text.unpack $ galleyEndpoint ^. epHost
-          brigPort = fromInteger . toInteger $ galleyEndpoint ^. epPort
-          baseUrl = Servant.BaseUrl Servant.Http galleyHost brigPort "/federation"
-      mgr' <- view tsManager
-      let clientEnv = Servant.ClientEnv mgr' baseUrl Nothing makeClientRequest
-      eitherRes <- liftIO $ Servant.runClientM act clientEnv
+    servantClientMToHttp :: Domain -> Servant.ClientM a -> m a
+    servantClientMToHttp originDomain action = liftIO $ do
+      let h = Text.unpack ep.host
+          p = fromInteger $ toInteger ep.port
+          baseUrl = Servant.BaseUrl Servant.Http h p "/federation"
+          clientEnv = Servant.ClientEnv mgr baseUrl Nothing (makeClientRequest originDomain) id
+      eitherRes <- Servant.runClientM action clientEnv
       case eitherRes of
         Right res -> pure res
-        Left err -> liftIO $ assertFailure $ "Servant client failed with: " <> show err
-    makeClientRequest :: BaseUrl -> Client.Request -> HTTP.Request
-    makeClientRequest burl req =
-      let req' = Servant.defaultMakeClientRequest burl req
-       in req'
-            { HTTP.requestHeaders =
-                HTTP.requestHeaders req' <> [(originDomainHeaderName, toByteString' originDomain)]
-            }
+        Left err -> assertFailure $ "Servant client failed with: " <> show err
+
+    makeClientRequest :: Domain -> Servant.BaseUrl -> Servant.Request -> IO HTTP.Request
+    makeClientRequest originDomain burl req = do
+      req' <- Servant.defaultMakeClientRequest burl req
+      pure
+        req'
+          { HTTP.requestHeaders =
+              HTTP.requestHeaders req'
+                <> [ (originDomainHeaderName, toByteString' originDomain),
+                     (versionHeader, toByteString' (versionInt (maxBound :: Version)))
+                   ]
+          }

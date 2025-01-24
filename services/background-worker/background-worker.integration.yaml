@@ -1,0 +1,29 @@
+logLevel: Debug
+
+backgroundWorker:
+  host: 0.0.0.0
+  port: 8089
+
+federatorInternal:
+  host: 127.0.0.1
+  port: 8097
+
+cassandra:
+  endpoint:
+    host: 127.0.0.1
+    port: 9042
+  keyspace: gundeck_test
+
+rabbitmq:
+  host: 127.0.0.1
+  port: 5671
+  vHost: /
+  adminPort: 15671
+  enableTls: true
+  caCert: test/resources/rabbitmq-ca.pem
+  insecureSkipVerifyTls: false
+
+backendNotificationPusher:
+  pushBackoffMinWait: 1000 # 1ms
+  pushBackoffMaxWait: 1000000 # 1s
+  remotesRefreshInterval: 10000 # 10ms

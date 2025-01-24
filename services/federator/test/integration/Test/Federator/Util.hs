@@ -1,10 +1,13 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,36 +30,39 @@ import Bilge.Assert
 import Control.Exception
 import Control.Lens hiding ((.=))
 import Control.Monad.Catch
-import Control.Monad.Except
-import Crypto.Random.Types (MonadRandom, getRandomBytes)
+import Crypto.Random.Types
 import Data.Aeson
 import Data.Aeson.TH
-import qualified Data.Aeson.Types as Aeson
-import qualified Data.ByteString.Char8 as C8
+import Data.Aeson.Types qualified as Aeson
+import Data.ByteString.Char8 qualified as C8
+import Data.Default (def)
 import Data.Id
 import Data.Misc
 import Data.String.Conversions
-import qualified Data.Text as Text
-import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
-import qualified Data.Yaml as Yaml
-import Federator.Env
+import Data.Text qualified as Text
+import Data.UUID qualified as UUID
+import Data.UUID.V4 qualified as UUID
+import Data.Yaml qualified as Yaml
 import Federator.Options
 import Federator.Run
 import Imports
-import qualified Network.Connection
+import Network.Connection qualified
 import Network.HTTP.Client.TLS
-import qualified Options.Applicative as OPA
+import OpenSSL.Session (SSLContext)
+import Options.Applicative qualified as OPA
 import Polysemy
 import Polysemy.Error
 import System.Random
 import Test.Federator.JSON
 import Test.Tasty.HUnit
-import Util.Options
+import Util.Options (Endpoint)
+import Util.Options qualified as O
 import Wire.API.User
 import Wire.API.User.Auth
 
 type BrigReq = Request -> Request
+
+type CargoholdReq = Request -> Request
 
 newtype TestFederator m a = TestFederator {unwrapTestFederator :: ReaderT TestEnv m a}
   deriving newtype
@@ -72,10 +78,10 @@ newtype TestFederator m a = TestFederator {unwrapTestFederator :: ReaderT TestEn
       MonadMask
     )
 
-instance MonadRandom m => MonadRandom (TestFederator m) where
+instance (MonadRandom m) => MonadRandom (TestFederator m) where
   getRandomBytes = lift . getRandomBytes
 
-instance MonadIO m => MonadHttp (TestFederator m) where
+instance (MonadIO m) => MonadHttp (TestFederator m) where
   handleRequestWithCont req handler = do
     manager <- _teMgr <$> ask
     liftIO $ withResponse req manager handler
@@ -86,21 +92,25 @@ runTestFederator env = flip runReaderT env . unwrapTestFederator
 -- | See 'mkEnv' about what's in here.
 data TestEnv = TestEnv
   { _teMgr :: Manager,
-    _teTLSSettings :: TLSSettings,
+    _teSSLContext :: SSLContext,
     _teBrig :: BrigReq,
+    _teCargohold :: CargoholdReq,
     -- | federator config
     _teOpts :: Opts,
     -- | integration test config
-    _teTstOpts :: IntegrationConfig
+    _teTstOpts :: IntegrationConfig,
+    -- | Settings passed to the federator
+    _teSettings :: RunSettings
   }
 
 type Select = TestEnv -> (Request -> Request)
 
 data IntegrationConfig = IntegrationConfig
-  { cfgBrig :: Endpoint,
-    cfgFederatorExternal :: Endpoint,
-    cfgNginxIngress :: Endpoint,
-    cfgOriginDomain :: Text
+  { brig :: Endpoint,
+    cargohold :: Endpoint,
+    federatorExternal :: Endpoint,
+    nginxIngress :: Endpoint,
+    originDomain :: Text
   }
   deriving (Show, Generic)
 
@@ -140,19 +150,19 @@ cliOptsParser =
     defaultFederatorPath = "/etc/wire/federator/conf/federator.yaml"
 
 -- | Create an environment for integration tests from integration and federator config files.
-mkEnv :: HasCallStack => IntegrationConfig -> Opts -> IO TestEnv
+mkEnv :: (HasCallStack) => IntegrationConfig -> Opts -> IO TestEnv
 mkEnv _teTstOpts _teOpts = do
-  let managerSettings = mkManagerSettings (Network.Connection.TLSSettingsSimple True False False) Nothing
+  let managerSettings = mkManagerSettings (Network.Connection.TLSSettingsSimple True False False def) Nothing
   _teMgr :: Manager <- newManager managerSettings
-  let _teBrig = endpointToReq (cfgBrig _teTstOpts)
-  _teTLSSettings <- mkTLSSettingsOrThrow (optSettings _teOpts)
+  let _teBrig = endpointToReq _teTstOpts.brig
+      _teCargohold = endpointToReq _teTstOpts.cargohold
+  -- _teTLSSettings <- mkTLSSettingsOrThrow (optSettings _teOpts)
+  _teSSLContext <- mkTLSSettingsOrThrow _teOpts.optSettings
+  let _teSettings = _teOpts.optSettings
   pure TestEnv {..}
 
-destroyEnv :: HasCallStack => TestEnv -> IO ()
-destroyEnv _ = pure ()
-
 endpointToReq :: Endpoint -> (Bilge.Request -> Bilge.Request)
-endpointToReq ep = Bilge.host (ep ^. epHost . to cs) . Bilge.port (ep ^. epPort)
+endpointToReq ep = Bilge.host (cs ep.host) . Bilge.port ep.port
 
 -- All the code below is copied from brig-integration tests
 -- FUTUREWORK: This should live in another package and shared by all the integration tests
@@ -170,22 +180,15 @@ randomUser' ::
   m User
 randomUser' hasPwd brig = do
   n <- fromName <$> randomName
-  createUser' hasPwd n brig
+  createUser hasPwd n brig
 
 createUser ::
-  (MonadCatch m, MonadIO m, MonadHttp m, HasCallStack) =>
-  Text ->
-  BrigReq ->
-  m User
-createUser = createUser' True
-
-createUser' ::
   (MonadCatch m, MonadIO m, MonadHttp m, HasCallStack) =>
   Bool ->
   Text ->
   BrigReq ->
   m User
-createUser' hasPwd name brig = do
+createUser hasPwd name brig = do
   r <-
     postUser' hasPwd True name True False Nothing Nothing brig
       <!! const 201 === statusCode
@@ -217,7 +220,7 @@ postUserWithEmail ::
   Bool ->
   Bool ->
   Text ->
-  Maybe Email ->
+  Maybe EmailAddress ->
   Bool ->
   Maybe UserSSOId ->
   Maybe TeamId ->
@@ -245,7 +248,7 @@ postUserWithEmail hasPassword validateBody name email havePhone ssoid teamid bri
   post (brig . path "/i/users" . bdy)
 
 putHandle ::
-  (MonadIO m, MonadHttp m, HasCallStack) =>
+  (MonadHttp m, HasCallStack) =>
   BrigReq ->
   UserId ->
   Text ->
@@ -261,7 +264,7 @@ putHandle brig usr h =
   where
     payload = RequestBodyLBS . encode $ object ["handle" .= h]
 
-randomName :: MonadIO m => m Name
+randomName :: (MonadIO m) => m Name
 randomName = randomNameWithMaxLen 128
 
 -- | For testing purposes we restrict ourselves to code points in the
@@ -273,13 +276,13 @@ randomName = randomNameWithMaxLen 128
 -- the standard tokenizer considers as word boundaries (or which are
 -- simply unassigned code points), yielding no tokens to match and thus
 -- no results in search queries.
-randomNameWithMaxLen :: MonadIO m => Word -> m Name
+randomNameWithMaxLen :: (MonadIO m) => Word -> m Name
 randomNameWithMaxLen maxLen = liftIO $ do
   len <- randomRIO (2, maxLen)
   chars <- fill len []
-  return $ Name (Text.pack chars)
+  pure $ Name (Text.pack chars)
   where
-    fill 0 characters = return characters
+    fill 0 characters = pure characters
     fill 1 characters = (: characters) <$> randLetter
     fill n characters = do
       c <- randChar
@@ -290,34 +293,34 @@ randomNameWithMaxLen maxLen = liftIO $ do
     randLetter = do
       c <- randChar
       if isLetter c
-        then return c
+        then pure c
         else randLetter
 
-randomPhone :: MonadIO m => m Phone
+randomPhone :: (MonadIO m) => m Phone
 randomPhone = liftIO $ do
   nrs <- map show <$> replicateM 14 (randomRIO (0, 9) :: IO Int)
   let phone = parsePhone . Text.pack $ "+0" ++ concat nrs
-  return $ fromMaybe (error "Invalid random phone#") phone
+  pure $ fromMaybe (error "Invalid random phone#") phone
 
-defPassword :: PlainTextPassword
-defPassword = PlainTextPassword "secret"
+defPassword :: PlainTextPassword6
+defPassword = plainTextPassword6Unsafe "topsecretdefaultpassword"
 
 defCookieLabel :: CookieLabel
 defCookieLabel = CookieLabel "auth"
 
 -- | Generate emails that are in the trusted whitelist of domains whose @+@ suffices count for email
 -- disambiguation.  See also: 'Brig.Email.mkEmailKey'.
-randomEmail :: MonadIO m => m Email
+randomEmail :: (MonadIO m) => m EmailAddress
 randomEmail = mkSimulatorEmail "success"
 
-mkSimulatorEmail :: MonadIO m => Text -> m Email
+mkSimulatorEmail :: (MonadIO m) => Text -> m EmailAddress
 mkSimulatorEmail loc = mkEmailRandomLocalSuffix (loc <> "@simulator.amazonses.com")
 
-mkEmailRandomLocalSuffix :: MonadIO m => Text -> m Email
+mkEmailRandomLocalSuffix :: (MonadIO m) => Text -> m EmailAddress
 mkEmailRandomLocalSuffix e = do
   uid <- liftIO UUID.nextRandom
-  case parseEmail e of
-    Just (Email loc dom) -> return $ Email (loc <> "+" <> UUID.toText uid) dom
+  case emailAddressText e of
+    Just mail -> pure $ unsafeEmailAddress ((localPart mail) <> "+" <> UUID.toASCIIBytes uid) (domainPart mail)
     Nothing -> error $ "Invalid email address: " ++ Text.unpack e
 
 zUser :: UserId -> Bilge.Request -> Bilge.Request
@@ -326,10 +329,10 @@ zUser = header "Z-User" . C8.pack . show
 zConn :: ByteString -> Bilge.Request -> Bilge.Request
 zConn = header "Z-Connection"
 
-randomHandle :: MonadIO m => m Text
+randomHandle :: (MonadIO m) => m Text
 randomHandle = liftIO $ do
   nrs <- replicateM 21 (randomRIO (97, 122)) -- a-z
-  return (Text.pack (map chr nrs))
+  pure (Text.pack (map chr nrs))
 
 assertNoError :: (Show e, Member (Embed IO) r) => Sem (Error e ': r) x -> Sem r x
 assertNoError =

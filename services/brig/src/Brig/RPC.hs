@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,26 +22,16 @@ import Bilge
 import Bilge.RPC
 import Bilge.Retry
 import Brig.App
-import Control.Lens
 import Control.Monad.Catch
 import Control.Retry
 import Data.Aeson
-import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy as BL
-import Data.Id
-import qualified Data.Text as Text
-import qualified Data.Text.Lazy as LT
+import Data.ByteString.Lazy qualified as BL
+import Data.Text.Lazy qualified as LT
 import Imports
-import Network.HTTP.Client (HttpExceptionContent (..), checkResponse)
 import Network.HTTP.Types.Method
-import Network.HTTP.Types.Status
 import System.Logger.Class hiding (name, (.=))
-
-x3 :: RetryPolicy
-x3 = limitRetries 3 <> exponentialBackoff 100000
-
-zUser :: UserId -> Request -> Request
-zUser = header "Z-User" . toByteString'
+import Wire.ParseException
+import Wire.Rpc (x3)
 
 remote :: ByteString -> Msg -> Msg
 remote = field "remote"
@@ -49,57 +39,39 @@ remote = field "remote"
 decodeBody :: (Typeable a, FromJSON a, MonadThrow m) => Text -> Response (Maybe BL.ByteString) -> m a
 decodeBody ctx = responseJsonThrow (ParseException ctx)
 
-expect :: [Status] -> Request -> Request
-expect ss rq = rq {checkResponse = check}
-  where
-    check rq' rs = do
-      let s = responseStatus rs
-          rs' = rs {responseBody = ()}
-      when (statusIsServerError s || s `notElem` ss) $
-        throwM $
-          HttpExceptionRequest rq' (StatusCodeException rs' mempty)
-
 cargoholdRequest ::
+  (MonadReader Env m, MonadUnliftIO m, MonadMask m, MonadHttp m, HasRequestId m) =>
   StdMethod ->
   (Request -> Request) ->
-  AppIO (Response (Maybe BL.ByteString))
+  m (Response (Maybe BL.ByteString))
 cargoholdRequest = serviceRequest "cargohold" cargohold
 
 galleyRequest ::
+  (MonadReader Env m, MonadUnliftIO m, MonadMask m, MonadHttp m, HasRequestId m) =>
   StdMethod ->
   (Request -> Request) ->
-  AppIO (Response (Maybe BL.ByteString))
+  m (Response (Maybe BL.ByteString))
 galleyRequest = serviceRequest "galley" galley
 
-gundeckRequest ::
-  StdMethod ->
-  (Request -> Request) ->
-  AppIO (Response (Maybe BL.ByteString))
-gundeckRequest = serviceRequest "gundeck" gundeck
-
 serviceRequest ::
+  (MonadReader Env m, MonadUnliftIO m, MonadMask m, MonadHttp m, HasRequestId m) =>
   LT.Text ->
-  Control.Lens.Getting Request Env Request ->
+  (Env -> Request) ->
   StdMethod ->
   (Request -> Request) ->
-  AppIO (Response (Maybe BL.ByteString))
+  m (Response (Maybe BL.ByteString))
 serviceRequest nm svc m r = do
-  service <- view svc
+  service <- asks svc
+  serviceRequestImpl nm service m r
+
+serviceRequestImpl ::
+  (MonadUnliftIO m, MonadMask m, MonadHttp m, HasRequestId m) =>
+  LT.Text ->
+  Request ->
+  StdMethod ->
+  (Request -> Request) ->
+  m (Response (Maybe BL.ByteString))
+serviceRequestImpl nm service m r = do
   recovering x3 rpcHandlers $
     const $
       rpc' nm service (method m . r)
-
--- | Failed to parse a response from another service.
-data ParseException = ParseException
-  { _parseExceptionRemote :: !Text,
-    _parseExceptionMsg :: String
-  }
-
-instance Show ParseException where
-  show (ParseException r m) =
-    "Failed to parse response from remote "
-      ++ Text.unpack r
-      ++ " with message: "
-      ++ m
-
-instance Exception ParseException

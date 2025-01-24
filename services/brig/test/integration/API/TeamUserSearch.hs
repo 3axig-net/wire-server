@@ -1,8 +1,6 @@
-{-# OPTIONS_GHC -Wno-unused-imports #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,44 +17,43 @@
 
 module API.TeamUserSearch (tests) where
 
-import API.Search.Util (executeTeamUserSearch, refreshIndex)
+import API.Search.Util (executeTeamUserSearch, executeTeamUserSearchWithMaybeState, refreshIndex)
 import API.Team.Util (createPopulatedBindingTeamWithNamesAndHandles)
 import API.User.Util (activateEmail, initiateEmailUpdateNoSend)
 import Bilge (Manager, MonadHttp)
-import qualified Brig.Options as Opt
-import Brig.Types (SearchResult (searchResults), User (userId), fromEmail)
-import Brig.User.Search.TeamUserSearch (TeamUserSearchSortBy (..), TeamUserSearchSortOrder (..))
+import Brig.Options qualified as Opt
 import Control.Monad.Catch (MonadCatch)
 import Control.Retry ()
-import Data.ByteString.Conversion (ToByteString (..), toByteString)
+import Data.ByteString.Conversion (toByteString)
 import Data.Handle (fromHandle)
 import Data.Id (TeamId, UserId)
-import qualified Data.Map.Strict as M
-import Data.String.Conversions (cs)
+import Data.Range (unsafeRange)
+import Data.String.Conversions
 import Imports
-import System.Random
 import System.Random.Shuffle (shuffleM)
 import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.HUnit (assertBool, assertEqual)
+import Test.Tasty.HUnit (assertBool, assertEqual, (@?=))
 import Util (Brig, Galley, randomEmail, test, withSettingsOverrides)
-import Wire.API.User (User (..), userEmail)
-import Wire.API.User.Search (TeamContact (teamContactCreatedAt, teamContactUserId))
+import Wire.API.User (User (..), userEmail, userId)
+import Wire.API.User.Identity hiding (toByteString)
+import Wire.API.User.Search
 
 type TestConstraints m = (MonadFail m, MonadCatch m, MonadIO m, MonadHttp m)
 
 tests :: Opt.Opts -> Manager -> Galley -> Brig -> IO TestTree
 tests opts mgr _galley brig = do
-  return $
-    testGroup "/teams/:tid/search" $
+  pure $
+    testGroup "teams user search" $
       [ testWithNewIndex "can find user by email" (testSearchByEmailSameTeam brig),
         testWithNewIndex "empty query returns the whole team sorted" (testEmptyQuerySorted brig),
         testWithNewIndex "sorting by some properties works" (testSort brig),
-        testWithNewIndex "call to search with remaining properties succeeds" (testSortCallSucceeds brig)
+        testWithNewIndex "call to search with remaining properties succeeds" (testSortCallSucceeds brig),
+        testWithNewIndex "query with paging state" (testEmptyQuerySortedWithPagination brig)
       ]
   where
     testWithNewIndex name f = test mgr name $ withSettingsOverrides opts f
 
-testSearchByEmail :: TestConstraints m => Brig -> m (TeamId, UserId, User) -> Bool -> m ()
+testSearchByEmail :: (HasCallStack, TestConstraints m) => Brig -> m (TeamId, UserId, User) -> Bool -> m ()
 testSearchByEmail brig mkSearcherAndSearchee canFind = do
   (tid, searcher, searchee) <- mkSearcherAndSearchee
   eml <- randomEmail
@@ -66,14 +63,14 @@ testSearchByEmail brig mkSearcherAndSearchee canFind = do
   let check = if canFind then assertTeamUserSearchCanFind else assertTeamUserSearchCannotFind
   check brig tid searcher (userId searchee) (fromEmail eml)
 
-testSearchByEmailSameTeam :: TestConstraints m => Brig -> m ()
+testSearchByEmailSameTeam :: (HasCallStack, TestConstraints m) => Brig -> m ()
 testSearchByEmailSameTeam brig = do
   let mkSearcherAndSearchee = do
         (tid, userId -> ownerId, [u1]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
         pure (tid, ownerId, u1)
   testSearchByEmail brig mkSearcherAndSearchee True
 
-assertTeamUserSearchCanFind :: TestConstraints m => Brig -> TeamId -> UserId -> UserId -> Text -> m ()
+assertTeamUserSearchCanFind :: (TestConstraints m) => Brig -> TeamId -> UserId -> UserId -> Text -> m ()
 assertTeamUserSearchCanFind brig teamid self expected q = do
   r <- searchResults <$> executeTeamUserSearch brig teamid self (Just q) Nothing Nothing Nothing
   liftIO $ do
@@ -82,14 +79,14 @@ assertTeamUserSearchCanFind brig teamid self expected q = do
     assertBool ("User not in results for query: " <> show q) $
       expected `elem` map teamContactUserId r
 
-assertTeamUserSearchCannotFind :: TestConstraints m => Brig -> TeamId -> UserId -> UserId -> Text -> m ()
+assertTeamUserSearchCannotFind :: (TestConstraints m) => Brig -> TeamId -> UserId -> UserId -> Text -> m ()
 assertTeamUserSearchCannotFind brig teamid self expected q = do
   r <- searchResults <$> executeTeamUserSearch brig teamid self (Just q) Nothing Nothing Nothing
   liftIO $ do
     assertBool ("User shouldn't be present in results for query: " <> show q) $
       expected `notElem` map teamContactUserId r
 
-testEmptyQuerySorted :: TestConstraints m => Brig -> m ()
+testEmptyQuerySorted :: (TestConstraints m) => Brig -> m ()
 testEmptyQuerySorted brig = do
   (tid, userId -> ownerId, users) <- createPopulatedBindingTeamWithNamesAndHandles brig 4
   refreshIndex brig
@@ -102,7 +99,7 @@ testEmptyQuerySorted brig = do
       (sort (fmap teamContactUserId r))
   liftIO $ assertEqual "sorted team contacts" (sortOn Down creationDates) creationDates
 
-testSort :: TestConstraints m => Brig -> m ()
+testSort :: (TestConstraints m) => Brig -> m ()
 testSort brig = do
   (tid, userId -> ownerId, usersImplicitOrder) <- createPopulatedBindingTeamWithNamesAndHandles brig 4
   -- Shuffle here to guard against false positives in this test.
@@ -114,7 +111,7 @@ testSort brig = do
   let sortByProperty' :: (TestConstraints m, Ord a) => TeamUserSearchSortBy -> (User -> a) -> TeamUserSearchSortOrder -> m ()
       sortByProperty' = sortByProperty tid users ownerId
   for_ [SortOrderAsc, SortOrderDesc] $ \sortOrder -> do
-    -- FUTUREWORK: Test SortByRole when role is avaible in index
+    -- FUTUREWORK: Test SortByRole when role is available in index
     sortByProperty' SortByEmail userEmail sortOrder
     sortByProperty' SortByName userDisplayName sortOrder
     sortByProperty' SortByHandle (fmap fromHandle . userHandle) sortOrder
@@ -134,7 +131,7 @@ testSort brig = do
 
 -- Creating test users for these cases is hard, so we skip it.
 -- This test checks that the search query at least succeeds and returns the users of the team (without testing correct order).
-testSortCallSucceeds :: TestConstraints m => Brig -> m ()
+testSortCallSucceeds :: (TestConstraints m) => Brig -> m ()
 testSortCallSucceeds brig = do
   (tid, userId -> ownerId, users) <- createPopulatedBindingTeamWithNamesAndHandles brig 4
   refreshIndex brig
@@ -142,3 +139,22 @@ testSortCallSucceeds brig = do
   for_ [SortByManagedBy, SortBySAMLIdp] $ \tuSortBy -> do
     r <- searchResults <$> executeTeamUserSearch brig tid ownerId Nothing Nothing (Just tuSortBy) (Just SortOrderAsc)
     liftIO $ assertEqual ("length of users sorted by " <> cs (toByteString tuSortBy)) n (length r)
+
+testEmptyQuerySortedWithPagination :: (TestConstraints m) => Brig -> m ()
+testEmptyQuerySortedWithPagination brig = do
+  (tid, userId -> ownerId, _) <- createPopulatedBindingTeamWithNamesAndHandles brig 20
+  refreshIndex brig
+  let teamUserSearch mPs = executeTeamUserSearchWithMaybeState brig tid ownerId (Just "") Nothing Nothing Nothing (Just $ unsafeRange 10) mPs
+  searchResultFirst10 <- teamUserSearch Nothing
+  searchResultNext10 <- teamUserSearch (searchPagingState searchResultFirst10)
+  searchResultLast1 <- teamUserSearch (searchPagingState searchResultNext10)
+  liftIO $ do
+    searchReturned searchResultFirst10 @?= 10
+    searchFound searchResultFirst10 @?= 21
+    searchHasMore searchResultFirst10 @?= Just True
+    searchReturned searchResultNext10 @?= 10
+    searchFound searchResultNext10 @?= 21
+    searchHasMore searchResultNext10 @?= Just True
+    searchReturned searchResultLast1 @?= 1
+    searchFound searchResultLast1 @?= 21
+    searchHasMore searchResultLast1 @?= Just False

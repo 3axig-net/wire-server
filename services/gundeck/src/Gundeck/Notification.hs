@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,21 +18,31 @@
 module Gundeck.Notification
   ( paginate,
     PaginateResult (..),
-    getById,
-    getLast,
   )
 where
 
-import Control.Monad.Catch (throwM)
+import Bilge.IO (post)
+import Bilge.Request
+import Bilge.Response
+import Control.Lens (view)
+import Control.Monad.Catch
+import Data.ByteString.Conversion
 import Data.Id
 import Data.Misc (Milliseconds (..))
 import Data.Range
 import Data.Time.Clock.POSIX
-import Gundeck.API.Error
+import Data.UUID qualified as UUID
 import Gundeck.Monad
-import qualified Gundeck.Notification.Data as Data
-import Gundeck.Types.Notification
+import Gundeck.Notification.Data qualified as Data
+import Gundeck.Options (brig)
 import Imports hiding (getLast)
+import Network.HTTP.Types (status400)
+import Network.Wai.Utilities.Error
+import System.Logger.Class
+import System.Logger.Class qualified as Log
+import Util.Options (Endpoint (Endpoint))
+import Wire.API.Internal.Notification
+import Wire.API.Notification
 
 data PaginateResult = PaginateResult
   { paginateResultGap :: Bool,
@@ -40,9 +50,12 @@ data PaginateResult = PaginateResult
   }
 
 paginate :: UserId -> Maybe NotificationId -> Maybe ClientId -> Range 100 10000 Int32 -> Gundeck PaginateResult
-paginate uid since clt size = do
+paginate uid since mclt size = do
+  traverse_ validateNotificationId since
+  for_ mclt $ \clt -> updateActivity uid clt
+
   time <- posixTime
-  rs <- Data.fetch uid clt since size
+  rs <- Data.fetch uid mclt since size
   pure $ PaginateResult (Data.resultGap rs) (resultList time rs)
   where
     resultList time rs =
@@ -52,12 +65,25 @@ paginate uid since clt size = do
         (Just (millisToUTC time))
     millisToUTC = posixSecondsToUTCTime . fromIntegral . (`div` 1000) . ms
 
-getById :: UserId -> NotificationId -> Maybe ClientId -> Gundeck QueuedNotification
-getById uid nid clt = do
-  mn <- Data.fetchId uid nid clt
-  maybe (throwM notificationNotFound) return mn
+    validateNotificationId :: NotificationId -> Gundeck ()
+    validateNotificationId n =
+      unless (isValidNotificationId n) $
+        throwM (mkError status400 "bad-request" "Invalid Notification ID")
 
-getLast :: UserId -> Maybe ClientId -> Gundeck QueuedNotification
-getLast uid clt = do
-  mn <- Data.fetchLast uid clt
-  maybe (throwM notificationNotFound) return mn
+-- | Update last_active property of the given client by making a request to brig.
+updateActivity :: UserId -> ClientId -> Gundeck ()
+updateActivity uid clt = do
+  r <- do
+    Endpoint h p <- view $ options . brig
+    post
+      ( host (toByteString' h)
+          . port p
+          . paths ["i", "clients", toByteString' uid, toByteString' clt, "activity"]
+      )
+  when (statusCode r /= 200) $ do
+    Log.warn $
+      Log.msg ("Could not update client activity" :: ByteString)
+        ~~ "user"
+        .= UUID.toASCIIBytes (toUUID uid)
+        ~~ "client"
+        .= clientToText clt

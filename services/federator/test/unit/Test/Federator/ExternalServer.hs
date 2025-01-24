@@ -1,6 +1,8 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,38 +16,49 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Federator.ExternalServer where
 
-import qualified Data.ByteString as BS
+import Control.Monad.Except
+import Data.ByteString qualified as BS
 import Data.Default
 import Data.Domain
-import Data.String.Conversions (cs)
-import qualified Data.Text.Encoding as Text
+import Data.Sequence as Seq
+import Data.String.Conversions
+import Data.Text.Encoding qualified as Text
 import Federator.Discovery
 import Federator.Error.ServerError (ServerError (..))
 import Federator.ExternalServer
-import Federator.Service (Service)
+import Federator.Interpreter
+import Federator.Metrics
+import Federator.Options
+import Federator.Service (Service (..), ServiceStreaming)
 import Federator.Validation
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Utilities.Server as Wai
+import Network.HTTP.Types
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
+import Network.Wai.Internal qualified as Wai
+import Network.Wai.Utilities.Server qualified as Wai
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
-import qualified Polysemy.TinyLog as TinyLog
+import Polysemy.Output
+import Polysemy.TinyLog
+import Servant.Client.Core qualified as Servant
+import Servant.Server qualified as Servant
+import Servant.Server.Generic
+import Servant.Types.SourceT
+import System.Logger (Msg)
 import Test.Federator.Options (noClientCertSettings)
 import Test.Federator.Util
 import Test.Federator.Validation (mockDiscoveryTrivial)
-import Test.Polysemy.Mock (Mock (mock), evalMock)
-import Test.Polysemy.Mock.TH (genMock)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Wire.API.Federation.Component
-
-genMock ''Service
+import Wire.API.Routes.FederationDomainConfig
+import Wire.Sem.Logger
+import Wire.Sem.Logger.TinyLog
 
 tests :: TestTree
 tests =
@@ -55,11 +68,16 @@ tests =
       requestBrigFailure,
       requestGalleySuccess,
       requestNoCertificate,
+      requestInvalidCertificate,
       requestNoDomain,
       testInvalidPaths,
-      testInvalidComponent,
       testMethod
     ]
+
+interpretMetricsEmpty :: Sem (Metrics ': r) a -> Sem r a
+interpretMetricsEmpty = interpret $ \case
+  OutgoingCounterIncr _ -> pure ()
+  IncomingCounterIncr _ -> pure ()
 
 exampleRequest :: FilePath -> ByteString -> IO Wai.Request
 exampleRequest certFile path = do
@@ -72,59 +90,104 @@ exampleRequest certFile path = do
         trBody = "\"foo\""
       }
 
+data Call = Call
+  { cComponent :: Component,
+    cPath :: ByteString,
+    cHeaders :: RequestHeaders,
+    cBody :: LByteString,
+    cDomain :: Domain
+  }
+  deriving (Eq, Show)
+
+mockService ::
+  (Members [Output Call, Embed IO] r) =>
+  HTTP.Status ->
+  Sem (ServiceStreaming ': r) a ->
+  Sem r a
+mockService status = interpret $ \case
+  ServiceCall comp path headers body domain -> do
+    output (Call comp path headers body domain)
+    pure
+      Servant.Response
+        { Servant.responseStatusCode = status,
+          Servant.responseHeaders = Seq.fromList headers,
+          Servant.responseHttpVersion = HTTP.http11,
+          Servant.responseBody = source ["\"bar\""]
+        }
+
 requestBrigSuccess :: TestTree
 requestBrigSuccess =
-  testCase "should translate response from brig to 'InwardResponseBody' when response has status 200" $ do
-    request <-
+  testCase "should forward response from brig when status is 200" $ do
+    request0 <-
       exampleRequest
         "test/resources/unit/localhost.example.com.pem"
         "/federation/brig/get-user-by-handle"
-    runM . evalMock @Service @IO $ do
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
+    let request =
+          request0
+            { Wai.requestHeaders =
+                ("Invalid-Header", "foo")
+                  : ("X-Wire-API-Version", "v0")
+                  : Wai.requestHeaders request0
+            }
+    Right cert <- decodeCertificate <$> BS.readFile "test/resources/unit/localhost.example.com.pem"
 
-      res <-
-        mock @Service @IO
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . assertNoError @ServerError
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-      actualCalls <- mockServiceCallCalls @IO
-      let expectedCall = (Brig, "/federation/get-user-by-handle", "\"foo\"", aValidDomain)
-      embed $ assertEqual "one call to brig should be made" [expectedCall] actualCalls
-      embed $ Wai.responseStatus res @?= HTTP.status200
-      body <- embed $ Wai.lazyResponseBody res
-      embed $ body @?= "\"bar\""
+    let assertMetrics :: (Member (Embed IO) r) => Sem (Metrics ': r) a -> Sem r a
+        assertMetrics = interpret $ \case
+          OutgoingCounterIncr _ -> embed @IO $ assertFailure "Should not increment outgoing counter"
+          IncomingCounterIncr od -> embed @IO $ od @?= aValidDomain
+
+    resRef <- newIORef Nothing
+    (actualCalls, _) <-
+      runM
+        . assertMetrics
+        . runOutputList
+        . mockService HTTP.ok200
+        . assertNoError @ValidationError
+        . assertNoError @DiscoveryFailure
+        . assertNoError @ServerError
+        . discardTinyLogs
+        . mockDiscoveryTrivial
+        . runInputConst noClientCertSettings
+        . runInputConst scaffoldingFederationDomainConfigs
+        $ callInward Brig (RPC "get-user-by-handle") aValidDomain (CertHeader cert) request (saveResponse resRef)
+
+    Just res <- readIORef resRef
+    let expectedCall = Call Brig "/federation/get-user-by-handle" [("X-Wire-API-Version", "v0")] "\"foo\"" aValidDomain
+    assertEqual "one call to brig should be made" [expectedCall] actualCalls
+    Wai.responseStatus res @?= HTTP.status200
+    body <- Wai.lazyResponseBody res
+    body @?= "\"bar\""
 
 requestBrigFailure :: TestTree
 requestBrigFailure =
-  testCase "should translate response from brig to 'InwardResponseError' when response has status 404" $ do
+  testCase "should preserve the status code returned by the service" $ do
     request <-
       exampleRequest
         "test/resources/unit/localhost.example.com.pem"
         "/federation/brig/get-user-by-handle"
+    Right cert <- decodeCertificate <$> BS.readFile "test/resources/unit/localhost.example.com.pem"
 
-    runM . evalMock @Service @IO $ do
-      let brigResponseBody = "response body"
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.notFound404, Just brigResponseBody))
-      res <-
-        mock @Service @IO
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . assertNoError @ServerError
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
+    resRef <- newIORef Nothing
+    (actualCalls, _) <-
+      runM
+        . interpretMetricsEmpty
+        . runOutputList
+        . mockService HTTP.notFound404
+        . assertNoError @ValidationError
+        . assertNoError @DiscoveryFailure
+        . assertNoError @ServerError
+        . discardTinyLogs
+        . mockDiscoveryTrivial
+        . runInputConst noClientCertSettings
+        . runInputConst scaffoldingFederationDomainConfigs
+        $ callInward Brig (RPC "get-user-by-handle") aValidDomain (CertHeader cert) request (saveResponse resRef)
 
-      actualCalls <- mockServiceCallCalls @IO
-      let expectedCall = (Brig, "/federation/get-user-by-handle", "\"foo\"", aValidDomain)
-      embed $ assertEqual "one call to brig should be made" [expectedCall] actualCalls
-      embed $ Wai.responseStatus res @?= HTTP.notFound404
-      body <- embed $ Wai.lazyResponseBody res
-      embed $ body @?= brigResponseBody
+    Just res <- readIORef resRef
+    let expectedCall = Call Brig "/federation/get-user-by-handle" [] "\"foo\"" aValidDomain
+    assertEqual "one call to brig should be made" [expectedCall] actualCalls
+    Wai.responseStatus res @?= HTTP.notFound404
+    body <- Wai.lazyResponseBody res
+    body @?= "\"bar\""
 
 requestGalleySuccess :: TestTree
 requestGalleySuccess =
@@ -134,28 +197,33 @@ requestGalleySuccess =
         "test/resources/unit/localhost.example.com.pem"
         "/federation/galley/get-conversations"
 
-    runM . evalMock @Service @IO $ do
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
+    Right cert <- decodeCertificate <$> BS.readFile "test/resources/unit/localhost.example.com.pem"
 
-      res <-
-        mock @Service @IO
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . assertNoError @ServerError
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-      actualCalls <- mockServiceCallCalls @IO
-      let expectedCall = (Galley, "/federation/get-conversations", "\"foo\"", aValidDomain)
-      embed $ assertEqual "one call to galley should be made" [expectedCall] actualCalls
-      embed $ Wai.responseStatus res @?= HTTP.status200
-      body <- embed $ Wai.lazyResponseBody res
-      embed $ body @?= "\"bar\""
+    resRef <- newIORef Nothing
+    (actualCalls, _) <-
+      runM
+        . runOutputList
+        . interpretMetricsEmpty
+        . mockService HTTP.ok200
+        . assertNoError @ValidationError
+        . assertNoError @DiscoveryFailure
+        . assertNoError @ServerError
+        . discardTinyLogs
+        . mockDiscoveryTrivial
+        . runInputConst noClientCertSettings
+        . runInputConst scaffoldingFederationDomainConfigs
+        $ callInward Galley (RPC "get-conversations") aValidDomain (CertHeader cert) request (saveResponse resRef)
+
+    Just res <- readIORef resRef
+    let expectedCall = Call Galley "/federation/get-conversations" [] "\"foo\"" aValidDomain
+    assertEqual "one call to galley should be made" [expectedCall] actualCalls
+    Wai.responseStatus res @?= HTTP.status200
+    body <- Wai.lazyResponseBody res
+    body @?= "\"bar\""
 
 requestNoDomain :: TestTree
 requestNoDomain =
-  testCase "should fail with a ServerError when no origin domain header is given" $ do
+  testCase "should fail with a 404 when no origin domain header is given" $ do
     cert <- BS.readFile "test/resources/unit/localhost.example.com.pem"
     request <-
       testRequest
@@ -163,158 +231,164 @@ requestNoDomain =
           { trCertificateHeader = Just cert,
             trPath = "/federation/brig/get-users"
           }
-
-    runM . evalMock @Service @IO $ do
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
-
-      res <-
-        runError
-          . mock @Service @IO
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-
-      actualCalls <- mockServiceCallCalls @IO
-      embed $ assertEqual "no calls to services should be made" [] actualCalls
-      embed $ void res @?= Left NoOriginDomain
+    serviceCallsRef <- newIORef []
+    let serverApp = genericServeT (testInterpreter serviceCallsRef) $ server undefined undefined
+    void . serverApp request $ \res -> do
+      serviceCalls <- readIORef serviceCallsRef
+      assertEqual "Expected response to have status 400" status400 (Wai.responseStatus res)
+      assertEqual "no calls to any service should be made" [] serviceCalls
+      pure Wai.ResponseReceived
 
 requestNoCertificate :: TestTree
 requestNoCertificate =
-  testCase "should fail with a ValidationError when no certificate is given" $ do
+  testCase "should fail with a 404 when no certificate is given" $ do
     request <-
       testRequest
         def
           { trDomainHeader = Just (Text.encodeUtf8 exampleDomain),
             trPath = "/federation/brig/get-users"
           }
+    serviceCallsRef <- newIORef []
+    let serverApp = genericServeT (testInterpreter serviceCallsRef) $ server undefined undefined
+    void . serverApp request $ \res -> do
+      serviceCalls <- readIORef serviceCallsRef
+      assertEqual "Expected response to have status 400" status400 (Wai.responseStatus res)
+      assertEqual "no calls to any service should be made" [] serviceCalls
+      pure Wai.ResponseReceived
 
-    runM . evalMock @Service @IO $ do
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
+-- @SF.Federation @TSFI.Federate @TSFI.DNS @S2 @S3 @S7
+-- Reject request if the client certificate for federator is invalid
+requestInvalidCertificate :: TestTree
+requestInvalidCertificate =
+  testCase "testRequestInvalidCertificate - should fail with a 404 when an invalid certificate is given" $ do
+    request <-
+      testRequest
+        def
+          { trDomainHeader = Just (Text.encodeUtf8 exampleDomain),
+            trPath = "/federation/brig/get-users",
+            trCertificateHeader = Just "not a certificate"
+          }
+    serviceCallsRef <- newIORef []
+    let serverApp = genericServeT (testInterpreter serviceCallsRef) $ server undefined undefined
+    void . serverApp request $ \res -> do
+      serviceCalls <- readIORef serviceCallsRef
+      assertEqual "Expected response to have status 400" status400 (Wai.responseStatus res)
+      assertEqual "no calls to any service should be made" [] serviceCalls
+      pure Wai.ResponseReceived
 
-      res <-
-        runError
-          . mock @Service @IO
-          . assertNoError @ServerError
-          . assertNoError @DiscoveryFailure
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-
-      actualCalls <- mockServiceCallCalls @IO
-      embed $ assertEqual "no calls to services should be made" [] actualCalls
-      embed $ void res @?= Left NoClientCertificate
+-- @END
 
 testInvalidPaths :: TestTree
 testInvalidPaths = do
-  testCase "should not forward requests with invalid paths to services" $ do
-    let invalidPaths =
-          [ "",
-            "/",
-            "///",
-            -- disallowed paths
-            "federation",
-            "/federation",
-            "/federation/",
-            "/federation/brig",
-            "/federation/brig/", -- empty component
-            "i/users",
-            "/i/users",
-            "/federation/brig/too/many/components",
-            -- syntax we don't wish to support
-            "http://federation.wire.link/federation/galley", -- contains scheme and domain
-            "http://federation/stuff", -- contains scheme
-            "federation.wire.link/federation/brig/stuff", -- contains domain
-            "/federation/brig/rpc?bar[]=baz", -- queries not allowed
-            "/federation/brig/stuff?key=value", -- queries not allowed
-            -- rpc names that don't match [0-9a-zA-Z-_]+
-            "/federation/brig/%2e%2e/i/users", -- percent-encoded '../'
-            "/federation/brig/%2E%2E/i/users",
-            "/federation/brig/..%2Fi%2Fusers", -- percent-encoded ../i/users
-            "/federation/brig/%252e%252e/i/users", -- double percent-encoded '../'
-            "/federation/brig/%c0%ae%c0%ae/i/users" -- weird-encoded '../'
-          ]
+  let invalidPaths =
+        [ ("", status404),
+          ("/", status404),
+          ("///", status404),
+          -- disallowed paths
+          ("federation", status404),
+          ("/federation", status404),
+          ("/federation/", status404),
+          ("/federation/brig", status404),
+          ("/federation/brig/", status404), -- empty component
+          ("i/users", status404),
+          ("/i/users", status404),
+          ("/federation/brig/too/many/components", status404),
+          -- syntax we don't wish to support
+          ("http://federation.wire.link/federation/galley", status404), -- contains scheme and domain
+          ("http://federation/stuff", status404), -- contains scheme
+          ("federation.wire.link/federation/brig/stuff", status404), -- contains domain
+          ("/federation/brig/rpc?bar[]=baz", status403), -- queries not allowed
+          ("/federation/brig/stuff?key=value", status403), -- queries not allowed
+          -- rpc names that don't match [0-9a-zA-Z-_]+
+          ("/federation/brig/../i/users", status404),
+          ("/federation/brig/%2e%2e/i/users", status404), -- percent-encoded '../'
+          ("/federation/brig/%2E%2E/i/users", status404),
+          ("/federation/brig/..%2Fi%2Fusers", status400), -- percent-encoded ../i/users
+          ("/federation/brig/%252e%252e/i/users", status404), -- double percent-encoded '../'
+          ("/federation/brig/%c0%ae%c0%ae/i/users", status404), -- weird-encoded '../'
+          ("/federation/mast/get-users", status400) -- invalid component
+        ]
+  testGroup "should not forward requests with invalid paths to services" $
+    map invalidPathTest invalidPaths
+  where
+    invalidPathTest :: (ByteString, Status) -> TestTree
+    invalidPathTest (invalidPath, expectedStatus) =
+      testCase (cs invalidPath) $ do
+        request <-
+          exampleRequest
+            "test/resources/unit/localhost.example.com.pem"
+            invalidPath
 
-    for_ invalidPaths $ \invalidPath -> do
-      request <-
-        exampleRequest
-          "test/resources/unit/localhost.example.com.pem"
-          invalidPath
-
-      runM . evalMock @Service @IO $ do
-        mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
-
-        res <-
-          runError @ServerError
-            . mock @Service @IO
-            . assertNoError @ValidationError
-            . assertNoError @DiscoveryFailure
-            . TinyLog.discardLogs
-            . mockDiscoveryTrivial
-            . runInputConst noClientCertSettings
-            $ callInward request
-
-        embed $ assertEqual ("Expected request with path \"" <> cs invalidPath <> "\" to fail") (Left InvalidRoute) (void res)
-
-        actualCalls <- mockServiceCallCalls @IO
-        embed $ assertEqual "no calls to any service should be made" [] actualCalls
-
-testInvalidComponent :: TestTree
-testInvalidComponent =
-  testCase "a path with an invalid component should result in an error" $ do
-    request <-
-      exampleRequest
-        "test/resources/unit/localhost.example.com.pem"
-        "/federation/mast/get-users"
-
-    runM . evalMock @Service @IO $ do
-      mockServiceCallReturns @IO (\_ _ _ _ -> pure (HTTP.ok200, Just "\"bar\""))
-
-      res <-
-        runError @ServerError
-          . mock @Service @IO
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-
-      embed $ void res @?= Left (UnknownComponent "mast")
-      actualCalls <- mockServiceCallCalls @IO
-      embed $ assertEqual "no calls to any service should be made" [] actualCalls
+        serviceCallsRef <- newIORef []
+        let serverApp = genericServeT (testInterpreter serviceCallsRef) $ server undefined undefined
+        void . serverApp request $ \res -> do
+          serviceCalls <- readIORef serviceCallsRef
+          assertEqual "Unexpected status" expectedStatus (Wai.responseStatus res)
+          assertEqual "no calls to any service should be made" [] serviceCalls
+          pure Wai.ResponseReceived
 
 testMethod :: TestTree
 testMethod =
-  testCase "only POST should be supported" $ do
-    cert <- BS.readFile "test/resources/unit/localhost.example.com.pem"
-    let tr =
-          def
-            { trPath = "/federation/galley/send-message",
-              trDomainHeader = Just (Text.encodeUtf8 exampleDomain),
-              trCertificateHeader = Just cert,
-              trBody = "\"hello\""
-            }
+  testGroup "only POST should be supported" $
+    let invalidMethodTest method = testCase (cs method) $ do
+          cert <- BS.readFile "test/resources/unit/localhost.example.com.pem"
+          let tr =
+                def
+                  { trPath = "/federation/galley/send-message",
+                    trDomainHeader = Just (Text.encodeUtf8 exampleDomain),
+                    trCertificateHeader = Just cert,
+                    trBody = "\"hello\""
+                  }
+          request <- testRequest tr {trMethod = method}
+          serviceCallsRef <- newIORef []
+          let serverApp = genericServeT (testInterpreter serviceCallsRef) $ server undefined undefined
+          void . serverApp request $ \res -> do
+            serviceCalls <- readIORef serviceCallsRef
+            assertEqual "Expected response to have status 403" status403 (Wai.responseStatus res)
+            assertEqual "no calls to any service should be made" [] serviceCalls
+            pure Wai.ResponseReceived
+     in map invalidMethodTest [HTTP.methodGet, HTTP.methodDelete, HTTP.methodPut, HTTP.methodPatch]
 
-    for_ [HTTP.methodGet, HTTP.methodDelete, HTTP.methodPut, HTTP.methodPatch] $ \method -> do
-      request <- testRequest tr {trMethod = method}
-      res <-
-        runM
-          . runError @ServerError
-          . interpret @Service (\_ -> embed $ assertFailure "unexpected call to service")
-          . assertNoError @ValidationError
-          . assertNoError @DiscoveryFailure
-          . TinyLog.discardLogs
-          . mockDiscoveryTrivial
-          . runInputConst noClientCertSettings
-          $ callInward request
-      void res @?= Left InvalidRoute
+testInterpreter ::
+  IORef [Call] ->
+  Sem
+    '[ Metrics,
+       Input FederationDomainConfigs,
+       Input RunSettings,
+       DiscoverFederator,
+       Error DiscoveryFailure,
+       Error ValidationError,
+       Error ServerError,
+       Error Servant.ServerError,
+       Logger (Msg -> Msg),
+       ServiceStreaming,
+       Output Call,
+       Embed IO
+     ]
+    a ->
+  Servant.Handler a
+testInterpreter serviceCallsRef =
+  Servant.Handler
+    . ExceptT
+    . runM @IO
+    . runOutputMonoidIORef @Call serviceCallsRef (: [])
+    . mockService HTTP.ok200
+    . discardLogs
+    . runError
+    . runWaiErrors @'[DiscoveryFailure, ValidationError, ServerError]
+    . mockDiscoveryTrivial
+    . runInputConst noClientCertSettings
+    . runInputConst scaffoldingFederationDomainConfigs
+    . interpretMetricsEmpty
+
+saveResponse :: IORef (Maybe Wai.Response) -> Wai.Response -> IO Wai.ResponseReceived
+saveResponse ref res = writeIORef ref (Just res) $> Wai.ResponseReceived
 
 exampleDomain :: Text
 exampleDomain = "localhost.example.com"
 
 aValidDomain :: Domain
 aValidDomain = Domain exampleDomain
+
+scaffoldingFederationDomainConfigs :: FederationDomainConfigs
+scaffoldingFederationDomainConfigs = defFederationDomainConfigs {strategy = AllowAll}

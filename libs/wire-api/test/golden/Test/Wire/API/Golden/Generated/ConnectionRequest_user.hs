@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,11 +14,12 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.ConnectionRequest_user where
 
 import Data.Id (Id (Id))
 import Data.Range
-import qualified Data.UUID as UUID (fromString)
+import Data.UUID qualified as UUID (fromString)
 import Imports (fromJust)
 import Wire.API.Connection (ConnectionRequest (..))
 
@@ -34,6 +35,6 @@ testObject_ConnectionRequest_user_1 =
 testObject_ConnectionRequest_user_2 :: ConnectionRequest
 testObject_ConnectionRequest_user_2 =
   ConnectionRequest
-    { crUser = (Id (fromJust (UUID.fromString "00003697-0000-346d-0000-6baf00003034"))),
+    { crUser = Id (fromJust (UUID.fromString "00003697-0000-346d-0000-6baf00003034")),
       crName = unsafeRange "\22415\1044771a\166586\SI$\ESC2&\DC2S<\DC1\1090585o\997147\70692U"
     }

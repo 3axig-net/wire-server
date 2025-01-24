@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,7 +27,7 @@ module Web.Scim.Capabilities.MetaSchema
 where
 
 import Data.Aeson
-import qualified Data.HashMap.Lazy as HML
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text)
 import Data.Typeable (Typeable, cast)
 import Servant hiding (URI)
@@ -54,10 +54,10 @@ data Supported a = Supported
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON a => ToJSON (Supported a) where
+instance (ToJSON a) => ToJSON (Supported a) where
   toJSON (Supported (ScimBool b) v) = case toJSON v of
-    (Object o) -> Object $ HML.insert "supported" (Bool b) o
-    _ -> Object $ HML.fromList [("supported", Bool b)]
+    (Object o) -> Object $ KeyMap.insert "supported" (Bool b) o
+    _ -> Object $ KeyMap.fromList [("supported", Bool b)]
 
 -- | See module "Test.Schema.MetaSchemaSpec" for golden tests that explain this instance
 -- better.
@@ -81,7 +81,7 @@ instance ToJSON BulkConfig where
   toJSON = genericToJSON serializeOptions
 
 instance FromJSON BulkConfig where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 data FilterConfig = FilterConfig
   { maxResults :: Int
@@ -92,7 +92,7 @@ instance ToJSON FilterConfig where
   toJSON = genericToJSON serializeOptions
 
 instance FromJSON FilterConfig where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 data Configuration = Configuration
   { documentationUri :: Maybe URI,
@@ -111,7 +111,7 @@ instance ToJSON Configuration where
   toJSON = genericToJSON serializeOptions
 
 instance FromJSON Configuration where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 empty :: Configuration
 empty =
@@ -134,7 +134,7 @@ empty =
     }
 
 configServer ::
-  Monad m =>
+  (Monad m) =>
   Configuration ->
   ConfigSite (AsServerT (ScimHandler m))
 configServer config =

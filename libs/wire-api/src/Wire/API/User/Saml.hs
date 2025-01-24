@@ -1,10 +1,11 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,27 +24,24 @@
 -- for them.
 module Wire.API.User.Saml where
 
-import Control.Lens (makeLenses)
 import Control.Monad.Except
 import Data.Aeson hiding (fieldLabelModifier)
 import Data.Aeson.TH hiding (fieldLabelModifier)
-import qualified Data.ByteString.Builder as Builder
+import Data.ByteString (toStrict)
+import Data.ByteString.Builder qualified as Builder
 import Data.Id (UserId)
+import Data.OpenApi
 import Data.Proxy (Proxy (Proxy))
-import Data.String.Conversions
-import Data.Swagger
-import qualified Data.Text as ST
+import Data.Text qualified as T
+import Data.Text.Encoding
+import Data.Text.Encoding.Error
 import Data.Time
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import GHC.Types (Symbol)
 import Imports
-import SAML2.Util (parseURI', renderURI)
-import SAML2.WebSSO (Assertion, AuthnRequest, ID, IdPId)
-import qualified SAML2.WebSSO as SAML
+import SAML2.WebSSO
 import SAML2.WebSSO.Types.TH (deriveJSONOptions)
-import System.Logger.Extended (LogFormat)
 import URI.ByteString
-import Util.Options
 import Web.Cookie
 import Wire.API.User.Orphans ()
 
@@ -60,70 +58,43 @@ type AssId = ID Assertion
 -- so that the verdict handler can act on it.
 data VerdictFormat
   = VerdictFormatWeb
-  | VerdictFormatMobile {_verdictFormatGrantedURI :: URI, _verdictFormatDeniedURI :: URI}
+  | VerdictFormatMobile {_formatGrantedURI :: URI, _formatDeniedURI :: URI}
   deriving (Eq, Show, Generic)
-
-makeLenses ''VerdictFormat
 
 deriveJSON deriveJSONOptions ''VerdictFormat
 
-mkVerdictGrantedFormatMobile :: MonadError String m => URI -> SetCookie -> UserId -> m URI
+mkVerdictGrantedFormatMobile :: (MonadError String m) => URI -> SetCookie -> UserId -> m URI
 mkVerdictGrantedFormatMobile before cky uid =
   parseURI'
-    . substituteVar "cookie" (cs . Builder.toLazyByteString . renderSetCookie $ cky)
-    . substituteVar "userid" (cs . show $ uid)
+    . substituteVar
+      "cookie"
+      ( decodeUtf8With lenientDecode
+          . toStrict
+          . Builder.toLazyByteString
+          . renderSetCookie
+          $ cky
+      )
+    . substituteVar "userid" (T.pack . show $ uid)
     $ renderURI before
 
-mkVerdictDeniedFormatMobile :: MonadError String m => URI -> ST -> m URI
+mkVerdictDeniedFormatMobile :: (MonadError String m) => URI -> Text -> m URI
 mkVerdictDeniedFormatMobile before lbl =
   parseURI'
     . substituteVar "label" lbl
     $ renderURI before
 
-substituteVar :: ST -> ST -> ST -> ST
+substituteVar :: Text -> Text -> Text -> Text
 substituteVar var val = substituteVar' ("$" <> var) val . substituteVar' ("%24" <> var) val
 
-substituteVar' :: ST -> ST -> ST -> ST
-substituteVar' var val = ST.intercalate val . ST.splitOn var
-
-type Opts = Opts' DerivedOpts
-
--- FUTUREWORK: Shouldn't these types be in spar, not in wire-api?
-data Opts' a = Opts
-  { saml :: !SAML.Config,
-    brig :: !Endpoint,
-    galley :: !Endpoint,
-    cassandra :: !CassandraOpts,
-    maxttlAuthreq :: !(TTL "authreq"),
-    maxttlAuthresp :: !(TTL "authresp"),
-    -- | The maximum number of SCIM tokens that we will allow teams to have.
-    maxScimTokens :: !Int,
-    -- | The maximum size of rich info. Should be in sync with 'Brig.Types.richInfoLimit'.
-    richInfoLimit :: !Int,
-    -- | Wire/AWS specific; optional; used to discover Cassandra instance
-    -- IPs using describe-instances.
-    discoUrl :: !(Maybe Text),
-    logNetStrings :: !(Maybe (Last Bool)),
-    logFormat :: !(Maybe (Last LogFormat)),
-    -- , optSettings   :: !Settings  -- (nothing yet; see other services for what belongs in here.)
-    derivedOpts :: !a
-  }
-  deriving (Functor, Show, Generic)
-
-instance FromJSON (Opts' (Maybe ()))
-
-data DerivedOpts = DerivedOpts
-  { derivedOptsBindCookiePath :: !SBS,
-    derivedOptsScimBaseURI :: !URI
-  }
-  deriving (Show, Generic)
+substituteVar' :: Text -> Text -> Text -> Text
+substituteVar' var val = T.intercalate val . T.splitOn var
 
 -- | (seconds)
 newtype TTL (tablename :: Symbol) = TTL {fromTTL :: Int32}
   deriving (Eq, Ord, Show, Num)
 
-showTTL :: KnownSymbol a => TTL a -> String
-showTTL (TTL i :: TTL a) = "TTL:" <> (symbolVal (Proxy @a)) <> ":" <> show i
+showTTL :: (KnownSymbol a) => TTL a -> String
+showTTL (TTL i :: TTL a) = "TTL:" <> symbolVal (Proxy @a) <> ":" <> show i
 
 instance FromJSON (TTL a) where
   parseJSON = withScientific "TTL value (seconds)" (pure . TTL . round)
@@ -133,9 +104,6 @@ data TTLError = TTLTooLong String String | TTLNegative String
 
 ttlToNominalDiffTime :: TTL a -> NominalDiffTime
 ttlToNominalDiffTime (TTL i32) = fromIntegral i32
-
-maxttlAuthreqDiffTime :: Opts -> NominalDiffTime
-maxttlAuthreqDiffTime = ttlToNominalDiffTime . maxttlAuthreq
 
 data SsoSettings = SsoSettings
   { defaultSsoCode :: !(Maybe IdPId)

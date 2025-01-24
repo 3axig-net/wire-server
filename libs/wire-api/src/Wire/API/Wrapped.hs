@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,10 +19,11 @@ module Wire.API.Wrapped where
 
 import Control.Lens ((.~), (?~))
 import Data.Aeson
-import qualified Data.HashMap.Strict.InsOrd as InsOrdHashMap
+import Data.Aeson.Key qualified as Key
+import Data.HashMap.Strict.InsOrd qualified as InsOrdHashMap
+import Data.OpenApi
 import Data.Proxy (Proxy (..))
-import Data.Swagger
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import GHC.TypeLits (KnownSymbol, Symbol, symbolVal)
 import Imports
 import Test.QuickCheck (Arbitrary (..))
@@ -33,11 +34,11 @@ newtype Wrapped (name :: Symbol) a = Wrapped {unwrap :: a}
   deriving stock (Show, Eq)
 
 instance (ToJSON a, KnownSymbol name) => ToJSON (Wrapped name a) where
-  toJSON (Wrapped thing) = object [Text.pack (symbolVal (Proxy @name)) .= thing]
+  toJSON (Wrapped thing) = object [Key.fromString (symbolVal (Proxy @name)) .= thing]
 
 instance (FromJSON a, KnownSymbol name) => FromJSON (Wrapped name a) where
   parseJSON = withObject ("Wrapped" <> symbolVal (Proxy @name)) $ \o ->
-    Wrapped <$> o .: Text.pack (symbolVal (Proxy @name))
+    Wrapped <$> o .: Key.fromString (symbolVal (Proxy @name))
 
 -- | Creates schema without name, as coming up with a _nice_ name is fairly hard
 -- here.
@@ -47,7 +48,7 @@ instance (ToSchema a, KnownSymbol name) => ToSchema (Wrapped name a) where
     pure $
       NamedSchema Nothing $
         mempty
-          & type_ ?~ SwaggerObject
+          & type_ ?~ OpenApiObject
           & properties .~ InsOrdHashMap.singleton (Text.pack (symbolVal (Proxy @name))) wrappedSchema
 
 instance (Arbitrary a, KnownSymbol name) => Arbitrary (Wrapped name a) where

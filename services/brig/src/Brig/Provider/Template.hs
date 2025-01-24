@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,18 +26,17 @@ module Brig.Provider.Template
 
     -- * Re-exports
     Template,
-    renderText,
-    renderHtml,
   )
 where
 
 import Brig.Options
 import Brig.Template
-import Brig.Types
 import Data.ByteString.Conversion (fromByteString)
 import Data.Misc (HttpsUrl)
 import Data.Text.Encoding (encodeUtf8)
 import Imports
+import Wire.API.User.Identity
+import Wire.EmailSubsystem.Template
 
 data ProviderTemplates = ProviderTemplates
   { activationEmail :: !ActivationEmailTemplate,
@@ -47,41 +46,23 @@ data ProviderTemplates = ProviderTemplates
     passwordResetEmail :: !PasswordResetEmailTemplate
   }
 
-data ActivationEmailTemplate = ActivationEmailTemplate
-  { activationEmailUrl :: !Template,
-    activationEmailSubject :: !Template,
-    activationEmailBodyText :: !Template,
-    activationEmailBodyHtml :: !Template,
-    activationEmailSender :: !Email,
-    activationEmailSenderName :: !Text
-  }
-
 data ApprovalRequestEmailTemplate = ApprovalRequestEmailTemplate
   { approvalRequestEmailUrl :: !Template,
     approvalRequestEmailSubject :: !Template,
     approvalRequestEmailBodyText :: !Template,
     approvalRequestEmailBodyHtml :: !Template,
-    approvalRequestEmailSender :: !Email,
+    approvalRequestEmailSender :: !EmailAddress,
     approvalRequestEmailSenderName :: !Text,
-    approvalRequestEmailTo :: !Email
+    approvalRequestEmailTo :: !EmailAddress
   }
 
 data ApprovalConfirmEmailTemplate = ApprovalConfirmEmailTemplate
   { approvalConfirmEmailSubject :: !Template,
     approvalConfirmEmailBodyText :: !Template,
     approvalConfirmEmailBodyHtml :: !Template,
-    approvalConfirmEmailSender :: !Email,
+    approvalConfirmEmailSender :: !EmailAddress,
     approvalConfirmEmailSenderName :: !Text,
     approvalConfirmEmailHomeUrl :: !HttpsUrl
-  }
-
-data PasswordResetEmailTemplate = PasswordResetEmailTemplate
-  { passwordResetEmailUrl :: !Template,
-    passwordResetEmailSubject :: !Template,
-    passwordResetEmailBodyText :: !Template,
-    passwordResetEmailBodyHtml :: !Template,
-    passwordResetEmailSender :: !Email,
-    passwordResetEmailSenderName :: !Text
   }
 
 -- TODO
@@ -134,13 +115,13 @@ loadProviderTemplates o = readLocalesDir defLocale (templateDir gOptions) "provi
             <*> readText fp "email/sender.txt"
         )
   where
-    maybeUrl = fromByteString $ encodeUtf8 $ homeUrl pOptions
-    gOptions = general $ emailSMS o
-    pOptions = provider $ emailSMS o
-    defLocale = setDefaultLocale (optSettings o)
-    readTemplate = readTemplateWithDefault (templateDir gOptions) defLocale "provider"
-    readText = readTextWithDefault (templateDir gOptions) defLocale "provider"
+    maybeUrl = fromByteString . encodeUtf8 $ pOptions.homeUrl
+    gOptions = o.emailSMS.general
+    pOptions = o.emailSMS.provider
+    defLocale = defaultTemplateLocale o.settings
+    readTemplate = readTemplateWithDefault gOptions.templateDir defLocale "provider"
+    readText = readTextWithDefault gOptions.templateDir defLocale "provider"
     -- URL templates
-    activationUrl' = template $ providerActivationUrl pOptions
-    approvalUrl' = template $ approvalUrl pOptions
-    pwResetUrl' = template $ providerPwResetUrl pOptions
+    activationUrl' = template pOptions.providerActivationUrl
+    approvalUrl' = template pOptions.approvalUrl
+    pwResetUrl' = template pOptions.providerPwResetUrl

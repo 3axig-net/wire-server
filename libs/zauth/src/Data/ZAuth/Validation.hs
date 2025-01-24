@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -34,11 +34,11 @@ where
 
 import Control.Lens
 import Control.Monad.Except
-import qualified Data.ByteString as Strict
+import Data.ByteString qualified as Strict
 import Data.ByteString.Conversion
 import Data.Time.Clock.POSIX
 import Data.Vector (Vector, (!))
-import qualified Data.Vector as Vec
+import Data.Vector qualified as Vec
 import Data.ZAuth.Token
 import Imports
 import Sodium.Crypto.Sign (PublicKey, Signature, verifyWith)
@@ -73,7 +73,7 @@ newtype Validate a = Validate
 mkEnv :: PublicKey -> [PublicKey] -> Env
 mkEnv k kk = Env $ Vec.fromList (map verifyWith (k : kk))
 
-runValidate :: MonadIO m => Env -> Validate a -> m (Either Failure a)
+runValidate :: (MonadIO m) => Env -> Validate a -> m (Either Failure a)
 runValidate v m = liftIO $ runReaderT (runExceptT (valid m)) v
 
 validateUser :: ByteString -> Validate (Token User)
@@ -104,15 +104,15 @@ validate Nothing Nothing = throwError Invalid
 validate (Just _) Nothing = throwError Invalid
 validate Nothing (Just t) = validateAccess t
 validate (Just c) (Just t) = do
-  u <- maybe (throwError Invalid) return (fromByteString c)
-  a <- maybe (throwError Invalid) return (fromByteString t)
+  u <- maybe (throwError Invalid) pure (fromByteString c)
+  a <- maybe (throwError Invalid) pure (fromByteString t)
   void $ check u
   void $ check a
   unless (u ^. body . user == a ^. body . userId) $
     throwError Invalid
-  return a
+  pure a
 
-check :: ToByteString a => Token a -> Validate (Token a)
+check :: (ToByteString a) => Token a -> Validate (Token a)
 check t = do
   ff <- Validate $ lift $ asks verifyFns
   let dat = toByteString' $ writeData (t ^. header) (t ^. body)
@@ -124,11 +124,11 @@ check t = do
     throwError Falsified
   isExpired <-
     if t ^. header . time == -1
-      then return False
+      then pure False
       else (t ^. header . time <) <$> now
   when isExpired $
     throwError Expired
-  return t
+  pure t
 
-now :: (Functor m, MonadIO m) => m Integer
+now :: (MonadIO m) => m Integer
 now = floor <$> liftIO getPOSIXTime

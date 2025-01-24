@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,112 +14,144 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
-
 module Galley.Run
   ( run,
     mkApp,
+    mkLogger,
   )
 where
 
+import AWS.Util (readAuthExpiration)
+import Amazonka qualified as AWS
 import Cassandra (runClient, shutdown)
 import Cassandra.Schema (versionCheck)
-import qualified Control.Concurrent.Async as Async
+import Control.Concurrent.Async qualified as Async
 import Control.Exception (finally)
-import Control.Lens (view, (^.))
-import qualified Data.Aeson as Aeson
-import Data.Domain
-import qualified Data.Metrics.Middleware as M
-import Data.Metrics.Servant (servantPlusWAIPrometheusMiddleware)
+import Control.Lens (view, (.~), (^.))
+import Control.Monad.Codensity
+import Data.Aeson qualified as Aeson
+import Data.ByteString.UTF8 qualified as UTF8
+import Data.Metrics.AWS (gaugeTokenRemaing)
+import Data.Metrics.Servant
 import Data.Misc (portNumber)
-import Data.String.Conversions (cs)
+import Data.Singletons
 import Data.Text (unpack)
-import qualified Galley.API as API
-import Galley.API.Federation (FederationAPI, federationSitemap)
-import qualified Galley.API.Internal as Internal
+import Galley.API.Federation
+import Galley.API.Internal
+import Galley.API.Public.Servant
 import Galley.App
-import qualified Galley.App as App
+import Galley.App qualified as App
+import Galley.Aws (awsEnv)
 import Galley.Cassandra
 import Galley.Monad
 import Galley.Options
-import qualified Galley.Queue as Q
+import Galley.Queue qualified as Q
 import Imports
-import qualified Network.HTTP.Media.RenderHeader as HTTPMedia
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai.Middleware.Gunzip as GZip
-import qualified Network.Wai.Middleware.Gzip as GZip
+import Network.HTTP.Media.RenderHeader qualified as HTTPMedia
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai
+import Network.Wai.Middleware.Gunzip qualified as GZip
+import Network.Wai.Middleware.Gzip qualified as GZip
+import Network.Wai.Utilities.Error
+import Network.Wai.Utilities.Request
 import Network.Wai.Utilities.Server
+import OpenTelemetry.Instrumentation.Wai qualified as Otel
+import OpenTelemetry.Trace as Otel
+import Prometheus qualified as Prom
 import Servant hiding (route)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
+import System.Logger.Extended (mkLogger)
 import Util.Options
-import qualified Wire.API.Routes.Public.Galley as GalleyAPI
+import Wire.API.Routes.API
+import Wire.API.Routes.Public.Galley
+import Wire.API.Routes.Version
+import Wire.API.Routes.Version.Wai
+import Wire.OpenTelemetry (withTracerC)
 
 run :: Opts -> IO ()
-run o = do
-  (app, e, appFinalizer) <- mkApp o
-  let l = e ^. App.applog
-  s <-
-    newSettings $
-      defaultServer
-        (unpack $ o ^. optGalley . epHost)
-        (portNumber $ fromIntegral $ o ^. optGalley . epPort)
-        l
-        (e ^. monitor)
-  deleteQueueThread <- Async.async $ runApp e Internal.deleteLoop
-  refreshMetricsThread <- Async.async $ runApp e refreshMetrics
-  runSettingsWithShutdown s app 5 `finally` do
-    Async.cancel deleteQueueThread
-    Async.cancel refreshMetricsThread
-    shutdown (e ^. cstate)
-    appFinalizer
+run opts = lowerCodensity do
+  tracer <- withTracerC
+  (app, env) <- mkApp opts
+  settings' <-
+    lift $
+      newSettings $
+        defaultServer
+          (unpack $ opts._galley.host)
+          (portNumber $ fromIntegral opts._galley.port)
+          (env ^. App.applog)
 
-mkApp :: Opts -> IO (Application, Env, IO ())
-mkApp o = do
-  m <- M.metrics
-  e <- App.createEnv m o
-  let l = e ^. App.applog
-  runClient (e ^. cstate) $
-    versionCheck schemaVersion
-  let finalizer = do
-        Log.info l $ Log.msg @Text "Galley application finished."
-        Log.flush l
-        Log.close l
-      middlewares =
-        servantPlusWAIPrometheusMiddleware API.sitemap (Proxy @CombinedAPI)
-          . GZip.gunzip
-          . GZip.gzip GZip.def
-          . catchErrors l [Right m]
-  return (middlewares $ servantApp e, e, finalizer)
+  forM_ (env ^. aEnv) $ \aws ->
+    void $ Codensity $ Async.withAsync $ collectAuthMetrics (aws ^. awsEnv)
+
+  void $ Codensity $ Async.withAsync $ runApp env deleteLoop
+  void $ Codensity $ Async.withAsync $ runApp env refreshMetrics
+  lift $ inSpan tracer "galley" defaultSpanArguments {kind = Otel.Server} (runSettingsWithShutdown settings' app Nothing) `finally` closeApp env
+
+mkApp :: Opts -> Codensity IO (Application, Env)
+mkApp opts =
+  do
+    logger <- lift $ mkLogger (opts ^. logLevel) (opts ^. logNetStrings) (opts ^. logFormat)
+    env <- lift $ App.createEnv opts logger
+    otelMiddleware <- lift Otel.newOpenTelemetryWaiMiddleware
+    lift $ runClient (env ^. cstate) $ versionCheck schemaVersion
+    let middlewares =
+          versionMiddleware (foldMap expandVersionExp (opts ^. settings . disabledAPIVersions))
+            . requestIdMiddleware logger defaultRequestIdHeaderName
+            . servantPrometheusMiddleware (Proxy @CombinedAPI)
+            . otelMiddleware
+            . GZip.gunzip
+            . GZip.gzip GZip.def
+            . catchErrors logger defaultRequestIdHeaderName
+    Codensity \k ->
+      k () `finally` do
+        Log.info logger $ Log.msg @Text "Galley application finished."
+        Log.flush logger
+        Log.close logger
+    pure (middlewares $ servantApp env, env)
   where
-    rtree = compile API.sitemap
-    app e r k = runGalley e r (route rtree r k)
-    -- the servant API wraps the one defined using wai-routing
-    servantApp e r =
+    -- Used as a last case in the servant tree. Previously, there used to be a
+    -- wai-routing application in that position. That was causing any `Fail`
+    -- route results in any servant endpoint to be recovered and ultimately
+    -- report a 404 since no other matching path would normally be found in
+    -- the wai-routing application. Now there is no wai-routing application
+    -- anymore, so without this fallback, any `Fail` result would commit to the
+    -- failed endpoint and return the error for that specific path, which would
+    -- break compatibility with older API versions.
+    --
+    -- Note that, since we have many overlapping paths (e.g.
+    -- `/conversations/:uuid` and `/conversations/list`), even without the
+    -- fallback, errors would not entirely be consistent. For example, a `Fail`
+    -- result when attempting to call `/conversations/list`, say if the content
+    -- type is incorrect, would cause `conversations/:uuid` to be matched and
+    -- report a 400 `invalid UUID` error.
+    fallback :: Application
+    fallback _ k =
+      k $
+        responseLBS HTTP.status404 [("Content-Type", "application/json")] $
+          Aeson.encode $
+            mkError HTTP.status404 "no-endpoint" "The requested endpoint does not exist"
+
+    servantApp :: Env -> Application
+    servantApp e0 r cont = do
+      let rid = getRequestId defaultRequestIdHeaderName r
+          e = reqId .~ rid $ e0
       Servant.serveWithContext
         (Proxy @CombinedAPI)
-        ( view (options . optSettings . setFederationDomain) e
+        ( view (options . settings . federationDomain) e
             :. customFormatters
             :. Servant.EmptyContext
         )
-        ( hoistServer' @GalleyAPI.ServantAPI (toServantHandler e) API.servantSitemap
-            :<|> hoistServer' @Internal.ServantAPI (toServantHandler e) Internal.servantSitemap
-            :<|> hoistServer' @FederationAPI (toServantHandler e) federationSitemap
-            :<|> Servant.Tagged (app e)
+        ( hoistAPIHandler (toServantHandler e) servantSitemap
+            :<|> hoistAPIHandler (toServantHandler e) internalAPI
+            :<|> hoistServerWithDomain @FederationAPI (toServantHandler e) federationSitemap
+            :<|> Tagged fallback
         )
         r
+        cont
 
--- Servant needs a context type argument here that contains *at least* the
--- context types required by all the HasServer instances. In reality, this should
--- not be necessary, because the contexts are only used by the @route@ functions,
--- but unfortunately the 'hoistServerWithContext' function is also part of the
--- 'HasServer' typeclass, even though it cannot possibly make use of its @context@
--- type argument.
-hoistServer' ::
-  forall api m n.
-  HasServer api '[Domain] =>
-  (forall x. m x -> n x) ->
-  ServerT api m ->
-  ServerT api n
-hoistServer' = hoistServerWithContext (Proxy @api) (Proxy @'[Domain])
+closeApp :: Env -> IO ()
+closeApp env = do
+  shutdown (env ^. cstate)
 
 customFormatters :: Servant.ErrorFormatters
 customFormatters =
@@ -131,7 +163,7 @@ bodyParserErrorFormatter' :: Servant.ErrorFormatter
 bodyParserErrorFormatter' _ _ errMsg =
   Servant.ServerError
     { Servant.errHTTPCode = HTTP.statusCode HTTP.status400,
-      Servant.errReasonPhrase = cs $ HTTP.statusMessage HTTP.status400,
+      Servant.errReasonPhrase = UTF8.toString $ HTTP.statusMessage HTTP.status400,
       Servant.errBody =
         Aeson.encode $
           Aeson.object
@@ -143,16 +175,33 @@ bodyParserErrorFormatter' _ _ errMsg =
     }
 
 type CombinedAPI =
-  GalleyAPI.ServantAPI
-    :<|> Internal.ServantAPI
+  GalleyAPI
+    :<|> InternalAPI
     :<|> FederationAPI
-    :<|> Servant.Raw
+    :<|> Raw
 
 refreshMetrics :: App ()
 refreshMetrics = do
-  m <- view monitor
   q <- view deleteQueue
-  Internal.safeForever "refreshMetrics" $ do
+  safeForever "refreshMetrics" $ do
     n <- Q.len q
-    M.gaugeSet (fromIntegral n) (M.path "galley.deletequeue.len") m
+    Prom.setGauge deleteQueueLengthGauge (fromIntegral n)
     threadDelay 1000000
+
+{-# NOINLINE deleteQueueLengthGauge #-}
+deleteQueueLengthGauge :: Prom.Gauge
+deleteQueueLengthGauge =
+  Prom.unsafeRegister $
+    Prom.gauge
+      Prom.Info
+        { Prom.metricName = "galley_deletequeue_len",
+          Prom.metricHelp = "Length of the galley delete queue"
+        }
+
+collectAuthMetrics :: (MonadIO m) => AWS.Env -> m ()
+collectAuthMetrics env = do
+  liftIO $
+    forever $ do
+      mbRemaining <- readAuthExpiration env
+      gaugeTokenRemaing mbRemaining
+      threadDelay 1_000_000

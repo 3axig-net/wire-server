@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,24 +18,27 @@
 module Wire.API.Routes.QualifiedCapture
   ( QualifiedCapture,
     QualifiedCapture',
+    WithDomain,
   )
 where
 
 import Data.Domain
+import Data.Kind
 import Data.Metrics.Servant
+import Data.OpenApi hiding (HasServer, value)
 import Data.Qualified
-import Data.Swagger
 import GHC.TypeLits
 import Imports
 import Servant
 import Servant.API.Description
 import Servant.API.Modifiers
 import Servant.Client.Core.HasClient
+import Servant.OpenApi
 import Servant.Server.Internal.ErrorFormatter
-import Servant.Swagger
+import Wire.API.Routes.Version
 
 -- | Capture a value qualified by a domain, with modifiers.
-data QualifiedCapture' (mods :: [*]) (capture :: Symbol) (a :: *)
+data QualifiedCapture' (mods :: [Type]) (capture :: Symbol) (a :: Type)
 
 -- | Capture a value qualified by a domain.
 --
@@ -49,20 +52,24 @@ type WithDomain mods capture a api =
     :> Capture' mods capture a
     :> api
 
+type instance
+  SpecialiseToVersion v (QualifiedCapture' mods capture a :> api) =
+    QualifiedCapture' mods capture a :> SpecialiseToVersion v api
+
 instance
-  ( Typeable a,
-    ToParamSchema a,
-    HasSwagger api,
+  ( ToParamSchema a,
+    HasOpenApi api,
     KnownSymbol capture,
     KnownSymbol (AppendSymbol capture "_domain"),
     KnownSymbol (FoldDescription mods)
   ) =>
-  HasSwagger (QualifiedCapture' mods capture a :> api)
+  HasOpenApi (QualifiedCapture' mods capture a :> api)
   where
-  toSwagger _ = toSwagger (Proxy @(WithDomain mods capture a api))
+  toOpenApi _ = toOpenApi (Proxy @(WithDomain mods capture a api))
 
 instance
   ( KnownSymbol capture,
+    Typeable a,
     FromHttpApiData a,
     HasServer api context,
     SBoolI (FoldLenient mods),
@@ -83,10 +90,8 @@ instance
       qualify handler domain value = handler (Qualified value domain)
 
 instance
-  ( KnownSymbol capture,
-    ToHttpApiData a,
-    HasClient m api,
-    KnownSymbol (AppendSymbol capture "_domain")
+  ( ToHttpApiData a,
+    HasClient m api
   ) =>
   HasClient m (QualifiedCapture' mods capture a :> api)
   where

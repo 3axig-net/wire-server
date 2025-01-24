@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,8 +19,9 @@
 
 module Spar.DataMigration.Run where
 
+import Cassandra (ClientState)
 import qualified Cassandra as C
-import qualified Cassandra.Settings as C
+import Cassandra.Util (defInitCassandra)
 import Control.Lens
 import Control.Monad.Catch (finally)
 import qualified Data.Text as Text
@@ -29,7 +30,6 @@ import Imports
 import qualified Options.Applicative as Opts
 import Spar.DataMigration.Options (settingsParser)
 import Spar.DataMigration.Types
-import qualified Spar.DataMigration.V1_ExternalIds as V1
 import qualified Spar.DataMigration.V2_UserV2 as V2
 import qualified System.Logger as Log
 
@@ -38,7 +38,8 @@ main = do
   settings <- Opts.execParser (Opts.info (Opts.helper <*> settingsParser) desc)
   migrate
     settings
-    [ V1.migration,
+    [ -- V1.migration has been deleted in https://github.com/wireapp/wire-server/pull/2768
+      -- (because the deprecated source table has been removed).
       V2.migration
     ]
   where
@@ -64,14 +65,9 @@ mkEnv settings = do
         . Log.setLogLevel
           (if s ^. setDebug == Debug then Log.Debug else Log.Info)
         $ Log.defSettings
-    initCassandra cas l =
-      C.init
-        . C.setLogger (C.mkLogger l)
-        . C.setContacts (cas ^. cHosts) []
-        . C.setPortNumber (fromIntegral $ cas ^. cPort)
-        . C.setKeyspace (cas ^. cKeyspace)
-        . C.setProtocolVersion C.V4
-        $ C.defSettings
+
+    initCassandra :: CassandraSettings -> Log.Logger -> IO ClientState
+    initCassandra cas l = defInitCassandra (toCassandraOpts cas) l
 
 cleanup :: (MonadIO m) => Env -> m ()
 cleanup env = do

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,10 +22,11 @@ where
 
 import Federator.Run (run)
 import Imports
+import OpenSSL
 import Util.Options (getOptions)
 
 main :: IO ()
-main = do
+main = withOpenSSL $ do
   let desc = "Federation Service"
       defaultPath = "/etc/wire/federator/conf/federator.yaml"
   options <- getOptions desc Nothing defaultPath

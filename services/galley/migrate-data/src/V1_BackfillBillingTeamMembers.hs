@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,15 +19,14 @@ module V1_BackfillBillingTeamMembers where
 
 import Cassandra
 import Conduit
-import Control.Lens (view)
 import Data.Conduit.Internal (zipSources)
-import qualified Data.Conduit.List as C
+import Data.Conduit.List qualified as C
 import Data.Id
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Galley.DataMigration.Types
-import Galley.Types.Teams
 import Imports
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
+import Wire.API.Team.Permission
 
 migration :: Migration
 migration =
@@ -56,13 +55,13 @@ pageSize = 1000
 -- Queries
 
 -- | Get team members from Galley
-getTeamMembers :: MonadClient m => ConduitM () [(TeamId, UserId, Maybe Permissions)] m ()
+getTeamMembers :: (MonadClient m) => ConduitM () [(TeamId, UserId, Maybe Permissions)] m ()
 getTeamMembers = paginateC cql (paramsP LocalQuorum () pageSize) x5
   where
     cql :: PrepQuery R () (TeamId, UserId, Maybe Permissions)
     cql = "SELECT team, user, perms FROM team_member"
 
-createBillingTeamMembers :: MonadClient m => (TeamId, UserId) -> m ()
+createBillingTeamMembers :: (MonadClient m) => (TeamId, UserId) -> m ()
 createBillingTeamMembers pair =
   retry x5 $ write cql (params LocalQuorum pair)
   where
@@ -70,5 +69,5 @@ createBillingTeamMembers pair =
     cql = "INSERT INTO billing_team_member (team, user) values (?, ?)"
 
 isOwner :: (TeamId, UserId, Maybe Permissions) -> Bool
-isOwner (_, _, Just p) = SetBilling `Set.member` view self p
+isOwner (_, _, Just p) = SetBilling `Set.member` p.self
 isOwner _ = False

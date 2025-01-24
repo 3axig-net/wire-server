@@ -1,8 +1,11 @@
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use head" #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,54 +25,71 @@ module API.User.Client
   )
 where
 
+import API.Team.Util qualified as Util
 import API.User.Util
+import API.User.Util qualified as Util
 import Bilge hiding (accept, head, timeout)
 import Bilge.Assert
-import qualified Brig.Options as Opt
-import Brig.Types
-import Brig.Types.User.Auth hiding (user)
-import Control.Lens (at, preview, (.~), (^.), (^?))
-import Data.Aeson
+import Brig.Options as Opt
+import Cassandra qualified as DB
+import Control.Lens hiding (Wrapped, (#))
+import Crypto.JWT hiding (Ed25519, header, params)
+import Data.Aeson hiding (json)
+import Data.Aeson qualified as A
+import Data.Aeson.KeyMap qualified as M
 import Data.Aeson.Lens
 import Data.ByteString.Conversion
-import Data.Id hiding (client)
-import qualified Data.List1 as List1
-import qualified Data.Map as Map
+import Data.Code qualified as Code
+import Data.Coerce (coerce)
+import Data.Default
+import Data.Domain (Domain (..))
+import Data.Handle
+import Data.Id
+import Data.List1 qualified as List1
+import Data.Map qualified as Map
+import Data.Nonce (isValidBase64UrlEncodedUUID)
 import Data.Qualified (Qualified (..))
 import Data.Range (unsafeRange)
-import qualified Data.Set as Set
-import qualified Data.Vector as Vec
-import Gundeck.Types.Notification
+import Data.Set qualified as Set
+import Data.String.Conversions
+import Data.Text.Ascii (AsciiChars (validate), encodeBase64UrlUnpadded, toText)
+import Data.Text.Encoding qualified as T
+import Data.Time.Clock.POSIX
+import Data.UUID (toByteString)
+import Data.UUID qualified as UUID
+import Data.Vector qualified as Vec
 import Imports
-import qualified Network.Wai.Utilities.Error as Error
+import Network.Wai.Utilities.Error qualified as Error
+import System.Logger qualified as Log
 import Test.QuickCheck (arbitrary, generate)
 import Test.Tasty hiding (Timeout)
-import Test.Tasty.Cannon hiding (Cannon)
-import qualified Test.Tasty.Cannon as WS
+import Test.Tasty.Cannon hiding (Cannon, Timeout)
+import Test.Tasty.Cannon qualified as WS
 import Test.Tasty.HUnit
 import UnliftIO (mapConcurrently)
 import Util
-import Wire.API.User (LimitedQualifiedUserIdList (LimitedQualifiedUserIdList))
+import Util.Timeout
+import Wire.API.Internal.Notification
+import Wire.API.MLS.CipherSuite
+import Wire.API.Routes.Version
+import Wire.API.Routes.Versioned
+import Wire.API.Team.Feature qualified as Public
+import Wire.API.User
+import Wire.API.User qualified as Public
+import Wire.API.User.Auth
 import Wire.API.User.Client
-  ( ClientCapability (ClientSupportsLegalholdImplicitConsent),
-    ClientCapabilityList (ClientCapabilityList),
-    QualifiedUserClients (..),
-    UserClients (..),
-    mkQualifiedUserClientPrekeyMap,
-    mkUserClientPrekeyMap,
-  )
+import Wire.API.User.Client.DPoPAccessToken
+import Wire.API.User.Client.Prekey
 import Wire.API.UserMap (QualifiedUserMap (..), UserMap (..), WrappedQualifiedUserMap)
 import Wire.API.Wrapped (Wrapped (..))
+import Wire.VerificationCode qualified as Code
+import Wire.VerificationCodeGen
 
-tests :: ConnectionLimit -> Opt.Timeout -> Opt.Opts -> Manager -> Brig -> Cannon -> Galley -> TestTree
-tests _cl _at opts p b c g =
+tests :: ConnectionLimit -> Timeout -> Opt.Opts -> Manager -> DB.ClientState -> Nginz -> Brig -> Cannon -> Galley -> TestTree
+tests _cl _at opts p db n b c g =
   testGroup
     "client"
-    [ test p "delete /clients/:client 403 - can't delete legalhold clients" $
-        testCan'tDeleteLegalHoldClient b,
-      test p "post /clients 400 - can't add legalhold clients manually" $
-        testCan'tAddLegalHoldClient b,
-      test p "get /users/:uid/clients - 200" $ testGetUserClientsUnqualified opts b,
+    [ test p "get /users/:uid/clients - 200" $ testGetUserClientsUnqualified opts b,
       test p "get /users/<localdomain>/:uid/clients - 200" $ testGetUserClientsQualified opts b,
       test p "get /users/:uid/prekeys - 200" $ testGetUserPrekeys b,
       test p "get /users/<localdomain>/:uid/prekeys - 200" $ testGetUserPrekeysQualified b opts,
@@ -78,28 +98,154 @@ tests _cl _at opts p b c g =
       test p "get /users/<localdomain>/:uid/prekeys/:client - 200" $ testGetClientPrekeyQualified b opts,
       test p "post /users/prekeys" $ testMultiUserGetPrekeys b,
       test p "post /users/list-prekeys" $ testMultiUserGetPrekeysQualified b opts,
+      test p "post /users/list-prekeys@v4" $ testMultiUserGetPrekeysQualifiedV4 b opts,
       test p "post /users/list-clients - 200" $ testListClientsBulk opts b,
       test p "post /users/list-clients/v2 - 200" $ testListClientsBulkV2 opts b,
-      test p "post /clients - 201 (pwd)" $ testAddGetClient True b c,
-      test p "post /clients - 201 (no pwd)" $ testAddGetClient False b c,
+      test p "post /users/list-prekeys - clients without prekeys" $ testClientsWithoutPrekeys b c db opts,
+      test p "post /users/list-prekeys@v4 - clients without prekeys" $ testClientsWithoutPrekeysV4 b c db opts,
+      test p "post /users/list-prekeys@v4 - clients without prekeys fail to list" $ testClientsWithoutPrekeysFailToListV4 b c db opts,
+      test p "post /clients - 201 (pwd)" $ testAddGetClient def {addWithPassword = True} b c,
+      test p "post /clients - 201 (no pwd)" $ testAddGetClient def {addWithPassword = False} b c,
+      testGroup
+        "post /clients - verification code"
+        [ test p "success" $ testAddGetClientVerificationCode db b g,
+          test p "testAddGetClientMissingCode - missing code" $ testAddGetClientMissingCode b g,
+          test p "testAddGetClientWrongCode - wrong code" $ testAddGetClientWrongCode b g,
+          test p "testAddGetClientCodeExpired - expired code" $ testAddGetClientCodeExpired db opts b g
+        ],
+      test p "post /clients - 201 (with mls keys)" $ testAddGetClient def {addWithMLSKeys = True} b c,
       test p "post /clients - 403" $ testClientReauthentication b,
       test p "get /clients - 200" $ testListClients b,
       test p "get /clients/:client/prekeys - 200" $ testListPrekeyIds b,
-      test p "post /clients - 400" $ testTooManyClients opts b,
-      test p "delete /clients/:client - 200 (pwd)" $ testRemoveClient True b c,
-      test p "delete /clients/:client - 200 (no pwd)" $ testRemoveClient False b c,
-      test p "delete /clients/:client - 400 (short pwd)" $ testRemoveClientShortPwd b,
+      test p "testTooManyClients - post /clients - 400" $ testTooManyClients opts b,
+      test p "testPrekeysNotEmptyRandomPrekeys - client/prekeys not empty" $ testPrekeysNotEmptyRandomPrekeys opts b,
+      test p "testRegularPrekeysCannotBeSentAsLastPrekeys - lastprekeys not bogus" $ testRegularPrekeysCannotBeSentAsLastPrekeys b,
+      test p "testRegularPrekeysCannotBeSentAsLastPrekeysDuringUpdate - lastprekeys not bogus during update" $ testRegularPrekeysCannotBeSentAsLastPrekeysDuringUpdate b,
+      test p "testRemoveClient - delete /clients/:client - 200 (pwd)" $ testRemoveClient True b c,
+      test p "testRemoveClient - delete /clients/:client - 200 (no pwd)" $ testRemoveClient False b c,
+      test p "testRemoveClientShortPwd - delete /clients/:client - 400 (short pwd)" $ testRemoveClientShortPwd b,
+      test p "testRemoveClientIncorrectPwd - delete /clients/:client - 403 (incorrect pwd)" $ testRemoveClientIncorrectPwd b,
       test p "put /clients/:client - 200" $ testUpdateClient opts b,
+      test p "put /clients/:client - 200 (mls keys)" $ testMLSPublicKeyUpdate b,
       test p "get /clients/:client - 404" $ testMissingClient b,
-      test p "post /clients - 200 multiple temporary" $ testAddMultipleTemporary b g,
-      test p "client/prekeys/race" $ testPreKeyRace b
+      test p "get /clients/:client - 200" $ testMLSClient b,
+      test p "testAddMultipleTemporary - post /clients - 200 multiple temporary" $ testAddMultipleTemporary b g c,
+      test p "client/prekeys/race" $ testPreKeyRace b,
+      test p "get/head nonce/clients" $ testNewNonce b,
+      testGroup
+        "post /clients/:cid/access-token"
+        [ test p "success" $ testCreateAccessToken opts n b,
+          test p "proof missing" $ testCreateAccessTokenMissingProof b,
+          test p "no nonce" $ testCreateAccessTokenNoNonce b
+        ]
     ]
 
-testAddGetClient :: Bool -> Brig -> Cannon -> Http ()
-testAddGetClient hasPwd brig cannon = do
-  uid <- userId <$> randomUser' hasPwd brig
+testAddGetClientVerificationCode :: DB.ClientState -> Brig -> Galley -> Http ()
+testAddGetClientVerificationCode db brig galley = do
+  (u, tid) <- Util.createUserWithTeam' brig
+  let uid = userId u
+  let Just email = userEmail u
+  let checkLoginSucceeds b = login brig b PersistentCookie !!! const 200 === statusCode
+  let addClient' :: Maybe Code.Value -> Http Client
+      addClient' codeValue = responseJsonError =<< addClient brig uid (defNewClientWithVerificationCode codeValue PermanentClientType [head somePrekeys] (head someLastPrekeys))
+
+  Util.setTeamFeatureLockStatus @Public.SndFactorPasswordChallengeConfig galley tid Public.LockStatusUnlocked
+  Util.setTeamSndFactorPasswordChallenge galley tid Public.FeatureStatusEnabled
+  Util.generateVerificationCode brig (Public.SendVerificationCode Public.Login email)
+  let k = mkKey email
+  codeValue <- Code.codeValue <$$> lookupCode db k Code.AccountLogin
+  checkLoginSucceeds $
+    MkLogin (LoginByEmail email) defPassword (Just defCookieLabel) codeValue
+  c <- addClient' codeValue
+  getClient brig uid (clientId c) !!! do
+    const 200 === statusCode
+    const (Just c) === responseJsonMaybe
+
+-- @SF.Channel @TSFI.RESTfulAPI @S2
+--
+-- Test that device cannot be added with missing second factor email verification code when this feature is enabled
+testAddGetClientMissingCode :: Brig -> Galley -> Http ()
+testAddGetClientMissingCode brig galley = do
+  (u, tid) <- Util.createUserWithTeam' brig
+  let uid = userId u
+  let Just email = userEmail u
+  let addClient' codeValue = addClient brig uid (defNewClientWithVerificationCode codeValue PermanentClientType [head somePrekeys] (head someLastPrekeys))
+
+  Util.setTeamFeatureLockStatus @Public.SndFactorPasswordChallengeConfig galley tid Public.LockStatusUnlocked
+  Util.setTeamSndFactorPasswordChallenge galley tid Public.FeatureStatusEnabled
+  Util.generateVerificationCode brig (Public.SendVerificationCode Public.Login email)
+  addClient' Nothing !!! do
+    const 403 === statusCode
+    const (Just "code-authentication-required") === fmap Error.label . responseJsonMaybe
+
+-- @END
+
+-- @SF.Channel @TSFI.RESTfulAPI @S2
+--
+-- Test that device cannot be added with wrong second factor email verification code when this feature is enabled
+testAddGetClientWrongCode :: Brig -> Galley -> Http ()
+testAddGetClientWrongCode brig galley = do
+  (u, tid) <- Util.createUserWithTeam' brig
+  let uid = userId u
+  let Just email = userEmail u
+  let addClient' codeValue = addClient brig uid (defNewClientWithVerificationCode codeValue PermanentClientType [head somePrekeys] (head someLastPrekeys))
+
+  Util.setTeamFeatureLockStatus @Public.SndFactorPasswordChallengeConfig galley tid Public.LockStatusUnlocked
+  Util.setTeamSndFactorPasswordChallenge galley tid Public.FeatureStatusEnabled
+  Util.generateVerificationCode brig (Public.SendVerificationCode Public.Login email)
+  let wrongCode = Code.Value $ unsafeRange (fromRight undefined (validate "123456"))
+  addClient' (Just wrongCode) !!! do
+    const 403 === statusCode
+    const (Just "code-authentication-failed") === fmap Error.label . responseJsonMaybe
+
+-- @END
+
+-- @SF.Channel @TSFI.RESTfulAPI @S2
+--
+-- Test that device cannot be added with expired second factor email verification code when this feature is enabled
+testAddGetClientCodeExpired :: DB.ClientState -> Opt.Opts -> Brig -> Galley -> Http ()
+testAddGetClientCodeExpired db opts brig galley = do
+  (u, tid) <- Util.createUserWithTeam' brig
+  let uid = userId u
+  let Just email = userEmail u
+  let checkLoginSucceeds b = login brig b PersistentCookie !!! const 200 === statusCode
+  let addClient' codeValue = addClient brig uid (defNewClientWithVerificationCode codeValue PermanentClientType [head somePrekeys] (head someLastPrekeys))
+
+  Util.setTeamFeatureLockStatus @Public.SndFactorPasswordChallengeConfig galley tid Public.LockStatusUnlocked
+  Util.setTeamSndFactorPasswordChallenge galley tid Public.FeatureStatusEnabled
+  Util.generateVerificationCode brig (Public.SendVerificationCode Public.Login email)
+  let k = mkKey email
+  codeValue <- (.codeValue) <$$> lookupCode db k Code.AccountLogin
+  checkLoginSucceeds $
+    MkLogin (LoginByEmail email) defPassword (Just defCookieLabel) codeValue
+  let timeout = round (verificationTimeout opts.settings)
+  threadDelay $ ((timeout + 1) * 1000_000)
+  addClient' codeValue !!! do
+    const 403 === statusCode
+    const (Just "code-authentication-failed") === fmap Error.label . responseJsonMaybe
+
+-- @END
+
+data AddGetClient = AddGetClient
+  { addWithPassword :: Bool,
+    addWithMLSKeys :: Bool
+  }
+
+instance Default AddGetClient where
+  def = AddGetClient True False
+
+testAddGetClient :: AddGetClient -> Brig -> Cannon -> Http ()
+testAddGetClient params brig cannon = do
+  uid <- userId <$> randomUser' (addWithPassword params) brig
+  let new =
+        (defNewClient TemporaryClientType [somePrekeys !! 0] (someLastPrekeys !! 0))
+          { newClientMLSPublicKeys = keys
+          }
+      keys
+        | addWithMLSKeys params = Map.fromList [(Ed25519, "aGVsbG8gd29ybGQ=")]
+        | otherwise = mempty
   let rq =
-        addClientReq brig uid (defNewClient TemporaryClientType [somePrekeys !! 0] (someLastPrekeys !! 0))
+        addClientReq brig uid new
           . header "X-Forwarded-For" "127.0.0.1" -- Fake IP to test IpAddr parsing.
   c <- WS.bracketR cannon uid $ \ws -> do
     c <-
@@ -113,8 +259,9 @@ testAddGetClient hasPwd brig cannon = do
       let etype = j ^? key "type" . _String
       let eclient = j ^? key "client"
       etype @?= Just "user.client-add"
-      fmap fromJSON eclient @?= Just (Success c)
-    return c
+      fmap fromJSON eclient @?= Just (Success (Versioned @'V6 c))
+    pure c
+  liftIO $ clientMLSPublicKeys c @?= keys
   getClient brig uid (clientId c) !!! do
     const 200 === statusCode
     const (Just c) === responseJsonMaybe
@@ -144,7 +291,7 @@ testGetUserClientsQualified opts brig = do
   _c11 :: Client <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
   _c12 :: Client <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
   _c13 :: Client <- responseJsonError =<< addClient brig uid1 (defNewClient TemporaryClientType [pk13] lk13)
-  let localdomain = opts ^. Opt.optionSettings & Opt.setFederationDomain
+  let localdomain = opts.settings.federationDomain
   getUserClientsQualified brig uid2 localdomain uid1 !!! do
     const 200 === statusCode
     assertTrue_ $ \res -> do
@@ -193,13 +340,18 @@ testClientReauthentication brig = do
 testListClients :: Brig -> Http ()
 testListClients brig = do
   uid <- userId <$> randomUser brig
-  let (pk1, lk1) = (somePrekeys !! 0, (someLastPrekeys !! 0))
-  let (pk2, lk2) = (somePrekeys !! 1, (someLastPrekeys !! 1))
-  let (pk3, lk3) = (somePrekeys !! 2, (someLastPrekeys !! 2))
-  c1 <- responseJsonMaybe <$> addClient brig uid (defNewClient PermanentClientType [pk1] lk1)
-  c2 <- responseJsonMaybe <$> addClient brig uid (defNewClient PermanentClientType [pk2] lk2)
-  c3 <- responseJsonMaybe <$> addClient brig uid (defNewClient TemporaryClientType [pk3] lk3)
-  let cs = sortBy (compare `on` clientId) $ catMaybes [c1, c2, c3]
+  let (pk1, lk1) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  let (pk2, lk2) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  let (pk3, lk3) = (somePrekeys !! 2, someLastPrekeys !! 2)
+  c1 <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [pk1] lk1)
+  c2 <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [pk2] lk2)
+  c3 <- responseJsonError =<< addClient brig uid (defNewClient TemporaryClientType [pk3] lk3)
+
+  let pks = Map.fromList [(Ed25519, "random")]
+  void $ putClient brig uid (clientId c1) pks
+  let c1' = c1 {clientMLSPublicKeys = pks}
+  let clients = sortBy (compare `on` clientId) [c1', c2, c3]
+
   get
     ( brig
         . path "clients"
@@ -207,25 +359,44 @@ testListClients brig = do
     )
     !!! do
       const 200 === statusCode
-      const (Just cs) === responseJsonMaybe
+      const (Just clients) === responseJsonMaybe
+
+testMLSClient :: Brig -> Http ()
+testMLSClient brig = do
+  uid <- userId <$> randomUser brig
+  let (pk1, lk1) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  let (pk2, lk2) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  -- An MLS client
+  c1 <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [pk1] lk1)
+  -- Non-MLS client
+  c2 <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [pk2] lk2)
+
+  let pks = Map.fromList [(Ed25519, "random")]
+  void $ putClient brig uid (clientId c1) pks
+
+  -- Assert that adding MLS public keys to one client does not affect the other
+  -- client
+  getClient brig uid (clientId c2) !!! do
+    const 200 === statusCode
+    const (Just c2) === responseJsonMaybe
 
 testListClientsBulk :: Opt.Opts -> Brig -> Http ()
 testListClientsBulk opts brig = do
   uid1 <- userId <$> randomUser brig
-  let (pk11, lk11) = (somePrekeys !! 0, (someLastPrekeys !! 0))
-  let (pk12, lk12) = (somePrekeys !! 1, (someLastPrekeys !! 1))
-  let (pk13, lk13) = (somePrekeys !! 2, (someLastPrekeys !! 2))
+  let (pk11, lk11) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  let (pk12, lk12) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  let (pk13, lk13) = (somePrekeys !! 2, someLastPrekeys !! 2)
   c11 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
   c12 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
   c13 <- responseJsonError =<< addClient brig uid1 (defNewClient TemporaryClientType [pk13] lk13)
 
   uid2 <- userId <$> randomUser brig
-  let (pk21, lk21) = (somePrekeys !! 3, (someLastPrekeys !! 3))
-  let (pk22, lk22) = (somePrekeys !! 4, (someLastPrekeys !! 4))
+  let (pk21, lk21) = (somePrekeys !! 3, someLastPrekeys !! 3)
+  let (pk22, lk22) = (somePrekeys !! 4, someLastPrekeys !! 4)
   c21 <- responseJsonError =<< addClient brig uid2 (defNewClient PermanentClientType [pk21] lk21)
   c22 <- responseJsonError =<< addClient brig uid2 (defNewClient PermanentClientType [pk22] lk22)
 
-  let domain = Opt.setFederationDomain $ Opt.optSettings opts
+  let domain = opts.settings.federationDomain
   uid3 <- userId <$> randomUser brig
   let mkPubClient cl = PubClient (clientId cl) (clientClass cl)
   let expectedResponse :: QualifiedUserMap (Set PubClient) =
@@ -239,7 +410,8 @@ testListClientsBulk opts brig = do
                   ]
             )
   post
-    ( brig
+    ( apiVersion "v1"
+        . brig
         . paths ["users", "list-clients"]
         . zUser uid3
         . contentJson
@@ -249,23 +421,296 @@ testListClientsBulk opts brig = do
       const 200 === statusCode
       const (Just expectedResponse) === responseJsonMaybe
 
+testClientsWithoutPrekeys :: Brig -> Cannon -> DB.ClientState -> Opt.Opts -> Http ()
+testClientsWithoutPrekeys brig cannon db opts = do
+  uid1 <- userId <$> randomUser brig
+  let (pk11, lk11) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  c11 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
+  let (pk12, lk12) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  c12 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
+
+  -- Simulating loss of all prekeys from c11 (due e.g. DB problems, business
+  -- logic prevents this from happening)
+  let removeClientKeys :: DB.PrepQuery DB.W (UserId, ClientId) ()
+      removeClientKeys = "DELETE FROM prekeys where user = ? and client = ?"
+  liftIO $
+    DB.runClient db $
+      DB.write removeClientKeys (DB.params DB.LocalQuorum (uid1, clientId c11))
+
+  uid2 <- userId <$> randomUser brig
+
+  let domain = opts.settings.federationDomain
+
+  let userClients =
+        QualifiedUserClients $
+          Map.singleton domain $
+            Map.singleton uid1 $
+              Set.fromList [clientId c11, clientId c12]
+
+  WS.bracketR cannon uid1 $ \ws -> do
+    getClient brig uid1 (clientId c11) !!! do
+      const 200 === statusCode
+
+    post
+      ( apiVersion "v3"
+          . brig
+          . paths ["users", "list-prekeys"]
+          . contentJson
+          . body (RequestBodyLBS $ encode userClients)
+          . zUser uid2
+      )
+      !!! do
+        const 200 === statusCode
+        const
+          ( Right $
+              expectedClientMap
+                domain
+                uid1
+                [ (clientId c11, Nothing),
+                  (clientId c12, Just pk12)
+                ]
+          )
+          === responseJsonEither
+
+    getClient brig uid1 (clientId c11) !!! do
+      const 404 === statusCode
+
+    liftIO . WS.assertMatch (5 # Second) ws $ \n -> do
+      let ob = Object $ List1.head (ntfPayload n)
+      ob ^? key "type" . _String
+        @?= Just "user.client-remove"
+      ( fromByteString . T.encodeUtf8
+          =<< (ob ^? key "client" . key "id" . _String)
+        )
+        @?= Just (clientId c11)
+
+  post
+    ( apiVersion "v3"
+        . brig
+        . paths ["users", "list-prekeys"]
+        . contentJson
+        . body (RequestBodyLBS $ encode userClients)
+        . zUser uid2
+    )
+    !!! do
+      const 200 === statusCode
+      const
+        ( Right $
+            expectedClientMap
+              domain
+              uid1
+              [ (clientId c11, Nothing),
+                (clientId c12, Just (unpackLastPrekey lk12))
+              ]
+        )
+        === responseJsonEither
+  where
+    expectedClientMap :: Domain -> UserId -> [(ClientId, Maybe Prekey)] -> QualifiedUserClientPrekeyMap
+    expectedClientMap domain u xs =
+      mkQualifiedUserClientPrekeyMap $
+        Map.singleton domain $
+          mkUserClientPrekeyMap $
+            Map.singleton u $
+              Map.fromList xs
+
+testClientsWithoutPrekeysV4 :: Brig -> Cannon -> DB.ClientState -> Opt.Opts -> Http ()
+testClientsWithoutPrekeysV4 brig cannon db opts = do
+  uid1 <- userId <$> randomUser brig
+  let (pk11, lk11) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  c11 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
+  let (pk12, lk12) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  c12 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
+
+  -- Simulating loss of all prekeys from c11 (due e.g. DB problems, business
+  -- logic prevents this from happening)
+  let removeClientKeys :: DB.PrepQuery DB.W (UserId, ClientId) ()
+      removeClientKeys = "DELETE FROM prekeys where user = ? and client = ?"
+  liftIO $
+    DB.runClient db $
+      DB.write removeClientKeys (DB.params DB.LocalQuorum (uid1, clientId c11))
+
+  uid2 <- userId <$> randomUser brig
+
+  let domain = opts.settings.federationDomain
+
+  let userClients =
+        QualifiedUserClients $
+          Map.singleton domain $
+            Map.singleton uid1 $
+              Set.fromList [clientId c11, clientId c12]
+
+  WS.bracketR cannon uid1 $ \ws -> do
+    getClient brig uid1 (clientId c11) !!! do
+      const 200 === statusCode
+
+    post
+      ( brig
+          . paths ["users", "list-prekeys"]
+          . contentJson
+          . body (RequestBodyLBS $ encode userClients)
+          . zUser uid2
+      )
+      !!! do
+        const 200 === statusCode
+        const
+          ( Right $
+              expectedClientMapClientsWithoutPrekeys
+                domain
+                uid1
+                [ (clientId c11, Nothing),
+                  (clientId c12, Just pk12)
+                ]
+                Nothing
+          )
+          === responseJsonEither
+
+    getClient brig uid1 (clientId c11) !!! do
+      const 404 === statusCode
+
+    liftIO . WS.assertMatch (5 # Second) ws $ \n -> do
+      let ob = Object $ List1.head (ntfPayload n)
+      ob ^? key "type" . _String
+        @?= Just "user.client-remove"
+      (fromByteString . T.encodeUtf8 =<< (ob ^? key "client" . key "id" . _String))
+        @?= Just (clientId c11)
+
+  post
+    ( brig
+        . paths ["users", "list-prekeys"]
+        . contentJson
+        . body (RequestBodyLBS $ encode userClients)
+        . zUser uid2
+    )
+    !!! do
+      const 200 === statusCode
+      const
+        ( Right $
+            expectedClientMapClientsWithoutPrekeys
+              domain
+              uid1
+              [ (clientId c11, Nothing),
+                (clientId c12, Just (unpackLastPrekey lk12))
+              ]
+              Nothing
+        )
+        === responseJsonEither
+
+expectedClientMapClientsWithoutPrekeys :: Domain -> UserId -> [(ClientId, Maybe Prekey)] -> Maybe [Qualified UserId] -> QualifiedUserClientPrekeyMapV4
+expectedClientMapClientsWithoutPrekeys domain u xs failed =
+  QualifiedUserClientPrekeyMapV4
+    { qualifiedUserClientPrekeys =
+        coerce $
+          mkQualifiedUserClientPrekeyMap $
+            Map.singleton domain $
+              mkUserClientPrekeyMap $
+                Map.singleton u $
+                  Map.fromList xs,
+      failedToList = failed
+    }
+
+testClientsWithoutPrekeysFailToListV4 :: Brig -> Cannon -> DB.ClientState -> Opt.Opts -> Http ()
+testClientsWithoutPrekeysFailToListV4 brig cannon db opts = do
+  uid1 <- userId <$> randomUser brig
+  let (pk11, lk11) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  c11 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
+  let (pk12, lk12) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  c12 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
+
+  -- Simulating loss of all prekeys from c11 (due e.g. DB problems, business
+  -- logic prevents this from happening)
+  let removeClientKeys :: DB.PrepQuery DB.W (UserId, ClientId) ()
+      removeClientKeys = "DELETE FROM prekeys where user = ? and client = ?"
+  liftIO $
+    DB.runClient db $
+      DB.write removeClientKeys (DB.params DB.LocalQuorum (uid1, clientId c11))
+
+  uid2 <- fakeRemoteUser
+
+  let domain = opts.settings.federationDomain
+
+  let userClients1 =
+        QualifiedUserClients $
+          Map.singleton domain $
+            Map.singleton uid1 $
+              Set.fromList [clientId c11, clientId c12]
+      userClients2 =
+        QualifiedUserClients $
+          Map.fromList
+            [ ( qDomain uid2,
+                Map.singleton (qUnqualified uid2) mempty
+              )
+            ]
+
+  WS.bracketR cannon uid1 $ \ws -> do
+    getClient brig uid1 (clientId c11) !!! do
+      const 200 === statusCode
+
+    post
+      ( brig
+          . paths ["users", "list-prekeys"]
+          . contentJson
+          . body (RequestBodyLBS $ encode userClients1)
+          . zUser (qUnqualified uid2)
+      )
+      !!! do
+        const 200 === statusCode
+        const
+          ( Right $
+              expectedClientMapClientsWithoutPrekeys
+                domain
+                uid1
+                [ (clientId c11, Nothing),
+                  (clientId c12, Just pk12)
+                ]
+                Nothing
+          )
+          === responseJsonEither
+
+    getClient brig uid1 (clientId c11) !!! do
+      const 404 === statusCode
+
+    liftIO . WS.assertMatch (5 # Second) ws $ \n -> do
+      let ob = Object $ List1.head (ntfPayload n)
+      ob ^? key "type" . _String
+        @?= Just "user.client-remove"
+      (fromByteString . T.encodeUtf8 =<< (ob ^? key "client" . key "id" . _String))
+        @?= Just (clientId c11)
+
+  post
+    ( brig
+        . paths ["users", "list-prekeys"]
+        . contentJson
+        . body (RequestBodyLBS $ encode userClients2)
+        . zUser (qUnqualified uid2)
+    )
+    !!! do
+      const 200 === statusCode
+      const
+        ( Right $
+            QualifiedUserClientPrekeyMapV4
+              { qualifiedUserClientPrekeys = QualifiedUserClientMap Map.empty,
+                failedToList = pure [uid2]
+              }
+        )
+        === responseJsonEither
+
 testListClientsBulkV2 :: Opt.Opts -> Brig -> Http ()
 testListClientsBulkV2 opts brig = do
   uid1 <- userId <$> randomUser brig
-  let (pk11, lk11) = (somePrekeys !! 0, (someLastPrekeys !! 0))
-  let (pk12, lk12) = (somePrekeys !! 1, (someLastPrekeys !! 1))
-  let (pk13, lk13) = (somePrekeys !! 2, (someLastPrekeys !! 2))
+  let (pk11, lk11) = (somePrekeys !! 0, someLastPrekeys !! 0)
+  let (pk12, lk12) = (somePrekeys !! 1, someLastPrekeys !! 1)
+  let (pk13, lk13) = (somePrekeys !! 2, someLastPrekeys !! 2)
   c11 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk11] lk11)
   c12 <- responseJsonError =<< addClient brig uid1 (defNewClient PermanentClientType [pk12] lk12)
   c13 <- responseJsonError =<< addClient brig uid1 (defNewClient TemporaryClientType [pk13] lk13)
 
   uid2 <- userId <$> randomUser brig
-  let (pk21, lk21) = (somePrekeys !! 3, (someLastPrekeys !! 3))
-  let (pk22, lk22) = (somePrekeys !! 4, (someLastPrekeys !! 4))
+  let (pk21, lk21) = (somePrekeys !! 3, someLastPrekeys !! 3)
+  let (pk22, lk22) = (somePrekeys !! 4, someLastPrekeys !! 4)
   c21 <- responseJsonError =<< addClient brig uid2 (defNewClient PermanentClientType [pk21] lk21)
   c22 <- responseJsonError =<< addClient brig uid2 (defNewClient PermanentClientType [pk22] lk22)
 
-  let domain = Opt.setFederationDomain $ Opt.optSettings opts
+  let domain = opts.settings.federationDomain
   uid3 <- userId <$> randomUser brig
   let mkPubClient cl = PubClient (clientId cl) (clientClass cl)
   let expectedResponse :: WrappedQualifiedUserMap (Set PubClient) =
@@ -279,7 +724,8 @@ testListClientsBulkV2 opts brig = do
                   ]
             )
   post
-    ( brig
+    ( apiVersion "v1"
+        . brig
         . paths ["users", "list-clients", "v2"]
         . zUser uid3
         . contentJson
@@ -317,18 +763,18 @@ generateClients n brig = do
 testGetUserPrekeys :: Brig -> Http ()
 testGetUserPrekeys brig = do
   [(uid, _c, lpk, cpk)] <- generateClients 1 brig
-  get (brig . paths ["users", toByteString' uid, "prekeys"] . zUser uid) !!! do
+  get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys"] . zUser uid) !!! do
     const 200 === statusCode
     const (Just $ PrekeyBundle uid [cpk]) === responseJsonMaybe
   -- prekeys are deleted when retrieved, except the last one
   replicateM_ 2 $
-    get (brig . paths ["users", toByteString' uid, "prekeys"] . zUser uid) !!! do
+    get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys"] . zUser uid) !!! do
       const 200 === statusCode
       const (Just $ PrekeyBundle uid [lpk]) === responseJsonMaybe
 
 testGetUserPrekeysQualified :: Brig -> Opt.Opts -> Http ()
 testGetUserPrekeysQualified brig opts = do
-  let domain = opts ^. Opt.optionSettings & Opt.setFederationDomain
+  let domain = opts.settings.federationDomain
   [(uid, _c, _lpk, cpk)] <- generateClients 1 brig
   get (brig . paths ["users", toByteString' domain, toByteString' uid, "prekeys"] . zUser uid) !!! do
     const 200 === statusCode
@@ -343,13 +789,13 @@ testGetUserPrekeysInvalidDomain brig = do
 testGetClientPrekey :: Brig -> Http ()
 testGetClientPrekey brig = do
   [(uid, c, _lpk, cpk)] <- generateClients 1 brig
-  get (brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
+  get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
     const 200 === statusCode
     const (Just $ cpk) === responseJsonMaybe
 
 testGetClientPrekeyQualified :: Brig -> Opt.Opts -> Http ()
 testGetClientPrekeyQualified brig opts = do
-  let domain = opts ^. Opt.optionSettings & Opt.setFederationDomain
+  let domain = opts.settings.federationDomain
   [(uid, c, _lpk, cpk)] <- generateClients 1 brig
   get (brig . paths ["users", toByteString' domain, toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
     const 200 === statusCode
@@ -373,7 +819,8 @@ testMultiUserGetPrekeys brig = do
   uid <- userId <$> randomUser brig
 
   post
-    ( brig
+    ( apiVersion "v1"
+        . brig
         . paths ["users", "prekeys"]
         . contentJson
         . body (RequestBodyLBS $ encode userClients)
@@ -385,7 +832,7 @@ testMultiUserGetPrekeys brig = do
 
 testMultiUserGetPrekeysQualified :: Brig -> Opt.Opts -> Http ()
 testMultiUserGetPrekeysQualified brig opts = do
-  let domain = opts ^. Opt.optionSettings & Opt.setFederationDomain
+  let domain = opts.settings.federationDomain
 
   xs <- generateClients 3 brig
   let userClients =
@@ -406,6 +853,45 @@ testMultiUserGetPrekeysQualified brig opts = do
                   (uid', Map.singleton (clientId c) (Just (prekeyData cpk)))
 
   post
+    ( apiVersion "v2"
+        . brig
+        . paths ["users", "list-prekeys"]
+        . contentJson
+        . body (RequestBodyLBS $ encode userClients)
+        . zUser uid
+    )
+    !!! do
+      const 200 === statusCode
+      const (Right $ expectedUserClientMap) === responseJsonEither
+
+testMultiUserGetPrekeysQualifiedV4 :: Brig -> Opt.Opts -> Http ()
+testMultiUserGetPrekeysQualifiedV4 brig opts = do
+  let domain = opts.settings.federationDomain
+
+  xs <- generateClients 3 brig
+  let userClients =
+        QualifiedUserClients $
+          Map.singleton domain $
+            Map.fromList $
+              xs <&> \(uid, c, _lpk, _cpk) ->
+                (uid, Set.fromList [clientId c])
+
+  uid <- userId <$> randomUser brig
+
+  let expectedUserClientMap =
+        QualifiedUserClientPrekeyMapV4
+          { qualifiedUserClientPrekeys =
+              coerce $
+                mkQualifiedUserClientPrekeyMap $
+                  Map.singleton domain $
+                    mkUserClientPrekeyMap $
+                      Map.fromList $
+                        xs <&> \(uid', c, _lpk, cpk) ->
+                          (uid', Map.singleton (clientId c) (Just (prekeyData cpk))),
+            failedToList = Nothing
+          }
+
+  post
     ( brig
         . paths ["users", "list-prekeys"]
         . contentJson
@@ -416,11 +902,18 @@ testMultiUserGetPrekeysQualified brig opts = do
       const 200 === statusCode
       const (Right $ expectedUserClientMap) === responseJsonEither
 
+-- The testTooManyClients test conforms to the following testing standards:
+-- @SF.Provisioning @TSFI.RESTfulAPI @S2
+--
+-- The test validates the upper bound on the number of permanent clients per
+-- user. It does so by trying to create one permanent client more than allowed.
+-- The expected outcome is that all the clients up to the limit are successfully
+-- created, but the one over the limit is not (error `404 too-many-clients`).
 testTooManyClients :: Opt.Opts -> Brig -> Http ()
 testTooManyClients opts brig = do
   uid <- userId <$> randomUser brig
   -- We can always change the permanent client limit
-  let newOpts = opts & Opt.optionSettings . Opt.userMaxPermClients .~ Just 1
+  let newOpts = opts & settingsLens . userMaxPermClientsLens ?~ 1
   withSettingsOverrides newOpts $ do
     -- There is only one temporary client, adding a new one
     -- replaces the previous one.
@@ -434,8 +927,71 @@ testTooManyClients opts brig = do
     addClient brig uid (defNewClient PermanentClientType [somePrekeys !! 11] (someLastPrekeys !! 11)) !!! do
       const 403 === statusCode
       const (Just "too-many-clients") === fmap Error.label . responseJsonMaybe
-      const (Just "application/json;charset=utf-8") === getHeader "Content-Type"
+      const (Just "application/json") === getHeader "Content-Type"
 
+-- Ensure that the list of prekeys for a user does not become empty, and the
+-- last resort prekey keeps being returned if it's the only key left.
+-- Test with featureFlag randomPrekeys=true
+testPrekeysNotEmptyRandomPrekeys :: Opt.Opts -> Brig -> Http ()
+testPrekeysNotEmptyRandomPrekeys opts brig = do
+  -- Run the test for randomPrekeys (not dynamoDB locking)
+  let newOpts = opts {Opt.randomPrekeys = Just True}
+  ensurePrekeysNotEmpty newOpts
+  where
+    ensurePrekeysNotEmpty :: Opt.Opts -> Http ()
+    ensurePrekeysNotEmpty newOpts = withSettingsOverrides newOpts $ do
+      lgr <- Log.new Log.defSettings
+      uid <- userId <$> randomUser brig
+      -- Create a client with 1 regular prekey and 1 last resort prekey
+      c <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [somePrekeys !! 10] (someLastPrekeys !! 10))
+      -- Claim the first regular one
+      _rs1 <- getPreKey brig uid uid (clientId c) <!! const 200 === statusCode
+      -- Claim again; this should give the last resort one
+      rs2 <- getPreKey brig uid uid (clientId c) <!! const 200 === statusCode
+      let pId2 = prekeyId . prekeyData <$> responseJsonMaybe rs2
+      liftIO $ assertEqual "last prekey rs2" (Just lastPrekeyId) pId2
+      liftIO $ Log.warn lgr (Log.msg (Log.val "First claim of last resort successful, claim again..."))
+      -- Claim again; this should (again) give the last resort one
+      rs3 <- getPreKey brig uid uid (clientId c) <!! const 200 === statusCode
+      let pId3 = prekeyId . prekeyData <$> responseJsonMaybe rs3
+      liftIO $ assertEqual "last prekey rs3" (Just lastPrekeyId) pId3
+
+testRegularPrekeysCannotBeSentAsLastPrekeys :: Brig -> Http ()
+testRegularPrekeysCannotBeSentAsLastPrekeys brig = do
+  uid <- userId <$> randomUser brig
+  -- The parser should reject a normal prekey in the lastPrekey field
+  addClient brig uid (defNewClient PermanentClientType [head somePrekeys] fakeLastPrekey) !!! const 400 === statusCode
+
+testRegularPrekeysCannotBeSentAsLastPrekeysDuringUpdate :: Brig -> Http ()
+testRegularPrekeysCannotBeSentAsLastPrekeysDuringUpdate brig = do
+  uid <- userId <$> randomUser brig
+  c <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [head somePrekeys] (someLastPrekeys !! 11)) <!! const 201 === statusCode
+  let newPrekey = somePrekeys !! 2
+  let update =
+        defUpdateClient
+          { updateClientPrekeys = [newPrekey],
+            updateClientLastKey = Just fakeLastPrekey,
+            updateClientLabel = Just "label"
+          }
+  -- The parser should reject a normal prekey in the lastPrekey field
+  put
+    ( brig
+        . paths ["clients", toByteString' (clientId c)]
+        . zUser uid
+        . contentJson
+        . body (RequestBodyLBS $ encode update)
+    )
+    !!! const 400
+      === statusCode
+
+-- @END
+
+-- The testRemoveClient test conforms to the following testing standards:
+-- @SF.Provisioning @TSFI.RESTfulAPI @S2
+--
+-- This test validates creating and deleting a client. A client is created and
+-- consequently deleted. Deleting a second time yields response 404 not found.
+-- Prekeys and cookies are not there anymore once the client is deleted.
 testRemoveClient :: Bool -> Brig -> Cannon -> Http ()
 testRemoveClient hasPwd brig cannon = do
   u <- randomUser' hasPwd brig
@@ -444,7 +1000,8 @@ testRemoveClient hasPwd brig cannon = do
   -- Permanent client with attached cookie
   when hasPwd $ do
     login brig (defEmailLogin email) PersistentCookie
-      !!! const 200 === statusCode
+      !!! const 200
+        === statusCode
     numCookies <- countCookies brig uid defCookieLabel
     liftIO $ Just 1 @=? numCookies
   c <- responseJsonError =<< addClient brig uid (client PermanentClientType (someLastPrekeys !! 10))
@@ -454,13 +1011,14 @@ testRemoveClient hasPwd brig cannon = do
   -- Success
   WS.bracketR cannon uid $ \ws -> do
     deleteClient brig uid (clientId c) (if hasPwd then Just defPasswordText else Nothing)
-      !!! const 200 === statusCode
+      !!! const 200
+        === statusCode
     void . liftIO . WS.assertMatch (5 # Second) ws $ \n -> do
       let j = Object $ List1.head (ntfPayload n)
       let etype = j ^? key "type" . _String
       let eclient = j ^? key "client" . key "id" . _String
       etype @?= Just "user.client-remove"
-      fmap ClientId eclient @?= Just (clientId c)
+      (fromByteString . T.encodeUtf8 =<< eclient) @?= Just (clientId c)
   -- Not found on retry
   deleteClient brig uid (clientId c) Nothing !!! const 404 === statusCode
   -- Prekeys are gone
@@ -475,6 +1033,14 @@ testRemoveClient hasPwd brig cannon = do
           newClientCookie = Just defCookieLabel
         }
 
+-- @END
+
+-- The testRemoveClientShortPwd test conforms to the following testing standards:
+-- @SF.Provisioning @TSFI.RESTfulAPI @S2
+--
+-- The test checks if a client can be deleted by providing a too short password.
+-- This is done by using a single-character password, whereas the minimum is 6
+-- characters. The client deletion attempt fails as expected.
 testRemoveClientShortPwd :: Brig -> Http ()
 testRemoveClientShortPwd brig = do
   u <- randomUser brig
@@ -482,13 +1048,15 @@ testRemoveClientShortPwd brig = do
   let Just email = userEmail u
   -- Permanent client with attached cookie
   login brig (defEmailLogin email) PersistentCookie
-    !!! const 200 === statusCode
+    !!! const 200
+      === statusCode
   numCookies <- countCookies brig uid defCookieLabel
   liftIO $ Just 1 @=? numCookies
   c <- responseJsonError =<< addClient brig uid (client PermanentClientType (someLastPrekeys !! 10))
   resp <-
     deleteClient brig uid (clientId c) (Just "a")
-      <!! const 400 === statusCode
+      <!! const 400
+        === statusCode
   err :: Object <- responseJsonError resp
   liftIO $ do
     (err ^. at "code") @?= Just (Number 400)
@@ -501,6 +1069,44 @@ testRemoveClientShortPwd brig = do
           newClientCookie = Just defCookieLabel
         }
 
+-- @END
+
+-- The testRemoveClientIncorrectPwd test conforms to the following testing standards:
+-- @SF.Provisioning @TSFI.RESTfulAPI @S2
+--
+-- The test checks if a client can be deleted by providing a syntax-valid, but
+-- incorrect password. The client deletion attempt fails with a 403 error
+-- response.
+testRemoveClientIncorrectPwd :: Brig -> Http ()
+testRemoveClientIncorrectPwd brig = do
+  u <- randomUser brig
+  let uid = userId u
+  let Just email = userEmail u
+  -- Permanent client with attached cookie
+  login brig (defEmailLogin email) PersistentCookie
+    !!! const 200
+      === statusCode
+  numCookies <- countCookies brig uid defCookieLabel
+  liftIO $ Just 1 @=? numCookies
+  c <- responseJsonError =<< addClient brig uid (client PermanentClientType (someLastPrekeys !! 10))
+  resp <-
+    deleteClient brig uid (clientId c) (Just "abcdef")
+      <!! const 403
+        === statusCode
+  err :: Object <- responseJsonError resp
+  liftIO $ do
+    (err ^. at "code") @?= Just (Number 403)
+    (err ^. at "label") @?= Just (String "invalid-credentials")
+    (err ^. at "message") @?= Just (String "Authentication failed")
+  where
+    client ty lk =
+      (defNewClient ty [somePrekeys !! 0] lk)
+        { newClientLabel = Just "Nexus 5x",
+          newClientCookie = Just defCookieLabel
+        }
+
+-- @END
+
 testUpdateClient :: Opt.Opts -> Brig -> Http ()
 testUpdateClient opts brig = do
   uid <- userId <$> randomUser brig
@@ -510,7 +1116,7 @@ testUpdateClient opts brig = do
             newClientModel = Just "featurephone"
           }
   c <- responseJsonError =<< addClient brig uid clt
-  get (brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
+  get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
     const 200 === statusCode
     const (Just $ ClientPrekey (clientId c) (somePrekeys !! 0)) === responseJsonMaybe
   getClient brig uid (clientId c) !!! do
@@ -519,7 +1125,11 @@ testUpdateClient opts brig = do
     const (Just PhoneClient) === (clientClass <=< responseJsonMaybe)
     const (Just "featurephone") === (clientModel <=< responseJsonMaybe)
   let newPrekey = somePrekeys !! 2
-  let update = UpdateClient [newPrekey] Nothing (Just "label") Nothing
+  let update =
+        defUpdateClient
+          { updateClientPrekeys = [newPrekey],
+            updateClientLabel = Just "label"
+          }
   put
     ( brig
         . paths ["clients", toByteString' (clientId c)]
@@ -528,8 +1138,8 @@ testUpdateClient opts brig = do
         . body (RequestBodyLBS $ encode update)
     )
     !!! const 200
-    === statusCode
-  get (brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
+      === statusCode
+  get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid) !!! do
     const 200 === statusCode
     const (Just $ ClientPrekey (clientId c) newPrekey) === responseJsonMaybe
 
@@ -539,32 +1149,35 @@ testUpdateClient opts brig = do
     const (Just "label") === (clientLabel <=< responseJsonMaybe)
 
   -- via `/users/:uid/clients/:client`, only `id` and `class` are visible:
-  get (brig . paths ["users", toByteString' uid, "clients", toByteString' (clientId c)]) !!! do
+  get (apiVersion "v1" . brig . paths ["users", toByteString' uid, "clients", toByteString' (clientId c)]) !!! do
     const 200 === statusCode
     const (Just $ clientId c) === (fmap pubClientId . responseJsonMaybe)
     const (Just PhoneClient) === (pubClientClass <=< responseJsonMaybe)
     const Nothing === (preview (key "label") <=< responseJsonMaybe @Value)
+    const Nothing === (preview (key "mls_public_keys") <=< responseJsonMaybe @Value)
 
   -- via `/users/:domain/:uid/clients/:client`, only `id` and `class` are visible:
-  let localdomain = opts ^. Opt.optionSettings & Opt.setFederationDomain
+  let localdomain = opts.settings.federationDomain
   get (brig . paths ["users", toByteString' localdomain, toByteString' uid, "clients", toByteString' (clientId c)]) !!! do
     const 200 === statusCode
     const (Just $ clientId c) === (fmap pubClientId . responseJsonMaybe)
     const (Just PhoneClient) === (pubClientClass <=< responseJsonMaybe)
     const Nothing === (preview (key "label") <=< responseJsonMaybe @Value)
+    const Nothing === (preview (key "mls_public_keys") <=< responseJsonMaybe @Value)
 
-  let update' = UpdateClient [] Nothing Nothing Nothing
+  let update' = defUpdateClient
 
   -- empty update should be a no-op
   put
-    ( brig
+    ( apiVersion "v1"
+        . brig
         . paths ["clients", toByteString' (clientId c)]
         . zUser uid
         . contentJson
         . body (RequestBodyLBS $ encode update')
     )
     !!! const 200
-    === statusCode
+      === statusCode
 
   -- check if label is still present
   getClient brig uid (clientId c) !!! do
@@ -572,11 +1185,12 @@ testUpdateClient opts brig = do
     const (Just "label") === (clientLabel <=< responseJsonMaybe)
 
   -- update supported client capabilities work
-  let checkUpdate :: HasCallStack => Maybe [ClientCapability] -> Bool -> [ClientCapability] -> Http ()
+  let checkUpdate :: (HasCallStack) => Maybe [ClientCapability] -> Bool -> [ClientCapability] -> Http ()
       checkUpdate capsIn respStatusOk capsOut = do
-        let update'' = UpdateClient [] Nothing Nothing (Set.fromList <$> capsIn)
+        let update'' = defUpdateClient {updateClientCapabilities = ClientCapabilityList . Set.fromList <$> capsIn}
         put
-          ( brig
+          ( apiVersion "v1"
+              . brig
               . paths ["clients", toByteString' (clientId c)]
               . zUser uid
               . contentJson
@@ -599,22 +1213,22 @@ testUpdateClient opts brig = do
 
   -- update supported client capabilities don't break prekeys or label
   do
-    let checkClientLabel :: HasCallStack => Http ()
+    let checkClientLabel :: (HasCallStack) => Http ()
         checkClientLabel = do
           getClient brig uid (clientId c) !!! do
             const 200 === statusCode
             const (Just label) === (clientLabel <=< responseJsonMaybe)
 
-        flushClientPrekey :: HasCallStack => Http (Maybe ClientPrekey)
+        flushClientPrekey :: (HasCallStack) => Http (Maybe ClientPrekey)
         flushClientPrekey = do
           responseJsonMaybe
             <$> ( get
-                    (brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid)
+                    (apiVersion "v1" . brig . paths ["users", toByteString' uid, "prekeys", toByteString' (clientId c)] . zUser uid)
                     <!! const 200
-                    === statusCode
+                      === statusCode
                 )
 
-        checkClientPrekeys :: HasCallStack => Prekey -> Http ()
+        checkClientPrekeys :: (HasCallStack) => Prekey -> Http ()
         checkClientPrekeys expectedPrekey = do
           flushClientPrekey >>= \case
             Nothing -> error "unexpected."
@@ -622,7 +1236,7 @@ testUpdateClient opts brig = do
               assertEqual "" (clientId c) cid'
               assertEqual "" expectedPrekey prekey'
 
-        caps = Just $ Set.fromList [ClientSupportsLegalholdImplicitConsent]
+        caps = Just $ ClientCapabilityList $ Set.fromList [ClientSupportsLegalholdImplicitConsent]
 
         label = "label-bc1b7b0c-b7bf-11eb-9a1d-233d397f934a"
         prekey = somePrekeys !! 4
@@ -633,22 +1247,43 @@ testUpdateClient opts brig = do
       ( brig
           . paths ["clients", toByteString' (clientId c)]
           . zUser uid
-          . contentJson
-          . (body . RequestBodyLBS . encode $ UpdateClient [prekey] (Just lastprekey) (Just label) Nothing)
+          . json
+            defUpdateClient
+              { updateClientPrekeys = [prekey],
+                updateClientLastKey = Just lastprekey,
+                updateClientLabel = Just label
+              }
       )
-      !!! const 200 === statusCode
+      !!! const 200
+        === statusCode
     checkClientLabel
     put
       ( brig
           . paths ["clients", toByteString' (clientId c)]
           . zUser uid
-          . contentJson
-          . (body . RequestBodyLBS . encode $ UpdateClient [] Nothing Nothing caps)
+          . json defUpdateClient {updateClientCapabilities = caps}
       )
-      !!! const 200 === statusCode
+      !!! const 200
+        === statusCode
     checkClientLabel
     checkClientPrekeys prekey
     checkClientPrekeys (unpackLastPrekey lastprekey)
+
+testMLSPublicKeyUpdate :: Brig -> Http ()
+testMLSPublicKeyUpdate brig = do
+  uid <- userId <$> randomUser brig
+  let clt =
+        (defNewClient TemporaryClientType [somePrekeys !! 0] (someLastPrekeys !! 0))
+          { newClientClass = Just PhoneClient,
+            newClientModel = Just "featurephone"
+          }
+  c <- responseJsonError =<< addClient brig uid clt
+  let keys = Map.fromList [(Ed25519, "aGVsbG8gd29ybGQ=")]
+  putClient brig uid (clientId c) keys !!! const 200 === statusCode
+  c' <- responseJsonError =<< getClient brig uid (clientId c) <!! const 200 === statusCode
+  liftIO $ clientMLSPublicKeys c' @?= keys
+  -- adding the key again should fail
+  putClient brig uid (clientId c) keys !!! const 400 === statusCode
 
 testMissingClient :: Brig -> Http ()
 testMissingClient brig = do
@@ -659,18 +1294,29 @@ testMissingClient brig = do
     -- This is unfortunate, but fixing this breaks clients.
     const Nothing === responseBody
     const ["text/plain;charset=utf-8"]
-      === map snd . filter ((== "Content-Type") . fst) . responseHeaders
+      === map snd
+        . filter ((== "Content-Type") . fst)
+        . responseHeaders
 
+-- The testAddMultipleTemporary test conforms to the following testing standards:
+-- @SF.Provisioning @TSFI.RESTfulAPI @S2
 -- Legacy (galley)
-testAddMultipleTemporary :: Brig -> Galley -> Http ()
-testAddMultipleTemporary brig galley = do
+--
+-- Add temporary client, check that all services (both galley and
+-- brig) have registered it.  Add second temporary client, check
+-- again.  (NB: temp clients replace each other, there can always be
+-- at most one per account.)
+testAddMultipleTemporary :: (HasCallStack) => Brig -> Galley -> Cannon -> Http ()
+testAddMultipleTemporary brig galley cannon = do
   uid <- userId <$> randomUser brig
   let clt1 =
         (defNewClient TemporaryClientType [somePrekeys !! 0] (someLastPrekeys !! 0))
           { newClientClass = Just PhoneClient,
             newClientModel = Just "featurephone1"
           }
-  _ <- addClient brig uid clt1
+
+  client <- responseJsonError =<< addClient brig uid clt1
+
   brigClients1 <- numOfBrigClients uid
   galleyClients1 <- numOfGalleyClients uid
   liftIO $ assertEqual "Too many clients found" (Just 1) brigClients1
@@ -680,10 +1326,20 @@ testAddMultipleTemporary brig galley = do
           { newClientClass = Just PhoneClient,
             newClientModel = Just "featurephone2"
           }
-  _ <- addClient brig uid clt2
+
   brigClients2 <- numOfBrigClients uid
-  galleyClients2 <- numOfGalleyClients uid
   liftIO $ assertEqual "Too many clients found" (Just 1) brigClients2
+
+  WS.bracketR cannon uid $ \ws -> do
+    _ <- addClient brig uid clt2
+    void . liftIO . WS.assertMatch (5 # Second) ws $ \n -> do
+      let j = Object $ List1.head (ntfPayload n)
+      let etype = j ^? key "type" . _String
+      let eclient = j ^? key "client" . key "id" . _String
+      etype @?= Just "user.client-remove"
+      (fromByteString . T.encodeUtf8 =<< eclient) @?= Just (clientId client)
+
+  galleyClients2 <- numOfGalleyClients uid
   liftIO $ assertEqual "Too many clients found" (Just 1) galleyClients2
   where
     numOfBrigClients u = do
@@ -692,14 +1348,16 @@ testAddMultipleTemporary brig galley = do
           brig
             . path "clients"
             . zUser u
-      return $ Vec.length <$> (preview _Array =<< responseJsonMaybe @Value r)
+      pure $ Vec.length <$> (preview _Array =<< responseJsonMaybe @Value r)
     numOfGalleyClients u = do
       r <-
         get $
           galley
             . path "i/test/clients"
             . zUser u
-      return $ Vec.length <$> (preview _Array =<< responseJsonMaybe @Value r)
+      pure $ Vec.length <$> (preview _Array =<< responseJsonMaybe @Value r)
+
+-- @END
 
 testPreKeyRace :: Brig -> Http ()
 testPreKeyRace brig = do
@@ -708,7 +1366,7 @@ testPreKeyRace brig = do
   c <- responseJsonError =<< addClient brig uid (defNewClient PermanentClientType pks (someLastPrekeys !! 0))
   pks' <- flip mapConcurrently pks $ \_ -> do
     rs <- getPreKey brig uid uid (clientId c) <!! const 200 === statusCode
-    return $ prekeyId . prekeyData <$> responseJsonMaybe rs
+    pure $ prekeyId . prekeyData <$> responseJsonMaybe rs
   -- We should not hand out regular prekeys more than once (i.e. at most once).
   let actual = catMaybes pks'
   liftIO $ assertEqual "insufficient prekeys" (length pks) (length actual)
@@ -716,25 +1374,173 @@ testPreKeyRace brig = do
   liftIO $ assertEqual "duplicate prekeys" (length regular) (length (nub regular))
   deleteClient brig uid (clientId c) (Just defPasswordText) !!! const 200 === statusCode
 
-testCan'tDeleteLegalHoldClient :: Brig -> Http ()
-testCan'tDeleteLegalHoldClient brig = do
-  let hasPassword = False
-  user <- randomUser' hasPassword brig
-  let uid = userId user
-  let pk = head somePrekeys
-  let lk = head someLastPrekeys
-  resp <-
-    addClientInternal brig uid (defNewClient LegalHoldClientType [pk] lk)
-      <!! const 201 === statusCode
-  lhClientId <- clientId <$> responseJsonError resp
-  deleteClient brig uid lhClientId Nothing !!! const 400 === statusCode
+testNewNonce :: Brig -> Http ()
+testNewNonce brig = do
+  n1 <- check Util.getNonce 204
+  n2 <- check Util.headNonce 200
+  lift $ assertBool "nonces should not be equal" (n1 /= n2)
+  where
+    check f status = do
+      uid <- userId <$> randomUser brig
+      cid <- randomClient
+      response <- f brig uid cid <!! const status === statusCode
+      let nonceBs = getHeader "Replay-Nonce" response
+      liftIO $ do
+        assertBool "Replay-Nonce header should contain a valid base64url encoded uuidv4" $ any isValidBase64UrlEncodedUUID nonceBs
+        Just "no-store" @=? getHeader "Cache-Control" response
+      pure nonceBs
 
-testCan'tAddLegalHoldClient :: Brig -> Http ()
-testCan'tAddLegalHoldClient brig = do
-  let hasPassword = False
-  user <- randomUser' hasPassword brig
-  let uid = userId user
-  let pk = head somePrekeys
-  let lk = head someLastPrekeys
-  -- Regular users cannot add legalhold clients
-  addClient brig uid (defNewClient LegalHoldClientType [pk] lk) !!! const 400 === statusCode
+data DPoPClaimsSet = DPoPClaimsSet
+  { jwtClaims :: ClaimsSet,
+    claimNonce :: Text,
+    claimHtm :: Text,
+    claimHtu :: Text,
+    claimChal :: Text,
+    claimHandle :: Text,
+    claimDisplayName :: Text,
+    claimTeamId :: Text
+  }
+  deriving (Eq, Show, Generic)
+
+instance HasClaimsSet DPoPClaimsSet where
+  claimsSet f s = fmap (\a' -> s {jwtClaims = a'}) (f (jwtClaims s))
+
+instance A.FromJSON DPoPClaimsSet where
+  parseJSON = A.withObject "OAuthClaimsSet" $ \o ->
+    DPoPClaimsSet
+      <$> A.parseJSON (A.Object o)
+      <*> o A..: "nonce"
+      <*> o A..: "htm"
+      <*> o A..: "htu"
+      <*> o A..: "chal"
+      <*> o A..: "handle"
+      <*> o A..: "name"
+      <*> o A..: "team"
+
+instance A.ToJSON DPoPClaimsSet where
+  toJSON s =
+    ins "nonce" (claimNonce s) (A.toJSON (jwtClaims s))
+      & ins "htm" (claimHtm s)
+      & ins "htu" (claimHtu s)
+      & ins "chal" (claimChal s)
+      & ins "handle" (claimHandle s)
+      & ins "name" (claimDisplayName s)
+      & ins "team" (claimTeamId s)
+    where
+      ins k v (Object o) = Object $ M.insert k (A.toJSON v) o
+      ins _ _ a = a
+
+testCreateAccessToken :: Opt.Opts -> Nginz -> Brig -> Http ()
+testCreateAccessToken opts n brig = do
+  let localDomain = opts.settings.federationDomain
+  (u, tid) <- Util.createUserWithTeam' brig
+  handle <- do
+    Just h <- userHandle <$> Util.setRandomHandle brig u
+    pure $ "wireapp://%40" <> fromHandle h <> "@" <> cs (toByteString' localDomain)
+  let uid = userId u
+  let Just email = userEmail u
+  -- convert the user Id into 16 octets of binary and then base64url
+  let uidBS = Data.UUID.toByteString (toUUID uid)
+  let uidB64 = encodeBase64UrlUnpadded (cs uidBS)
+  rs <-
+    login n (defEmailLogin email) PersistentCookie
+      <!! const 200 === statusCode
+  let t = decodeToken rs
+  cid <- createClientForUser brig uid
+  nonceResponse <- Util.headNonceNginz n t cid <!! const 200 === statusCode
+  let nonceBs = cs $ fromMaybe (error "invalid nonce") $ getHeader "Replay-Nonce" nonceResponse
+  now <- liftIO $ posixSecondsToUTCTime . fromInteger <$> (floor <$> getPOSIXTime)
+  let clientIdentity = cs $ "wireapp://" <> cs (toText uidB64) <> "!" <> toByteString' cid <> "@" <> toByteString' localDomain
+  let httpsUrl = cs $ "https://" <> toByteString' localDomain <> "/clients/" <> toByteString' cid <> "/access-token"
+  let expClaim = NumericDate $ addUTCTime 10 now
+  let claimsSet' =
+        emptyClaimsSet
+          & claimIat ?~ NumericDate now
+          & claimExp ?~ expClaim
+          & claimNbf ?~ NumericDate now
+          & claimSub ?~ fromMaybe (error "invalid sub claim") ((clientIdentity :: Text) ^? stringOrUri)
+          & claimJti ?~ "6fc59e7f-b666-4ffc-b738-4f4760c884ca"
+          & claimAud ?~ (maybe (error "invalid sub claim") (Audience . (: [])) (("https://wire.com/acme/challenge/abcd" :: Text) ^? stringOrUri))
+  let dpopClaims =
+        DPoPClaimsSet
+          claimsSet'
+          nonceBs
+          "POST"
+          httpsUrl
+          "wa2VrkCtW1sauJ2D3uKY8rc7y4kl4usH"
+          handle
+          (fromName u.userDisplayName)
+          (UUID.toText (toUUID tid))
+  signedOrError <- fmap encodeCompact <$> liftIO (signProofEcdsaP256 dpopClaims)
+  case signedOrError of
+    Left err -> liftIO $ assertFailure $ "failed to sign claims: " <> show err
+    Right signed -> do
+      let accessControlExposeHeaders = maybe "" cs $ getHeader "Access-Control-Expose-Headers" nonceResponse
+      liftIO $ assertBool "Access-Control-Expose-Headers should contain Replay-Nonce" $ "Replay-Nonce" `isInfixOf` accessControlExposeHeaders
+      let proof = Just $ Proof (cs signed)
+      response <- Util.createAccessTokenNginz n t cid proof
+      let accessToken = fromRight (error $ "failed to create token: " <> show response) $ responseJsonEither response
+      liftIO $ datrType accessToken @?= DPoP
+  where
+    -- FUTUREWORK: parameterize the signing algorithm
+    _signProof :: DPoPClaimsSet -> IO (Either JWTError SignedJWT)
+    _signProof claims = runJOSE $ do
+      algo <- bestJWSAlg jwkKey
+      let h =
+            newJWSHeader ((), algo)
+              & (jwk ?~ HeaderParam () jwkPubKey)
+              & (typ ?~ HeaderParam () "dpop+jwt")
+      signJWT jwkKey h claims
+
+    signProofEcdsaP256 :: DPoPClaimsSet -> IO (Either JWTError SignedJWT)
+    signProofEcdsaP256 claims = runJOSE $ do
+      algo <- bestJWSAlg jwkKeyBundleEcdsaP256
+      let h =
+            newJWSHeader ((), algo)
+              & (jwk ?~ HeaderParam () jwkPublicKeyEcdsaP256)
+              & (typ ?~ HeaderParam () "dpop+jwt")
+      signJWT jwkKeyBundleEcdsaP256 h claims
+
+    jwkKey :: JWK
+    jwkKey = do
+      fromMaybe (error "invalid jwk") . A.decode $
+        "{\"kty\":\"OKP\",\"d\":\"9RVey-A7ENCO5e9fDiPf8An1gkVBmAhFgu4WZMVwS-A\",\"crv\":\"Ed25519\",\"x\":\"nLJGN-Oa6Jsq3KclZggLl7UvAVdmB0Q6C3N5BCgphHw\"}"
+
+    jwkPubKey :: JWK
+    jwkPubKey = do
+      fromMaybe (error "invalid jwk") . A.decode $
+        "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"nLJGN-Oa6Jsq3KclZggLl7UvAVdmB0Q6C3N5BCgphHw\"}"
+
+    jwkKeyBundleEcdsaP256 :: JWK
+    jwkKeyBundleEcdsaP256 = do
+      fromMaybe (error "invalid jwk") . A.decode $
+        "{\"kty\":\"EC\",\"alg\":\"ES256\",\"crv\":\"P-256\",\"x\":\"hcYjloNodyCLF_rQd_HIszSpa2J-vzrgntneAJW5pA8\",\"y\":\"6MXxnHq1FmAWCc6A7YValxvekicBv53ARTQO35mRKJ8\",\"d\":\"yz1weEXJbJao6wLiml8fahLt3BnJxdHWfbpUB0i8GLo\"}"
+
+    jwkPublicKeyEcdsaP256 :: JWK
+    jwkPublicKeyEcdsaP256 = do
+      fromMaybe (error "invalid jwk") . A.decode $
+        "{\"kty\":\"EC\",\"alg\":\"ES256\",\"crv\":\"P-256\",\"x\":\"hcYjloNodyCLF_rQd_HIszSpa2J-vzrgntneAJW5pA8\",\"y\":\"6MXxnHq1FmAWCc6A7YValxvekicBv53ARTQO35mRKJ8\"}"
+
+testCreateAccessTokenMissingProof :: Brig -> Http ()
+testCreateAccessTokenMissingProof brig = do
+  uid <- userId <$> randomUser brig
+  cid <- createClientForUser brig uid
+  let mProof = Nothing
+  Util.createAccessToken brig uid "some_host_name" cid mProof
+    !!! do
+      const 400 === statusCode
+
+testCreateAccessTokenNoNonce :: Brig -> Http ()
+testCreateAccessTokenNoNonce brig = do
+  (u, _) <- Util.createUserWithTeam' brig
+  void $ Util.setRandomHandle brig u
+  let uid = userId u
+  cid <- createClientForUser brig uid
+  Util.createAccessToken brig uid "some_host_name" cid (Just $ Proof "xxxx.yyyy.zzzz")
+    !!! do
+      const 400 === statusCode
+      const (Just "client-token-bad-nonce") === fmap Error.label . responseJsonMaybe
+
+createClientForUser :: Brig -> UserId -> Http ClientId
+createClientForUser brig uid =
+  clientId <$> (responseJsonError =<< addClient brig uid (defNewClient PermanentClientType [head somePrekeys] (head someLastPrekeys)))

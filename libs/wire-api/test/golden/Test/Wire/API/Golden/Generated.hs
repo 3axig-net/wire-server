@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,229 +19,221 @@ module Test.Wire.API.Golden.Generated where
 
 import Imports
 import Test.Tasty
-import qualified Test.Wire.API.Golden.Generated.AccessRole_user
-import qualified Test.Wire.API.Golden.Generated.AccessToken_user
-import qualified Test.Wire.API.Golden.Generated.Access_user
-import qualified Test.Wire.API.Golden.Generated.Action_user
-import qualified Test.Wire.API.Golden.Generated.Activate_user
-import qualified Test.Wire.API.Golden.Generated.ActivationCode_user
-import qualified Test.Wire.API.Golden.Generated.ActivationKey_user
-import qualified Test.Wire.API.Golden.Generated.ActivationResponse_user
-import qualified Test.Wire.API.Golden.Generated.AddBotResponse_user
-import qualified Test.Wire.API.Golden.Generated.AddBot_user
-import qualified Test.Wire.API.Golden.Generated.AppName_user
-import qualified Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team
-import qualified Test.Wire.API.Golden.Generated.AssetKey_user
-import qualified Test.Wire.API.Golden.Generated.AssetRetention_user
-import qualified Test.Wire.API.Golden.Generated.AssetSettings_user
-import qualified Test.Wire.API.Golden.Generated.AssetSize_user
-import qualified Test.Wire.API.Golden.Generated.AssetToken_user
-import qualified Test.Wire.API.Golden.Generated.Asset_asset
-import qualified Test.Wire.API.Golden.Generated.BindingNewTeamUser_user
-import qualified Test.Wire.API.Golden.Generated.BindingNewTeam_team
-import qualified Test.Wire.API.Golden.Generated.BotConvView_provider
-import qualified Test.Wire.API.Golden.Generated.BotUserView_provider
-import qualified Test.Wire.API.Golden.Generated.CheckHandles_user
-import qualified Test.Wire.API.Golden.Generated.ChunkSize_user
-import qualified Test.Wire.API.Golden.Generated.ClientClass_user
-import qualified Test.Wire.API.Golden.Generated.ClientMismatch_user
-import qualified Test.Wire.API.Golden.Generated.ClientPrekey_user
-import qualified Test.Wire.API.Golden.Generated.ClientType_user
-import qualified Test.Wire.API.Golden.Generated.Client_user
-import qualified Test.Wire.API.Golden.Generated.ColourId_user
-import qualified Test.Wire.API.Golden.Generated.CompletePasswordReset_provider
-import qualified Test.Wire.API.Golden.Generated.CompletePasswordReset_user
-import qualified Test.Wire.API.Golden.Generated.Connect_user
-import qualified Test.Wire.API.Golden.Generated.ConnectionRequest_user
-import qualified Test.Wire.API.Golden.Generated.ConnectionUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Contact_user
-import qualified Test.Wire.API.Golden.Generated.ConvMembers_user
-import qualified Test.Wire.API.Golden.Generated.ConvTeamInfo_user
-import qualified Test.Wire.API.Golden.Generated.ConvType_user
-import qualified Test.Wire.API.Golden.Generated.ConversationAccessData_user
-import qualified Test.Wire.API.Golden.Generated.ConversationCode_user
-import qualified Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user
-import qualified Test.Wire.API.Golden.Generated.ConversationList_20_28Id_20_2a_20C_29_user
-import qualified Test.Wire.API.Golden.Generated.ConversationMessageTimerUpdate_user
-import qualified Test.Wire.API.Golden.Generated.ConversationReceiptModeUpdate_user
-import qualified Test.Wire.API.Golden.Generated.ConversationRename_user
-import qualified Test.Wire.API.Golden.Generated.ConversationRole_user
-import qualified Test.Wire.API.Golden.Generated.ConversationRolesList_user
-import qualified Test.Wire.API.Golden.Generated.Conversation_user
-import qualified Test.Wire.API.Golden.Generated.CookieId_user
-import qualified Test.Wire.API.Golden.Generated.CookieLabel_user
-import qualified Test.Wire.API.Golden.Generated.CookieList_user
-import qualified Test.Wire.API.Golden.Generated.CookieType_user
-import qualified Test.Wire.API.Golden.Generated.Cookie_20_28_29_user
-import qualified Test.Wire.API.Golden.Generated.CustomBackend_user
-import qualified Test.Wire.API.Golden.Generated.DeleteProvider_provider
-import qualified Test.Wire.API.Golden.Generated.DeleteService_provider
-import qualified Test.Wire.API.Golden.Generated.DeleteUser_user
-import qualified Test.Wire.API.Golden.Generated.DeletionCodeTimeout_user
-import qualified Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team
-import qualified Test.Wire.API.Golden.Generated.EmailUpdate_provider
-import qualified Test.Wire.API.Golden.Generated.EmailUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Email_user
-import qualified Test.Wire.API.Golden.Generated.EventType_team
-import qualified Test.Wire.API.Golden.Generated.EventType_user
-import qualified Test.Wire.API.Golden.Generated.Event_team
-import qualified Test.Wire.API.Golden.Generated.Event_user
-import qualified Test.Wire.API.Golden.Generated.HandleUpdate_user
-import qualified Test.Wire.API.Golden.Generated.InvitationCode_user
-import qualified Test.Wire.API.Golden.Generated.InvitationList_team
-import qualified Test.Wire.API.Golden.Generated.InvitationRequest_team
-import qualified Test.Wire.API.Golden.Generated.Invitation_team
-import qualified Test.Wire.API.Golden.Generated.Invite_user
-import qualified Test.Wire.API.Golden.Generated.LastPrekey_user
-import qualified Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team
-import qualified Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team
-import qualified Test.Wire.API.Golden.Generated.LimitedQualifiedUserIdList_user
-import qualified Test.Wire.API.Golden.Generated.ListType_team
-import qualified Test.Wire.API.Golden.Generated.LocaleUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Locale_user
-import qualified Test.Wire.API.Golden.Generated.LoginCodeTimeout_user
-import qualified Test.Wire.API.Golden.Generated.LoginCode_user
-import qualified Test.Wire.API.Golden.Generated.LoginId_user
-import qualified Test.Wire.API.Golden.Generated.Login_user
-import qualified Test.Wire.API.Golden.Generated.ManagedBy_user
-import qualified Test.Wire.API.Golden.Generated.MemberUpdateData_user
-import qualified Test.Wire.API.Golden.Generated.MemberUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Member_user
-import qualified Test.Wire.API.Golden.Generated.MutedStatus_user
-import qualified Test.Wire.API.Golden.Generated.NameUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Name_user
-import qualified Test.Wire.API.Golden.Generated.NewAssetToken_user
-import qualified Test.Wire.API.Golden.Generated.NewBotRequest_provider
-import qualified Test.Wire.API.Golden.Generated.NewBotResponse_provider
-import qualified Test.Wire.API.Golden.Generated.NewClient_user
-import qualified Test.Wire.API.Golden.Generated.NewConvManaged_user
-import qualified Test.Wire.API.Golden.Generated.NewConvUnmanaged_user
-import qualified Test.Wire.API.Golden.Generated.NewLegalHoldClient_team
-import qualified Test.Wire.API.Golden.Generated.NewLegalHoldService_team
-import qualified Test.Wire.API.Golden.Generated.NewOtrMessage_user
-import qualified Test.Wire.API.Golden.Generated.NewPasswordReset_user
-import qualified Test.Wire.API.Golden.Generated.NewProviderResponse_provider
-import qualified Test.Wire.API.Golden.Generated.NewProvider_provider
-import qualified Test.Wire.API.Golden.Generated.NewServiceResponse_provider
-import qualified Test.Wire.API.Golden.Generated.NewService_provider
-import qualified Test.Wire.API.Golden.Generated.NewTeamMember_team
-import qualified Test.Wire.API.Golden.Generated.NewUserPublic_user
-import qualified Test.Wire.API.Golden.Generated.NewUser_user
-import qualified Test.Wire.API.Golden.Generated.Offset_user
-import qualified Test.Wire.API.Golden.Generated.OtherMemberUpdate_user
-import qualified Test.Wire.API.Golden.Generated.OtherMember_user
-import qualified Test.Wire.API.Golden.Generated.OtrMessage_user
-import qualified Test.Wire.API.Golden.Generated.OtrRecipients_user
-import qualified Test.Wire.API.Golden.Generated.PasswordChange_provider
-import qualified Test.Wire.API.Golden.Generated.PasswordChange_user
-import qualified Test.Wire.API.Golden.Generated.PasswordResetCode_user
-import qualified Test.Wire.API.Golden.Generated.PasswordResetKey_user
-import qualified Test.Wire.API.Golden.Generated.PasswordReset_provider
-import qualified Test.Wire.API.Golden.Generated.PendingLoginCode_user
-import qualified Test.Wire.API.Golden.Generated.Permissions_team
-import qualified Test.Wire.API.Golden.Generated.PhoneUpdate_user
-import qualified Test.Wire.API.Golden.Generated.Phone_user
-import qualified Test.Wire.API.Golden.Generated.Pict_user
-import qualified Test.Wire.API.Golden.Generated.PrekeyBundle_user
-import qualified Test.Wire.API.Golden.Generated.PrekeyId_user
-import qualified Test.Wire.API.Golden.Generated.Prekey_user
-import qualified Test.Wire.API.Golden.Generated.Priority_user
-import qualified Test.Wire.API.Golden.Generated.PropertyKey_user
-import qualified Test.Wire.API.Golden.Generated.PropertyValue_user
-import qualified Test.Wire.API.Golden.Generated.ProviderActivationResponse_provider
-import qualified Test.Wire.API.Golden.Generated.ProviderLogin_provider
-import qualified Test.Wire.API.Golden.Generated.ProviderProfile_provider
-import qualified Test.Wire.API.Golden.Generated.Provider_provider
-import qualified Test.Wire.API.Golden.Generated.PubClient_user
-import qualified Test.Wire.API.Golden.Generated.PushTokenList_user
-import qualified Test.Wire.API.Golden.Generated.PushToken_user
-import qualified Test.Wire.API.Golden.Generated.Push_2eToken_2eTransport_user
-import qualified Test.Wire.API.Golden.Generated.QueuedNotificationList_user
-import qualified Test.Wire.API.Golden.Generated.QueuedNotification_user
-import qualified Test.Wire.API.Golden.Generated.RTCConfiguration_user
-import qualified Test.Wire.API.Golden.Generated.RTCIceServer_user
-import qualified Test.Wire.API.Golden.Generated.ReceiptMode_user
-import qualified Test.Wire.API.Golden.Generated.Relation_user
-import qualified Test.Wire.API.Golden.Generated.RemoveBotResponse_user
-import qualified Test.Wire.API.Golden.Generated.RemoveCookies_user
-import qualified Test.Wire.API.Golden.Generated.RemoveLegalHoldSettingsRequest_team
-import qualified Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team
-import qualified Test.Wire.API.Golden.Generated.ResumableAsset_user
-import qualified Test.Wire.API.Golden.Generated.ResumableSettings_user
-import qualified Test.Wire.API.Golden.Generated.RichField_user
-import qualified Test.Wire.API.Golden.Generated.RichInfoAssocList_user
-import qualified Test.Wire.API.Golden.Generated.RichInfoMapAndList_user
-import qualified Test.Wire.API.Golden.Generated.RichInfo_user
-import qualified Test.Wire.API.Golden.Generated.RmClient_user
-import qualified Test.Wire.API.Golden.Generated.RoleName_user
-import qualified Test.Wire.API.Golden.Generated.Role_team
-import qualified Test.Wire.API.Golden.Generated.SFTServer_user
-import qualified Test.Wire.API.Golden.Generated.Scheme_user
-import qualified Test.Wire.API.Golden.Generated.SearchResult_20Contact_user
-import qualified Test.Wire.API.Golden.Generated.SearchResult_20TeamContact_user
-import qualified Test.Wire.API.Golden.Generated.SelfProfile_user
-import qualified Test.Wire.API.Golden.Generated.SendActivationCode_user
-import qualified Test.Wire.API.Golden.Generated.SendLoginCode_user
-import qualified Test.Wire.API.Golden.Generated.ServiceKeyPEM_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceKeyType_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceKey_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceProfilePage_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceProfile_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceRef_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceTagList_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceTag_provider
-import qualified Test.Wire.API.Golden.Generated.ServiceToken_provider
-import qualified Test.Wire.API.Golden.Generated.Service_provider
-import qualified Test.Wire.API.Golden.Generated.SimpleMember_user
-import qualified Test.Wire.API.Golden.Generated.SimpleMembers_user
-import qualified Test.Wire.API.Golden.Generated.TeamBinding_team
-import qualified Test.Wire.API.Golden.Generated.TeamContact_user
-import qualified Test.Wire.API.Golden.Generated.TeamConversationList_team
-import qualified Test.Wire.API.Golden.Generated.TeamConversation_team
-import qualified Test.Wire.API.Golden.Generated.TeamDeleteData_team
-import qualified Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team
-import qualified Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team
-import qualified Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team
-import qualified Test.Wire.API.Golden.Generated.TeamList_team
-import qualified Test.Wire.API.Golden.Generated.TeamMemberDeleteData_team
-import qualified Test.Wire.API.Golden.Generated.TeamMemberList_team
-import qualified Test.Wire.API.Golden.Generated.TeamMember_team
-import qualified Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team
-import qualified Test.Wire.API.Golden.Generated.TeamSearchVisibility_team
-import qualified Test.Wire.API.Golden.Generated.TeamUpdateData_team
-import qualified Test.Wire.API.Golden.Generated.Team_team
-import qualified Test.Wire.API.Golden.Generated.TokenType_user
-import qualified Test.Wire.API.Golden.Generated.Token_user
-import qualified Test.Wire.API.Golden.Generated.TotalSize_user
-import qualified Test.Wire.API.Golden.Generated.Transport_user
-import qualified Test.Wire.API.Golden.Generated.TurnHost_user
-import qualified Test.Wire.API.Golden.Generated.TurnURI_user
-import qualified Test.Wire.API.Golden.Generated.TurnUsername_user
-import qualified Test.Wire.API.Golden.Generated.TypingData_user
-import qualified Test.Wire.API.Golden.Generated.TypingStatus_user
-import qualified Test.Wire.API.Golden.Generated.UpdateBotPrekeys_user
-import qualified Test.Wire.API.Golden.Generated.UpdateClient_user
-import qualified Test.Wire.API.Golden.Generated.UpdateProvider_provider
-import qualified Test.Wire.API.Golden.Generated.UpdateServiceConn_provider
-import qualified Test.Wire.API.Golden.Generated.UpdateServiceWhitelist_provider
-import qualified Test.Wire.API.Golden.Generated.UpdateService_provider
-import qualified Test.Wire.API.Golden.Generated.UserClientMap_20Int_user
-import qualified Test.Wire.API.Golden.Generated.UserClients_user
-import qualified Test.Wire.API.Golden.Generated.UserConnectionList_user
-import qualified Test.Wire.API.Golden.Generated.UserConnection_user
-import qualified Test.Wire.API.Golden.Generated.UserHandleInfo_user
-import qualified Test.Wire.API.Golden.Generated.UserIdentity_user
-import qualified Test.Wire.API.Golden.Generated.UserLegalHoldStatusResponse_team
-import qualified Test.Wire.API.Golden.Generated.UserProfile_user
-import qualified Test.Wire.API.Golden.Generated.UserSSOId_user
-import qualified Test.Wire.API.Golden.Generated.UserUpdate_user
-import qualified Test.Wire.API.Golden.Generated.User_2eProfile_2eAsset_user
-import qualified Test.Wire.API.Golden.Generated.User_user
-import qualified Test.Wire.API.Golden.Generated.VerifyDeleteUser_user
-import qualified Test.Wire.API.Golden.Generated.ViewLegalHoldServiceInfo_team
-import qualified Test.Wire.API.Golden.Generated.ViewLegalHoldService_team
-import qualified Test.Wire.API.Golden.Generated.Wrapped_20_22some_5fint_22_20Int_user
+import Test.Wire.API.Golden.Generated.AccessRoleLegacy_user qualified
+import Test.Wire.API.Golden.Generated.AccessToken_user qualified
+import Test.Wire.API.Golden.Generated.Access_user qualified
+import Test.Wire.API.Golden.Generated.Action_user qualified
+import Test.Wire.API.Golden.Generated.ActivationCode_user qualified
+import Test.Wire.API.Golden.Generated.ActivationKey_user qualified
+import Test.Wire.API.Golden.Generated.ActivationResponse_user qualified
+import Test.Wire.API.Golden.Generated.AddBotResponse_user qualified
+import Test.Wire.API.Golden.Generated.AddBot_user qualified
+import Test.Wire.API.Golden.Generated.AppName_user qualified
+import Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team qualified
+import Test.Wire.API.Golden.Generated.AssetKey_user qualified
+import Test.Wire.API.Golden.Generated.AssetRetention_user qualified
+import Test.Wire.API.Golden.Generated.AssetSettings_user qualified
+import Test.Wire.API.Golden.Generated.AssetSize_user qualified
+import Test.Wire.API.Golden.Generated.AssetToken_user qualified
+import Test.Wire.API.Golden.Generated.Asset_asset qualified
+import Test.Wire.API.Golden.Generated.BindingNewTeamUser_user qualified
+import Test.Wire.API.Golden.Generated.BotConvView_provider qualified
+import Test.Wire.API.Golden.Generated.BotUserView_provider qualified
+import Test.Wire.API.Golden.Generated.CheckHandles_user qualified
+import Test.Wire.API.Golden.Generated.ClientClass_user qualified
+import Test.Wire.API.Golden.Generated.ClientMismatch_user qualified
+import Test.Wire.API.Golden.Generated.ClientPrekey_user qualified
+import Test.Wire.API.Golden.Generated.ClientType_user qualified
+import Test.Wire.API.Golden.Generated.Client_user qualified
+import Test.Wire.API.Golden.Generated.ColourId_user qualified
+import Test.Wire.API.Golden.Generated.CompletePasswordReset_provider qualified
+import Test.Wire.API.Golden.Generated.CompletePasswordReset_user qualified
+import Test.Wire.API.Golden.Generated.Connect_user qualified
+import Test.Wire.API.Golden.Generated.ConnectionRequest_user qualified
+import Test.Wire.API.Golden.Generated.ConnectionUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Contact_user qualified
+import Test.Wire.API.Golden.Generated.ConvMembers_user qualified
+import Test.Wire.API.Golden.Generated.ConvTeamInfo_user qualified
+import Test.Wire.API.Golden.Generated.ConvType_user qualified
+import Test.Wire.API.Golden.Generated.ConversationAccessData_user qualified
+import Test.Wire.API.Golden.Generated.ConversationCode_user qualified
+import Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user qualified
+import Test.Wire.API.Golden.Generated.ConversationList_20_28Id_20_2a_20C_29_user qualified
+import Test.Wire.API.Golden.Generated.ConversationMessageTimerUpdate_user qualified
+import Test.Wire.API.Golden.Generated.ConversationReceiptModeUpdate_user qualified
+import Test.Wire.API.Golden.Generated.ConversationRename_user qualified
+import Test.Wire.API.Golden.Generated.ConversationRole_user qualified
+import Test.Wire.API.Golden.Generated.ConversationRolesList_user qualified
+import Test.Wire.API.Golden.Generated.Conversation_user qualified
+import Test.Wire.API.Golden.Generated.CookieId_user qualified
+import Test.Wire.API.Golden.Generated.CookieLabel_user qualified
+import Test.Wire.API.Golden.Generated.CookieList_user qualified
+import Test.Wire.API.Golden.Generated.CookieType_user qualified
+import Test.Wire.API.Golden.Generated.Cookie_20_28_29_user qualified
+import Test.Wire.API.Golden.Generated.CustomBackend_user qualified
+import Test.Wire.API.Golden.Generated.DeleteProvider_provider qualified
+import Test.Wire.API.Golden.Generated.DeleteService_provider qualified
+import Test.Wire.API.Golden.Generated.DeleteUser_user qualified
+import Test.Wire.API.Golden.Generated.DeletionCodeTimeout_user qualified
+import Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team qualified
+import Test.Wire.API.Golden.Generated.EmailUpdate_provider qualified
+import Test.Wire.API.Golden.Generated.EmailUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Email_user qualified
+import Test.Wire.API.Golden.Generated.EventType_team qualified
+import Test.Wire.API.Golden.Generated.EventType_user qualified
+import Test.Wire.API.Golden.Generated.Event_conversation qualified
+import Test.Wire.API.Golden.Generated.Event_featureConfig qualified
+import Test.Wire.API.Golden.Generated.Event_team qualified
+import Test.Wire.API.Golden.Generated.Event_user qualified
+import Test.Wire.API.Golden.Generated.Feature_team qualified
+import Test.Wire.API.Golden.Generated.HandleUpdate_user qualified
+import Test.Wire.API.Golden.Generated.InvitationCode_user qualified
+import Test.Wire.API.Golden.Generated.InvitationList_team qualified
+import Test.Wire.API.Golden.Generated.InvitationRequest_team qualified
+import Test.Wire.API.Golden.Generated.Invitation_team qualified
+import Test.Wire.API.Golden.Generated.Invite_user qualified
+import Test.Wire.API.Golden.Generated.LastPrekey_user qualified
+import Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team qualified
+import Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team qualified
+import Test.Wire.API.Golden.Generated.LimitedQualifiedUserIdList_user qualified
+import Test.Wire.API.Golden.Generated.ListType_team qualified
+import Test.Wire.API.Golden.Generated.LocaleUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Locale_user qualified
+import Test.Wire.API.Golden.Generated.LockableFeaturePatch_team qualified
+import Test.Wire.API.Golden.Generated.LockableFeature_team qualified
+import Test.Wire.API.Golden.Generated.LoginCodeTimeout_user qualified
+import Test.Wire.API.Golden.Generated.LoginCode_user qualified
+import Test.Wire.API.Golden.Generated.ManagedBy_user qualified
+import Test.Wire.API.Golden.Generated.MemberUpdateData_user qualified
+import Test.Wire.API.Golden.Generated.MemberUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Member_user qualified
+import Test.Wire.API.Golden.Generated.MutedStatus_user qualified
+import Test.Wire.API.Golden.Generated.NameUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Name_user qualified
+import Test.Wire.API.Golden.Generated.NewAssetToken_user qualified
+import Test.Wire.API.Golden.Generated.NewBotRequest_provider qualified
+import Test.Wire.API.Golden.Generated.NewBotResponse_provider qualified
+import Test.Wire.API.Golden.Generated.NewClient_user qualified
+import Test.Wire.API.Golden.Generated.NewConv_user qualified
+import Test.Wire.API.Golden.Generated.NewLegalHoldClient_team qualified
+import Test.Wire.API.Golden.Generated.NewLegalHoldService_team qualified
+import Test.Wire.API.Golden.Generated.NewOtrMessage_user qualified
+import Test.Wire.API.Golden.Generated.NewPasswordReset_user qualified
+import Test.Wire.API.Golden.Generated.NewProviderResponse_provider qualified
+import Test.Wire.API.Golden.Generated.NewProvider_provider qualified
+import Test.Wire.API.Golden.Generated.NewServiceResponse_provider qualified
+import Test.Wire.API.Golden.Generated.NewService_provider qualified
+import Test.Wire.API.Golden.Generated.NewTeamMember_team qualified
+import Test.Wire.API.Golden.Generated.NewTeam_team qualified
+import Test.Wire.API.Golden.Generated.NewUserPublic_user qualified
+import Test.Wire.API.Golden.Generated.NewUser_user qualified
+import Test.Wire.API.Golden.Generated.OtherMemberUpdate_user qualified
+import Test.Wire.API.Golden.Generated.OtherMember_user qualified
+import Test.Wire.API.Golden.Generated.OtrMessage_user qualified
+import Test.Wire.API.Golden.Generated.OtrRecipients_user qualified
+import Test.Wire.API.Golden.Generated.PasswordChange_provider qualified
+import Test.Wire.API.Golden.Generated.PasswordChange_user qualified
+import Test.Wire.API.Golden.Generated.PasswordResetCode_user qualified
+import Test.Wire.API.Golden.Generated.PasswordResetKey_user qualified
+import Test.Wire.API.Golden.Generated.PasswordReset_provider qualified
+import Test.Wire.API.Golden.Generated.PendingLoginCode_user qualified
+import Test.Wire.API.Golden.Generated.Permissions_team qualified
+import Test.Wire.API.Golden.Generated.PhoneUpdate_user qualified
+import Test.Wire.API.Golden.Generated.Phone_user qualified
+import Test.Wire.API.Golden.Generated.Pict_user qualified
+import Test.Wire.API.Golden.Generated.PrekeyBundle_user qualified
+import Test.Wire.API.Golden.Generated.PrekeyId_user qualified
+import Test.Wire.API.Golden.Generated.Prekey_user qualified
+import Test.Wire.API.Golden.Generated.Priority_user qualified
+import Test.Wire.API.Golden.Generated.PropertyKey_user qualified
+import Test.Wire.API.Golden.Generated.ProviderActivationResponse_provider qualified
+import Test.Wire.API.Golden.Generated.ProviderLogin_provider qualified
+import Test.Wire.API.Golden.Generated.ProviderProfile_provider qualified
+import Test.Wire.API.Golden.Generated.Provider_provider qualified
+import Test.Wire.API.Golden.Generated.PubClient_user qualified
+import Test.Wire.API.Golden.Generated.PushTokenList_user qualified
+import Test.Wire.API.Golden.Generated.PushToken_user qualified
+import Test.Wire.API.Golden.Generated.Push_2eToken_2eTransport_user qualified
+import Test.Wire.API.Golden.Generated.QualifiedUserClientPrekeyMapV4_user qualified
+import Test.Wire.API.Golden.Generated.QueuedNotificationList_user qualified
+import Test.Wire.API.Golden.Generated.QueuedNotification_user qualified
+import Test.Wire.API.Golden.Generated.RTCConfiguration_user qualified
+import Test.Wire.API.Golden.Generated.RTCIceServer_user qualified
+import Test.Wire.API.Golden.Generated.ReceiptMode_user qualified
+import Test.Wire.API.Golden.Generated.Relation_user qualified
+import Test.Wire.API.Golden.Generated.RemoveBotResponse_user qualified
+import Test.Wire.API.Golden.Generated.RemoveCookies_user qualified
+import Test.Wire.API.Golden.Generated.RemoveLegalHoldSettingsRequest_team qualified
+import Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team qualified
+import Test.Wire.API.Golden.Generated.RichField_user qualified
+import Test.Wire.API.Golden.Generated.RichInfoAssocList_user qualified
+import Test.Wire.API.Golden.Generated.RichInfo_user qualified
+import Test.Wire.API.Golden.Generated.RmClient_user qualified
+import Test.Wire.API.Golden.Generated.RoleName_user qualified
+import Test.Wire.API.Golden.Generated.Role_team qualified
+import Test.Wire.API.Golden.Generated.SFTServer_user qualified
+import Test.Wire.API.Golden.Generated.Scheme_user qualified
+import Test.Wire.API.Golden.Generated.SearchResult_20Contact_user qualified
+import Test.Wire.API.Golden.Generated.SearchResult_20TeamContact_user qualified
+import Test.Wire.API.Golden.Generated.SelfProfile_user qualified
+import Test.Wire.API.Golden.Generated.SendLoginCode_user qualified
+import Test.Wire.API.Golden.Generated.ServiceKeyPEM_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceKeyType_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceKey_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceProfilePage_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceProfile_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceRef_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceTagList_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceTag_provider qualified
+import Test.Wire.API.Golden.Generated.ServiceToken_provider qualified
+import Test.Wire.API.Golden.Generated.Service_provider qualified
+import Test.Wire.API.Golden.Generated.SimpleMember_user qualified
+import Test.Wire.API.Golden.Generated.SimpleMembers_user qualified
+import Test.Wire.API.Golden.Generated.TeamBinding_team qualified
+import Test.Wire.API.Golden.Generated.TeamContact_user qualified
+import Test.Wire.API.Golden.Generated.TeamConversationList_team qualified
+import Test.Wire.API.Golden.Generated.TeamConversation_team qualified
+import Test.Wire.API.Golden.Generated.TeamDeleteData_team qualified
+import Test.Wire.API.Golden.Generated.TeamList_team qualified
+import Test.Wire.API.Golden.Generated.TeamMemberDeleteData_team qualified
+import Test.Wire.API.Golden.Generated.TeamMemberList_team qualified
+import Test.Wire.API.Golden.Generated.TeamMember_team qualified
+import Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team qualified
+import Test.Wire.API.Golden.Generated.TeamSearchVisibility_team qualified
+import Test.Wire.API.Golden.Generated.TeamUpdateData_team qualified
+import Test.Wire.API.Golden.Generated.Team_team qualified
+import Test.Wire.API.Golden.Generated.TokenType_user qualified
+import Test.Wire.API.Golden.Generated.Token_user qualified
+import Test.Wire.API.Golden.Generated.Transport_user qualified
+import Test.Wire.API.Golden.Generated.TurnHost_user qualified
+import Test.Wire.API.Golden.Generated.TurnURI_user qualified
+import Test.Wire.API.Golden.Generated.TurnUsername_user qualified
+import Test.Wire.API.Golden.Generated.TypingStatus_user qualified
+import Test.Wire.API.Golden.Generated.UpdateBotPrekeys_user qualified
+import Test.Wire.API.Golden.Generated.UpdateClient_user qualified
+import Test.Wire.API.Golden.Generated.UpdateProvider_provider qualified
+import Test.Wire.API.Golden.Generated.UpdateServiceConn_provider qualified
+import Test.Wire.API.Golden.Generated.UpdateServiceWhitelist_provider qualified
+import Test.Wire.API.Golden.Generated.UpdateService_provider qualified
+import Test.Wire.API.Golden.Generated.UserClientMap_20Int_user qualified
+import Test.Wire.API.Golden.Generated.UserClients_user qualified
+import Test.Wire.API.Golden.Generated.UserConnectionList_user qualified
+import Test.Wire.API.Golden.Generated.UserConnection_user qualified
+import Test.Wire.API.Golden.Generated.UserHandleInfo_user qualified
+import Test.Wire.API.Golden.Generated.UserLegalHoldStatusResponse_team qualified
+import Test.Wire.API.Golden.Generated.UserProfile_user qualified
+import Test.Wire.API.Golden.Generated.UserSSOId_user qualified
+import Test.Wire.API.Golden.Generated.UserUpdate_user qualified
+import Test.Wire.API.Golden.Generated.User_2eProfile_2eAsset_user qualified
+import Test.Wire.API.Golden.Generated.User_user qualified
+import Test.Wire.API.Golden.Generated.VerificationAction_user qualified
+import Test.Wire.API.Golden.Generated.VerifyDeleteUser_user qualified
+import Test.Wire.API.Golden.Generated.ViewLegalHoldServiceInfo_team qualified
+import Test.Wire.API.Golden.Generated.ViewLegalHoldService_team qualified
+import Test.Wire.API.Golden.Generated.Wrapped_20_22some_5fint_22_20Int_user qualified
 import Test.Wire.API.Golden.Runner
+import Wire.API.Routes.Version
+import Wire.API.Routes.Versioned
 
 tests :: TestTree
 tests =
@@ -292,30 +284,6 @@ tests =
             (Test.Wire.API.Golden.Generated.AssetKey_user.testObject_AssetKey_user_3, "testObject_AssetKey_user_3.json"),
             (Test.Wire.API.Golden.Generated.AssetKey_user.testObject_AssetKey_user_4, "testObject_AssetKey_user_4.json"),
             (Test.Wire.API.Golden.Generated.AssetKey_user.testObject_AssetKey_user_5, "testObject_AssetKey_user_5.json")
-          ],
-      testGroup "Golden: ResumableSettings_user" $
-        testObjects
-          [ (Test.Wire.API.Golden.Generated.ResumableSettings_user.testObject_ResumableSettings_user_1, "testObject_ResumableSettings_user_1.json"),
-            (Test.Wire.API.Golden.Generated.ResumableSettings_user.testObject_ResumableSettings_user_2, "testObject_ResumableSettings_user_2.json"),
-            (Test.Wire.API.Golden.Generated.ResumableSettings_user.testObject_ResumableSettings_user_4, "testObject_ResumableSettings_user_4.json"),
-            (Test.Wire.API.Golden.Generated.ResumableSettings_user.testObject_ResumableSettings_user_5, "testObject_ResumableSettings_user_5.json"),
-            (Test.Wire.API.Golden.Generated.ResumableSettings_user.testObject_ResumableSettings_user_17, "testObject_ResumableSettings_user_17.json")
-          ],
-      testGroup "Golden: TotalSize_user" $
-        testObjects
-          [ (Test.Wire.API.Golden.Generated.TotalSize_user.testObject_TotalSize_user_1, "testObject_TotalSize_user_1.json")
-          ],
-      testGroup "Golden: ChunkSize_user" $
-        testObjects
-          [ (Test.Wire.API.Golden.Generated.ChunkSize_user.testObject_ChunkSize_user_1, "testObject_ChunkSize_user_1.json")
-          ],
-      testGroup "Golden: Offset_user" $
-        testObjects
-          [ (Test.Wire.API.Golden.Generated.Offset_user.testObject_Offset_user_1, "testObject_Offset_user_1.json")
-          ],
-      testGroup "Golden: ResumableAsset_user" $
-        testObjects
-          [ (Test.Wire.API.Golden.Generated.ResumableAsset_user.testObject_ResumableAsset_user_1, "testObject_ResumableAsset_user_1.json")
           ],
       testGroup "Golden: TurnHost_user" $
         testObjects
@@ -377,7 +345,9 @@ tests =
             (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_3, "testObject_RTCConfiguration_user_3.json"),
             (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_4, "testObject_RTCConfiguration_user_4.json"),
             (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_5, "testObject_RTCConfiguration_user_5.json"),
-            (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_6, "testObject_RTCConfiguration_user_6.json")
+            (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_6, "testObject_RTCConfiguration_user_6.json"),
+            (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_7, "testObject_RTCConfiguration_user_7.json"),
+            (Test.Wire.API.Golden.Generated.RTCConfiguration_user.testObject_RTCConfiguration_user_8, "testObject_RTCConfiguration_user_8.json")
           ],
       testGroup "Golden: SFTServer_user" $
         testObjects
@@ -412,19 +382,39 @@ tests =
         testObjects
           [ (Test.Wire.API.Golden.Generated.ConnectionUpdate_user.testObject_ConnectionUpdate_user_1, "testObject_ConnectionUpdate_user_1.json")
           ],
+      testGroup "Golden: Conversation_user V2" $
+        testObjects
+          [ (Versioned @'V2 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_1, "testObject_Conversation_v2_user_1.json"),
+            (Versioned @'V2 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_2, "testObject_Conversation_v2_user_2.json"),
+            (Versioned @'V2 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_3, "testObject_Conversation_v2_user_3.json"),
+            (Versioned @'V2 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_4, "testObject_Conversation_v2_user_4.json"),
+            (Versioned @'V2 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_5, "testObject_Conversation_v2_user_5.json")
+          ],
+      testGroup "Golden: Conversation_user V5" $
+        testObjects
+          [ (Versioned @'V5 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_1, "testObject_Conversation_v5_user_1.json"),
+            (Versioned @'V5 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_2, "testObject_Conversation_v5_user_2.json"),
+            (Versioned @'V5 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_3, "testObject_Conversation_v5_user_3.json"),
+            (Versioned @'V5 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_4, "testObject_Conversation_v5_user_4.json"),
+            (Versioned @'V5 Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_5, "testObject_Conversation_v5_user_5.json")
+          ],
       testGroup "Golden: Conversation_user" $
         testObjects
           [ (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_1, "testObject_Conversation_user_1.json"),
-            (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_2, "testObject_Conversation_user_2.json")
+            (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_2, "testObject_Conversation_user_2.json"),
+            (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_3, "testObject_Conversation_user_3.json"),
+            (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_4, "testObject_Conversation_user_4.json"),
+            (Test.Wire.API.Golden.Generated.Conversation_user.testObject_Conversation_user_5, "testObject_Conversation_user_5.json")
           ],
-      testGroup "Golden: NewConvUnmanaged_user" $
+      testGroup "Golden: NewConv_user V2" $
         testObjects
-          [ (Test.Wire.API.Golden.Generated.NewConvUnmanaged_user.testObject_NewConvUnmanaged_user_1, "testObject_NewConvUnmanaged_user_1.json"),
-            (Test.Wire.API.Golden.Generated.NewConvUnmanaged_user.testObject_NewConvUnmanaged_user_3, "testObject_NewConvUnmanaged_user_3.json")
+          [ (Versioned @'V2 Test.Wire.API.Golden.Generated.NewConv_user.testObject_NewConv_user_1, "testObject_NewConv_v2_user_1.json"),
+            (Versioned @'V2 Test.Wire.API.Golden.Generated.NewConv_user.testObject_NewConv_user_3, "testObject_NewConv_v2_user_3.json")
           ],
-      testGroup "Golden: NewConvManaged_user" $
+      testGroup "Golden: NewConv_user" $
         testObjects
-          [ (Test.Wire.API.Golden.Generated.NewConvManaged_user.testObject_NewConvManaged_user_1, "testObject_NewConvManaged_user_1.json")
+          [ (Test.Wire.API.Golden.Generated.NewConv_user.testObject_NewConv_user_1, "testObject_NewConv_user_1.json"),
+            (Test.Wire.API.Golden.Generated.NewConv_user.testObject_NewConv_user_3, "testObject_NewConv_user_3.json")
           ],
       testGroup "Golden: ConversationList_20_28Id_20_2a_20C_29_user" $
         testObjects
@@ -435,13 +425,13 @@ tests =
               "testObject_ConversationList_20_28Id_20_2a_20C_29_user_2.json"
             )
           ],
-      testGroup "Golden: ConversationList_20Conversation_user" $
+      testGroup "Golden: ConversationList_20Conversation_user V2" $
         testObjects
-          [ ( Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user.testObject_ConversationList_20Conversation_user_1,
-              "testObject_ConversationList_20Conversation_user_1.json"
+          [ ( Versioned @'V2 Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user.testObject_ConversationList_20Conversation_user_1,
+              "testObject_ConversationList_20Conversation_v2_user_1.json"
             ),
-            ( Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user.testObject_ConversationList_20Conversation_user_2,
-              "testObject_ConversationList_20Conversation_user_2.json"
+            ( Versioned @'V2 Test.Wire.API.Golden.Generated.ConversationList_20Conversation_user.testObject_ConversationList_20Conversation_user_2,
+              "testObject_ConversationList_20Conversation_v2_user_2.json"
             )
           ],
       testGroup "Golden: Access_user" $
@@ -451,12 +441,12 @@ tests =
             (Test.Wire.API.Golden.Generated.Access_user.testObject_Access_user_3, "testObject_Access_user_3.json"),
             (Test.Wire.API.Golden.Generated.Access_user.testObject_Access_user_4, "testObject_Access_user_4.json")
           ],
-      testGroup "Golden: AccessRole_user" $
+      testGroup "Golden: AccessRoleLegacy_user" $
         testObjects
-          [ (Test.Wire.API.Golden.Generated.AccessRole_user.testObject_AccessRole_user_1, "testObject_AccessRole_user_1.json"),
-            (Test.Wire.API.Golden.Generated.AccessRole_user.testObject_AccessRole_user_2, "testObject_AccessRole_user_2.json"),
-            (Test.Wire.API.Golden.Generated.AccessRole_user.testObject_AccessRole_user_3, "testObject_AccessRole_user_3.json"),
-            (Test.Wire.API.Golden.Generated.AccessRole_user.testObject_AccessRole_user_4, "testObject_AccessRole_user_4.json")
+          [ (Test.Wire.API.Golden.Generated.AccessRoleLegacy_user.testObject_AccessRoleLegacy_user_1, "testObject_AccessRoleLegacy_user_1.json"),
+            (Test.Wire.API.Golden.Generated.AccessRoleLegacy_user.testObject_AccessRoleLegacy_user_2, "testObject_AccessRoleLegacy_user_2.json"),
+            (Test.Wire.API.Golden.Generated.AccessRoleLegacy_user.testObject_AccessRoleLegacy_user_3, "testObject_AccessRoleLegacy_user_3.json"),
+            (Test.Wire.API.Golden.Generated.AccessRoleLegacy_user.testObject_AccessRoleLegacy_user_4, "testObject_AccessRoleLegacy_user_4.json")
           ],
       testGroup "Golden: ConvType_user" $
         testObjects
@@ -482,6 +472,15 @@ tests =
         testObjects
           [ ( Test.Wire.API.Golden.Generated.ConversationRename_user.testObject_ConversationRename_user_1,
               "testObject_ConversationRename_user_1.json"
+            )
+          ],
+      testGroup "Golden: ConversationAccessData_user V2" $
+        testObjects
+          [ ( Versioned @'V2 Test.Wire.API.Golden.Generated.ConversationAccessData_user.testObject_ConversationAccessData_user_1,
+              "testObject_ConversationAccessData_v2_user_1.json"
+            ),
+            ( Versioned @'V2 Test.Wire.API.Golden.Generated.ConversationAccessData_user.testObject_ConversationAccessData_user_2,
+              "testObject_ConversationAccessData_v2_user_2.json"
             )
           ],
       testGroup "Golden: ConversationAccessData_user" $
@@ -634,12 +633,6 @@ tests =
               "testObject_TypingStatus_user_2.json"
             )
           ],
-      testGroup "Golden: TypingData_user" $
-        testObjects
-          [ ( Test.Wire.API.Golden.Generated.TypingData_user.testObject_TypingData_user_1,
-              "testObject_TypingData_user_1.json"
-            )
-          ],
       testGroup "Golden: CustomBackend_user" $
         testObjects
           [ (Test.Wire.API.Golden.Generated.CustomBackend_user.testObject_CustomBackend_user_1, "testObject_CustomBackend_user_1.json"),
@@ -678,7 +671,9 @@ tests =
             (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_11, "testObject_Event_user_11.json"),
             (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_12, "testObject_Event_user_12.json"),
             (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_13, "testObject_Event_user_13.json"),
-            (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_14, "testObject_Event_user_14.json")
+            (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_14, "testObject_Event_user_14.json"),
+            (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_15, "testObject_Event_user_15.json"),
+            (Test.Wire.API.Golden.Generated.Event_user.testObject_Event_user_16, "testObject_Event_user_16.json")
           ],
       testGroup "Golden: EventType_user" $
         testObjects
@@ -796,12 +791,6 @@ tests =
             (Test.Wire.API.Golden.Generated.PropertyKey_user.testObject_PropertyKey_user_18, "testObject_PropertyKey_user_18.json"),
             (Test.Wire.API.Golden.Generated.PropertyKey_user.testObject_PropertyKey_user_19, "testObject_PropertyKey_user_19.json"),
             (Test.Wire.API.Golden.Generated.PropertyKey_user.testObject_PropertyKey_user_20, "testObject_PropertyKey_user_20.json")
-          ],
-      testGroup "Golden: PropertyValue_user" $
-        testObjects
-          [ ( Test.Wire.API.Golden.Generated.PropertyValue_user.testObject_PropertyValue_user_1,
-              "testObject_PropertyValue_user_1.json"
-            )
           ],
       testGroup "Golden: Push_2eToken_2eTransport_user" $
         testObjects
@@ -988,14 +977,8 @@ tests =
         testObjects [(Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_1, "testObject_ActivationKey_user_1.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_2, "testObject_ActivationKey_user_2.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_3, "testObject_ActivationKey_user_3.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_4, "testObject_ActivationKey_user_4.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_5, "testObject_ActivationKey_user_5.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_6, "testObject_ActivationKey_user_6.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_7, "testObject_ActivationKey_user_7.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_8, "testObject_ActivationKey_user_8.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_9, "testObject_ActivationKey_user_9.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_10, "testObject_ActivationKey_user_10.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_11, "testObject_ActivationKey_user_11.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_12, "testObject_ActivationKey_user_12.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_13, "testObject_ActivationKey_user_13.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_14, "testObject_ActivationKey_user_14.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_15, "testObject_ActivationKey_user_15.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_16, "testObject_ActivationKey_user_16.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_17, "testObject_ActivationKey_user_17.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_18, "testObject_ActivationKey_user_18.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_19, "testObject_ActivationKey_user_19.json"), (Test.Wire.API.Golden.Generated.ActivationKey_user.testObject_ActivationKey_user_20, "testObject_ActivationKey_user_20.json")],
       testGroup "Golden: ActivationCode_user" $
         testObjects [(Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_1, "testObject_ActivationCode_user_1.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_2, "testObject_ActivationCode_user_2.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_3, "testObject_ActivationCode_user_3.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_4, "testObject_ActivationCode_user_4.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_5, "testObject_ActivationCode_user_5.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_6, "testObject_ActivationCode_user_6.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_7, "testObject_ActivationCode_user_7.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_8, "testObject_ActivationCode_user_8.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_9, "testObject_ActivationCode_user_9.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_10, "testObject_ActivationCode_user_10.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_11, "testObject_ActivationCode_user_11.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_12, "testObject_ActivationCode_user_12.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_13, "testObject_ActivationCode_user_13.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_14, "testObject_ActivationCode_user_14.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_15, "testObject_ActivationCode_user_15.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_16, "testObject_ActivationCode_user_16.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_17, "testObject_ActivationCode_user_17.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_18, "testObject_ActivationCode_user_18.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_19, "testObject_ActivationCode_user_19.json"), (Test.Wire.API.Golden.Generated.ActivationCode_user.testObject_ActivationCode_user_20, "testObject_ActivationCode_user_20.json")],
-      testGroup "Golden: Activate_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_1, "testObject_Activate_user_1.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_2, "testObject_Activate_user_2.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_3, "testObject_Activate_user_3.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_4, "testObject_Activate_user_4.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_5, "testObject_Activate_user_5.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_6, "testObject_Activate_user_6.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_7, "testObject_Activate_user_7.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_8, "testObject_Activate_user_8.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_9, "testObject_Activate_user_9.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_10, "testObject_Activate_user_10.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_11, "testObject_Activate_user_11.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_12, "testObject_Activate_user_12.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_13, "testObject_Activate_user_13.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_14, "testObject_Activate_user_14.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_15, "testObject_Activate_user_15.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_16, "testObject_Activate_user_16.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_17, "testObject_Activate_user_17.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_18, "testObject_Activate_user_18.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_19, "testObject_Activate_user_19.json"), (Test.Wire.API.Golden.Generated.Activate_user.testObject_Activate_user_20, "testObject_Activate_user_20.json")],
       testGroup "Golden: ActivationResponse_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_1, "testObject_ActivationResponse_user_1.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_2, "testObject_ActivationResponse_user_2.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_3, "testObject_ActivationResponse_user_3.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_4, "testObject_ActivationResponse_user_4.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_5, "testObject_ActivationResponse_user_5.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_6, "testObject_ActivationResponse_user_6.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_7, "testObject_ActivationResponse_user_7.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_8, "testObject_ActivationResponse_user_8.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_9, "testObject_ActivationResponse_user_9.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_10, "testObject_ActivationResponse_user_10.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_11, "testObject_ActivationResponse_user_11.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_12, "testObject_ActivationResponse_user_12.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_13, "testObject_ActivationResponse_user_13.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_14, "testObject_ActivationResponse_user_14.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_15, "testObject_ActivationResponse_user_15.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_16, "testObject_ActivationResponse_user_16.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_17, "testObject_ActivationResponse_user_17.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_18, "testObject_ActivationResponse_user_18.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_19, "testObject_ActivationResponse_user_19.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_20, "testObject_ActivationResponse_user_20.json")],
-      testGroup "Golden: SendActivationCode_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_1, "testObject_SendActivationCode_user_1.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_2, "testObject_SendActivationCode_user_2.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_3, "testObject_SendActivationCode_user_3.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_4, "testObject_SendActivationCode_user_4.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_5, "testObject_SendActivationCode_user_5.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_6, "testObject_SendActivationCode_user_6.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_7, "testObject_SendActivationCode_user_7.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_8, "testObject_SendActivationCode_user_8.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_9, "testObject_SendActivationCode_user_9.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_10, "testObject_SendActivationCode_user_10.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_11, "testObject_SendActivationCode_user_11.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_12, "testObject_SendActivationCode_user_12.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_13, "testObject_SendActivationCode_user_13.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_14, "testObject_SendActivationCode_user_14.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_15, "testObject_SendActivationCode_user_15.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_16, "testObject_SendActivationCode_user_16.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_17, "testObject_SendActivationCode_user_17.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_18, "testObject_SendActivationCode_user_18.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_19, "testObject_SendActivationCode_user_19.json"), (Test.Wire.API.Golden.Generated.SendActivationCode_user.testObject_SendActivationCode_user_20, "testObject_SendActivationCode_user_20.json")],
-      testGroup "Golden: LoginId_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_1, "testObject_LoginId_user_1.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_2, "testObject_LoginId_user_2.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_3, "testObject_LoginId_user_3.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_4, "testObject_LoginId_user_4.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_5, "testObject_LoginId_user_5.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_6, "testObject_LoginId_user_6.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_7, "testObject_LoginId_user_7.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_8, "testObject_LoginId_user_8.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_9, "testObject_LoginId_user_9.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_10, "testObject_LoginId_user_10.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_11, "testObject_LoginId_user_11.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_12, "testObject_LoginId_user_12.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_13, "testObject_LoginId_user_13.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_14, "testObject_LoginId_user_14.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_15, "testObject_LoginId_user_15.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_16, "testObject_LoginId_user_16.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_17, "testObject_LoginId_user_17.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_18, "testObject_LoginId_user_18.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_19, "testObject_LoginId_user_19.json"), (Test.Wire.API.Golden.Generated.LoginId_user.testObject_LoginId_user_20, "testObject_LoginId_user_20.json")],
+        testObjects [(Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_1, "testObject_ActivationResponse_user_1.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_2, "testObject_ActivationResponse_user_2.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_3, "testObject_ActivationResponse_user_3.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_4, "testObject_ActivationResponse_user_4.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_5, "testObject_ActivationResponse_user_5.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_6, "testObject_ActivationResponse_user_6.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_7, "testObject_ActivationResponse_user_7.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_8, "testObject_ActivationResponse_user_8.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_9, "testObject_ActivationResponse_user_9.json"), (Test.Wire.API.Golden.Generated.ActivationResponse_user.testObject_ActivationResponse_user_10, "testObject_ActivationResponse_user_10.json")],
       testGroup "Golden: LoginCode_user" $
         testObjects [(Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_1, "testObject_LoginCode_user_1.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_2, "testObject_LoginCode_user_2.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_3, "testObject_LoginCode_user_3.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_4, "testObject_LoginCode_user_4.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_5, "testObject_LoginCode_user_5.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_6, "testObject_LoginCode_user_6.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_7, "testObject_LoginCode_user_7.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_8, "testObject_LoginCode_user_8.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_9, "testObject_LoginCode_user_9.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_10, "testObject_LoginCode_user_10.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_11, "testObject_LoginCode_user_11.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_12, "testObject_LoginCode_user_12.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_13, "testObject_LoginCode_user_13.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_14, "testObject_LoginCode_user_14.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_15, "testObject_LoginCode_user_15.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_16, "testObject_LoginCode_user_16.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_17, "testObject_LoginCode_user_17.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_18, "testObject_LoginCode_user_18.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_19, "testObject_LoginCode_user_19.json"), (Test.Wire.API.Golden.Generated.LoginCode_user.testObject_LoginCode_user_20, "testObject_LoginCode_user_20.json")],
       testGroup "Golden: PendingLoginCode_user" $
@@ -1006,8 +989,6 @@ tests =
         testObjects [(Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_1, "testObject_LoginCodeTimeout_user_1.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_2, "testObject_LoginCodeTimeout_user_2.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_3, "testObject_LoginCodeTimeout_user_3.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_4, "testObject_LoginCodeTimeout_user_4.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_5, "testObject_LoginCodeTimeout_user_5.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_6, "testObject_LoginCodeTimeout_user_6.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_7, "testObject_LoginCodeTimeout_user_7.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_8, "testObject_LoginCodeTimeout_user_8.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_9, "testObject_LoginCodeTimeout_user_9.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_10, "testObject_LoginCodeTimeout_user_10.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_11, "testObject_LoginCodeTimeout_user_11.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_12, "testObject_LoginCodeTimeout_user_12.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_13, "testObject_LoginCodeTimeout_user_13.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_14, "testObject_LoginCodeTimeout_user_14.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_15, "testObject_LoginCodeTimeout_user_15.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_16, "testObject_LoginCodeTimeout_user_16.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_17, "testObject_LoginCodeTimeout_user_17.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_18, "testObject_LoginCodeTimeout_user_18.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_19, "testObject_LoginCodeTimeout_user_19.json"), (Test.Wire.API.Golden.Generated.LoginCodeTimeout_user.testObject_LoginCodeTimeout_user_20, "testObject_LoginCodeTimeout_user_20.json")],
       testGroup "Golden: CookieLabel_user" $
         testObjects [(Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_1, "testObject_CookieLabel_user_1.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_2, "testObject_CookieLabel_user_2.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_3, "testObject_CookieLabel_user_3.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_4, "testObject_CookieLabel_user_4.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_5, "testObject_CookieLabel_user_5.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_6, "testObject_CookieLabel_user_6.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_7, "testObject_CookieLabel_user_7.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_8, "testObject_CookieLabel_user_8.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_9, "testObject_CookieLabel_user_9.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_10, "testObject_CookieLabel_user_10.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_11, "testObject_CookieLabel_user_11.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_12, "testObject_CookieLabel_user_12.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_13, "testObject_CookieLabel_user_13.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_14, "testObject_CookieLabel_user_14.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_15, "testObject_CookieLabel_user_15.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_16, "testObject_CookieLabel_user_16.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_17, "testObject_CookieLabel_user_17.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_18, "testObject_CookieLabel_user_18.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_19, "testObject_CookieLabel_user_19.json"), (Test.Wire.API.Golden.Generated.CookieLabel_user.testObject_CookieLabel_user_20, "testObject_CookieLabel_user_20.json")],
-      testGroup "Golden: Login_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_1, "testObject_Login_user_1.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_2, "testObject_Login_user_2.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_3, "testObject_Login_user_3.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_4, "testObject_Login_user_4.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_5, "testObject_Login_user_5.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_6, "testObject_Login_user_6.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_7, "testObject_Login_user_7.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_8, "testObject_Login_user_8.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_9, "testObject_Login_user_9.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_10, "testObject_Login_user_10.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_11, "testObject_Login_user_11.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_12, "testObject_Login_user_12.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_13, "testObject_Login_user_13.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_14, "testObject_Login_user_14.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_15, "testObject_Login_user_15.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_16, "testObject_Login_user_16.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_17, "testObject_Login_user_17.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_18, "testObject_Login_user_18.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_19, "testObject_Login_user_19.json"), (Test.Wire.API.Golden.Generated.Login_user.testObject_Login_user_20, "testObject_Login_user_20.json")],
       testGroup "Golden: CookieId_user" $
         testObjects [(Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_1, "testObject_CookieId_user_1.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_2, "testObject_CookieId_user_2.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_3, "testObject_CookieId_user_3.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_4, "testObject_CookieId_user_4.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_5, "testObject_CookieId_user_5.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_6, "testObject_CookieId_user_6.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_7, "testObject_CookieId_user_7.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_8, "testObject_CookieId_user_8.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_9, "testObject_CookieId_user_9.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_10, "testObject_CookieId_user_10.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_11, "testObject_CookieId_user_11.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_12, "testObject_CookieId_user_12.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_13, "testObject_CookieId_user_13.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_14, "testObject_CookieId_user_14.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_15, "testObject_CookieId_user_15.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_16, "testObject_CookieId_user_16.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_17, "testObject_CookieId_user_17.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_18, "testObject_CookieId_user_18.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_19, "testObject_CookieId_user_19.json"), (Test.Wire.API.Golden.Generated.CookieId_user.testObject_CookieId_user_20, "testObject_CookieId_user_20.json")],
       testGroup "Golden: CookieType_user" $
@@ -1032,6 +1013,8 @@ tests =
         testObjects [(Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_1, "testObject_ClientClass_user_1.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_2, "testObject_ClientClass_user_2.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_3, "testObject_ClientClass_user_3.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_4, "testObject_ClientClass_user_4.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_5, "testObject_ClientClass_user_5.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_6, "testObject_ClientClass_user_6.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_7, "testObject_ClientClass_user_7.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_8, "testObject_ClientClass_user_8.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_9, "testObject_ClientClass_user_9.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_10, "testObject_ClientClass_user_10.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_11, "testObject_ClientClass_user_11.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_12, "testObject_ClientClass_user_12.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_13, "testObject_ClientClass_user_13.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_14, "testObject_ClientClass_user_14.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_15, "testObject_ClientClass_user_15.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_16, "testObject_ClientClass_user_16.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_17, "testObject_ClientClass_user_17.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_18, "testObject_ClientClass_user_18.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_19, "testObject_ClientClass_user_19.json"), (Test.Wire.API.Golden.Generated.ClientClass_user.testObject_ClientClass_user_20, "testObject_ClientClass_user_20.json")],
       testGroup "Golden: PubClient_user" $
         testObjects [(Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_1, "testObject_PubClient_user_1.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_2, "testObject_PubClient_user_2.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_3, "testObject_PubClient_user_3.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_4, "testObject_PubClient_user_4.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_5, "testObject_PubClient_user_5.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_6, "testObject_PubClient_user_6.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_7, "testObject_PubClient_user_7.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_8, "testObject_PubClient_user_8.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_9, "testObject_PubClient_user_9.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_10, "testObject_PubClient_user_10.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_11, "testObject_PubClient_user_11.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_12, "testObject_PubClient_user_12.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_13, "testObject_PubClient_user_13.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_14, "testObject_PubClient_user_14.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_15, "testObject_PubClient_user_15.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_16, "testObject_PubClient_user_16.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_17, "testObject_PubClient_user_17.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_18, "testObject_PubClient_user_18.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_19, "testObject_PubClient_user_19.json"), (Test.Wire.API.Golden.Generated.PubClient_user.testObject_PubClient_user_20, "testObject_PubClient_user_20.json")],
+      testGroup "Golden: ClientV6_user" $
+        testObjects [(Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_1, "testObject_ClientV6_user_1.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_2, "testObject_ClientV6_user_2.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_3, "testObject_ClientV6_user_3.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_4, "testObject_ClientV6_user_4.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_5, "testObject_ClientV6_user_5.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_6, "testObject_ClientV6_user_6.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_7, "testObject_ClientV6_user_7.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_8, "testObject_ClientV6_user_8.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_9, "testObject_ClientV6_user_9.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_10, "testObject_ClientV6_user_10.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_11, "testObject_ClientV6_user_11.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_12, "testObject_ClientV6_user_12.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_13, "testObject_ClientV6_user_13.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_14, "testObject_ClientV6_user_14.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_15, "testObject_ClientV6_user_15.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_16, "testObject_ClientV6_user_16.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_17, "testObject_ClientV6_user_17.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_18, "testObject_ClientV6_user_18.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_19, "testObject_ClientV6_user_19.json"), (Versioned @'V6 Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_20, "testObject_ClientV6_user_20.json")],
       testGroup "Golden: Client_user" $
         testObjects [(Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_1, "testObject_Client_user_1.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_2, "testObject_Client_user_2.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_3, "testObject_Client_user_3.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_4, "testObject_Client_user_4.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_5, "testObject_Client_user_5.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_6, "testObject_Client_user_6.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_7, "testObject_Client_user_7.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_8, "testObject_Client_user_8.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_9, "testObject_Client_user_9.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_10, "testObject_Client_user_10.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_11, "testObject_Client_user_11.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_12, "testObject_Client_user_12.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_13, "testObject_Client_user_13.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_14, "testObject_Client_user_14.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_15, "testObject_Client_user_15.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_16, "testObject_Client_user_16.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_17, "testObject_Client_user_17.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_18, "testObject_Client_user_18.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_19, "testObject_Client_user_19.json"), (Test.Wire.API.Golden.Generated.Client_user.testObject_Client_user_20, "testObject_Client_user_20.json")],
       testGroup "Golden: NewClient_user" $
@@ -1055,15 +1038,15 @@ tests =
       testGroup "Golden: CheckHandles_user" $
         testObjects [(Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_1, "testObject_CheckHandles_user_1.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_2, "testObject_CheckHandles_user_2.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_3, "testObject_CheckHandles_user_3.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_4, "testObject_CheckHandles_user_4.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_5, "testObject_CheckHandles_user_5.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_6, "testObject_CheckHandles_user_6.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_7, "testObject_CheckHandles_user_7.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_8, "testObject_CheckHandles_user_8.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_9, "testObject_CheckHandles_user_9.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_10, "testObject_CheckHandles_user_10.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_11, "testObject_CheckHandles_user_11.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_12, "testObject_CheckHandles_user_12.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_13, "testObject_CheckHandles_user_13.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_14, "testObject_CheckHandles_user_14.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_15, "testObject_CheckHandles_user_15.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_16, "testObject_CheckHandles_user_16.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_17, "testObject_CheckHandles_user_17.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_18, "testObject_CheckHandles_user_18.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_19, "testObject_CheckHandles_user_19.json"), (Test.Wire.API.Golden.Generated.CheckHandles_user.testObject_CheckHandles_user_20, "testObject_CheckHandles_user_20.json")],
       testGroup "Golden: Email_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_1, "testObject_Email_user_1.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_2, "testObject_Email_user_2.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_3, "testObject_Email_user_3.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_4, "testObject_Email_user_4.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_5, "testObject_Email_user_5.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_6, "testObject_Email_user_6.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_7, "testObject_Email_user_7.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_8, "testObject_Email_user_8.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_9, "testObject_Email_user_9.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_10, "testObject_Email_user_10.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_11, "testObject_Email_user_11.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_12, "testObject_Email_user_12.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_13, "testObject_Email_user_13.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_14, "testObject_Email_user_14.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_15, "testObject_Email_user_15.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_16, "testObject_Email_user_16.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_17, "testObject_Email_user_17.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_18, "testObject_Email_user_18.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_19, "testObject_Email_user_19.json"), (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_20, "testObject_Email_user_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Email_user.testObject_Email_user_1, "testObject_Email_user_1.json")
+          ],
       testGroup "Golden: Phone_user" $
         testObjects [(Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_1, "testObject_Phone_user_1.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_2, "testObject_Phone_user_2.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_3, "testObject_Phone_user_3.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_4, "testObject_Phone_user_4.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_5, "testObject_Phone_user_5.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_6, "testObject_Phone_user_6.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_7, "testObject_Phone_user_7.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_8, "testObject_Phone_user_8.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_9, "testObject_Phone_user_9.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_10, "testObject_Phone_user_10.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_11, "testObject_Phone_user_11.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_12, "testObject_Phone_user_12.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_13, "testObject_Phone_user_13.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_14, "testObject_Phone_user_14.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_15, "testObject_Phone_user_15.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_16, "testObject_Phone_user_16.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_17, "testObject_Phone_user_17.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_18, "testObject_Phone_user_18.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_19, "testObject_Phone_user_19.json"), (Test.Wire.API.Golden.Generated.Phone_user.testObject_Phone_user_20, "testObject_Phone_user_20.json")],
       testGroup "Golden: UserSSOId_user" $
         testObjects [(Test.Wire.API.Golden.Generated.UserSSOId_user.testObject_UserSSOId_user_2, "testObject_UserSSOId_user_2.json"), (Test.Wire.API.Golden.Generated.UserSSOId_user.testObject_UserSSOId_user_9, "testObject_UserSSOId_user_9.json"), (Test.Wire.API.Golden.Generated.UserSSOId_user.testObject_UserSSOId_user_13, "testObject_UserSSOId_user_13.json")],
-      testGroup "Golden: UserIdentity_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_1, "testObject_UserIdentity_user_1.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_2, "testObject_UserIdentity_user_2.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_3, "testObject_UserIdentity_user_3.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_4, "testObject_UserIdentity_user_4.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_6, "testObject_UserIdentity_user_6.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_7, "testObject_UserIdentity_user_7.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_9, "testObject_UserIdentity_user_9.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_10, "testObject_UserIdentity_user_10.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_11, "testObject_UserIdentity_user_11.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_12, "testObject_UserIdentity_user_12.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_13, "testObject_UserIdentity_user_13.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_14, "testObject_UserIdentity_user_14.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_15, "testObject_UserIdentity_user_15.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_17, "testObject_UserIdentity_user_17.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_18, "testObject_UserIdentity_user_18.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_19, "testObject_UserIdentity_user_19.json"), (Test.Wire.API.Golden.Generated.UserIdentity_user.testObject_UserIdentity_user_20, "testObject_UserIdentity_user_20.json")],
       testGroup "Golden: NewPasswordReset_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_1, "testObject_NewPasswordReset_user_1.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_2, "testObject_NewPasswordReset_user_2.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_3, "testObject_NewPasswordReset_user_3.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_4, "testObject_NewPasswordReset_user_4.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_5, "testObject_NewPasswordReset_user_5.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_6, "testObject_NewPasswordReset_user_6.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_7, "testObject_NewPasswordReset_user_7.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_8, "testObject_NewPasswordReset_user_8.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_9, "testObject_NewPasswordReset_user_9.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_10, "testObject_NewPasswordReset_user_10.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_11, "testObject_NewPasswordReset_user_11.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_12, "testObject_NewPasswordReset_user_12.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_13, "testObject_NewPasswordReset_user_13.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_14, "testObject_NewPasswordReset_user_14.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_15, "testObject_NewPasswordReset_user_15.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_16, "testObject_NewPasswordReset_user_16.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_17, "testObject_NewPasswordReset_user_17.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_18, "testObject_NewPasswordReset_user_18.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_19, "testObject_NewPasswordReset_user_19.json"), (Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_20, "testObject_NewPasswordReset_user_20.json")],
+        testObjects [(Test.Wire.API.Golden.Generated.NewPasswordReset_user.testObject_NewPasswordReset_user_1, "testObject_NewPasswordReset_user_1.json")],
       testGroup "Golden: PasswordResetKey_user" $
         testObjects [(Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_1, "testObject_PasswordResetKey_user_1.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_2, "testObject_PasswordResetKey_user_2.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_3, "testObject_PasswordResetKey_user_3.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_4, "testObject_PasswordResetKey_user_4.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_5, "testObject_PasswordResetKey_user_5.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_6, "testObject_PasswordResetKey_user_6.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_7, "testObject_PasswordResetKey_user_7.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_8, "testObject_PasswordResetKey_user_8.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_9, "testObject_PasswordResetKey_user_9.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_10, "testObject_PasswordResetKey_user_10.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_11, "testObject_PasswordResetKey_user_11.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_12, "testObject_PasswordResetKey_user_12.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_13, "testObject_PasswordResetKey_user_13.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_14, "testObject_PasswordResetKey_user_14.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_15, "testObject_PasswordResetKey_user_15.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_16, "testObject_PasswordResetKey_user_16.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_17, "testObject_PasswordResetKey_user_17.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_18, "testObject_PasswordResetKey_user_18.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_19, "testObject_PasswordResetKey_user_19.json"), (Test.Wire.API.Golden.Generated.PasswordResetKey_user.testObject_PasswordResetKey_user_20, "testObject_PasswordResetKey_user_20.json")],
       testGroup "Golden: PasswordResetCode_user" $
@@ -1088,8 +1071,6 @@ tests =
         testObjects [(Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_1, "testObject_RichField_user_1.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_2, "testObject_RichField_user_2.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_3, "testObject_RichField_user_3.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_4, "testObject_RichField_user_4.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_5, "testObject_RichField_user_5.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_6, "testObject_RichField_user_6.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_7, "testObject_RichField_user_7.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_8, "testObject_RichField_user_8.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_9, "testObject_RichField_user_9.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_10, "testObject_RichField_user_10.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_11, "testObject_RichField_user_11.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_12, "testObject_RichField_user_12.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_13, "testObject_RichField_user_13.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_14, "testObject_RichField_user_14.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_15, "testObject_RichField_user_15.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_16, "testObject_RichField_user_16.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_17, "testObject_RichField_user_17.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_18, "testObject_RichField_user_18.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_19, "testObject_RichField_user_19.json"), (Test.Wire.API.Golden.Generated.RichField_user.testObject_RichField_user_20, "testObject_RichField_user_20.json")],
       testGroup "Golden: RichInfoAssocList_user" $
         testObjects [(Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_1, "testObject_RichInfoAssocList_user_1.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_2, "testObject_RichInfoAssocList_user_2.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_3, "testObject_RichInfoAssocList_user_3.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_4, "testObject_RichInfoAssocList_user_4.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_5, "testObject_RichInfoAssocList_user_5.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_6, "testObject_RichInfoAssocList_user_6.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_7, "testObject_RichInfoAssocList_user_7.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_8, "testObject_RichInfoAssocList_user_8.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_9, "testObject_RichInfoAssocList_user_9.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_10, "testObject_RichInfoAssocList_user_10.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_11, "testObject_RichInfoAssocList_user_11.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_12, "testObject_RichInfoAssocList_user_12.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_13, "testObject_RichInfoAssocList_user_13.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_14, "testObject_RichInfoAssocList_user_14.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_15, "testObject_RichInfoAssocList_user_15.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_16, "testObject_RichInfoAssocList_user_16.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_17, "testObject_RichInfoAssocList_user_17.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_18, "testObject_RichInfoAssocList_user_18.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_19, "testObject_RichInfoAssocList_user_19.json"), (Test.Wire.API.Golden.Generated.RichInfoAssocList_user.testObject_RichInfoAssocList_user_20, "testObject_RichInfoAssocList_user_20.json")],
-      testGroup "Golden: RichInfoMapAndList_user" $
-        testObjects [(Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_1, "testObject_RichInfoMapAndList_user_1.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_2, "testObject_RichInfoMapAndList_user_2.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_3, "testObject_RichInfoMapAndList_user_3.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_4, "testObject_RichInfoMapAndList_user_4.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_5, "testObject_RichInfoMapAndList_user_5.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_6, "testObject_RichInfoMapAndList_user_6.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_7, "testObject_RichInfoMapAndList_user_7.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_8, "testObject_RichInfoMapAndList_user_8.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_9, "testObject_RichInfoMapAndList_user_9.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_10, "testObject_RichInfoMapAndList_user_10.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_11, "testObject_RichInfoMapAndList_user_11.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_12, "testObject_RichInfoMapAndList_user_12.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_13, "testObject_RichInfoMapAndList_user_13.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_14, "testObject_RichInfoMapAndList_user_14.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_15, "testObject_RichInfoMapAndList_user_15.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_16, "testObject_RichInfoMapAndList_user_16.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_17, "testObject_RichInfoMapAndList_user_17.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_18, "testObject_RichInfoMapAndList_user_18.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_19, "testObject_RichInfoMapAndList_user_19.json"), (Test.Wire.API.Golden.Generated.RichInfoMapAndList_user.testObject_RichInfoMapAndList_user_20, "testObject_RichInfoMapAndList_user_20.json")],
       testGroup "Golden: RichInfo_user" $
         testObjects [(Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_1, "testObject_RichInfo_user_1.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_2, "testObject_RichInfo_user_2.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_3, "testObject_RichInfo_user_3.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_4, "testObject_RichInfo_user_4.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_5, "testObject_RichInfo_user_5.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_6, "testObject_RichInfo_user_6.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_7, "testObject_RichInfo_user_7.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_8, "testObject_RichInfo_user_8.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_9, "testObject_RichInfo_user_9.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_10, "testObject_RichInfo_user_10.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_11, "testObject_RichInfo_user_11.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_12, "testObject_RichInfo_user_12.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_13, "testObject_RichInfo_user_13.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_14, "testObject_RichInfo_user_14.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_15, "testObject_RichInfo_user_15.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_16, "testObject_RichInfo_user_16.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_17, "testObject_RichInfo_user_17.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_18, "testObject_RichInfo_user_18.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_19, "testObject_RichInfo_user_19.json"), (Test.Wire.API.Golden.Generated.RichInfo_user.testObject_RichInfo_user_20, "testObject_RichInfo_user_20.json")],
       testGroup "Golden: SearchResult_20Contact_user" $
@@ -1131,7 +1112,9 @@ tests =
       testGroup "Golden: PasswordChange_provider" $
         testObjects [(Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_1, "testObject_PasswordChange_provider_1.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_2, "testObject_PasswordChange_provider_2.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_3, "testObject_PasswordChange_provider_3.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_4, "testObject_PasswordChange_provider_4.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_5, "testObject_PasswordChange_provider_5.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_6, "testObject_PasswordChange_provider_6.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_7, "testObject_PasswordChange_provider_7.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_8, "testObject_PasswordChange_provider_8.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_9, "testObject_PasswordChange_provider_9.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_10, "testObject_PasswordChange_provider_10.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_11, "testObject_PasswordChange_provider_11.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_12, "testObject_PasswordChange_provider_12.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_13, "testObject_PasswordChange_provider_13.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_14, "testObject_PasswordChange_provider_14.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_15, "testObject_PasswordChange_provider_15.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_16, "testObject_PasswordChange_provider_16.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_17, "testObject_PasswordChange_provider_17.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_18, "testObject_PasswordChange_provider_18.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_19, "testObject_PasswordChange_provider_19.json"), (Test.Wire.API.Golden.Generated.PasswordChange_provider.testObject_PasswordChange_provider_20, "testObject_PasswordChange_provider_20.json")],
       testGroup "Golden: EmailUpdate_provider" $
-        testObjects [(Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_1, "testObject_EmailUpdate_provider_1.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_2, "testObject_EmailUpdate_provider_2.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_3, "testObject_EmailUpdate_provider_3.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_4, "testObject_EmailUpdate_provider_4.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_5, "testObject_EmailUpdate_provider_5.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_6, "testObject_EmailUpdate_provider_6.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_7, "testObject_EmailUpdate_provider_7.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_8, "testObject_EmailUpdate_provider_8.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_9, "testObject_EmailUpdate_provider_9.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_10, "testObject_EmailUpdate_provider_10.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_11, "testObject_EmailUpdate_provider_11.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_12, "testObject_EmailUpdate_provider_12.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_13, "testObject_EmailUpdate_provider_13.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_14, "testObject_EmailUpdate_provider_14.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_15, "testObject_EmailUpdate_provider_15.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_16, "testObject_EmailUpdate_provider_16.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_17, "testObject_EmailUpdate_provider_17.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_18, "testObject_EmailUpdate_provider_18.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_19, "testObject_EmailUpdate_provider_19.json"), (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_20, "testObject_EmailUpdate_provider_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.EmailUpdate_provider.testObject_EmailUpdate_provider_1, "testObject_EmailUpdate_provider_1.json")
+          ],
       testGroup "Golden: BotConvView_provider" $
         testObjects [(Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_1, "testObject_BotConvView_provider_1.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_2, "testObject_BotConvView_provider_2.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_3, "testObject_BotConvView_provider_3.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_4, "testObject_BotConvView_provider_4.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_5, "testObject_BotConvView_provider_5.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_6, "testObject_BotConvView_provider_6.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_7, "testObject_BotConvView_provider_7.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_8, "testObject_BotConvView_provider_8.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_9, "testObject_BotConvView_provider_9.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_10, "testObject_BotConvView_provider_10.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_11, "testObject_BotConvView_provider_11.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_12, "testObject_BotConvView_provider_12.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_13, "testObject_BotConvView_provider_13.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_14, "testObject_BotConvView_provider_14.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_15, "testObject_BotConvView_provider_15.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_16, "testObject_BotConvView_provider_16.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_17, "testObject_BotConvView_provider_17.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_18, "testObject_BotConvView_provider_18.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_19, "testObject_BotConvView_provider_19.json"), (Test.Wire.API.Golden.Generated.BotConvView_provider.testObject_BotConvView_provider_20, "testObject_BotConvView_provider_20.json")],
       testGroup "Golden: BotUserView_provider" $
@@ -1173,7 +1156,7 @@ tests =
       testGroup "Golden: ServiceTagList_provider" $
         testObjects [(Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_1, "testObject_ServiceTagList_provider_1.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_2, "testObject_ServiceTagList_provider_2.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_3, "testObject_ServiceTagList_provider_3.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_4, "testObject_ServiceTagList_provider_4.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_5, "testObject_ServiceTagList_provider_5.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_6, "testObject_ServiceTagList_provider_6.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_7, "testObject_ServiceTagList_provider_7.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_8, "testObject_ServiceTagList_provider_8.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_9, "testObject_ServiceTagList_provider_9.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_10, "testObject_ServiceTagList_provider_10.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_11, "testObject_ServiceTagList_provider_11.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_12, "testObject_ServiceTagList_provider_12.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_13, "testObject_ServiceTagList_provider_13.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_14, "testObject_ServiceTagList_provider_14.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_15, "testObject_ServiceTagList_provider_15.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_16, "testObject_ServiceTagList_provider_16.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_17, "testObject_ServiceTagList_provider_17.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_18, "testObject_ServiceTagList_provider_18.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_19, "testObject_ServiceTagList_provider_19.json"), (Test.Wire.API.Golden.Generated.ServiceTagList_provider.testObject_ServiceTagList_provider_20, "testObject_ServiceTagList_provider_20.json")],
       testGroup "Golden: BindingNewTeam_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_1, "testObject_BindingNewTeam_team_1.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_2, "testObject_BindingNewTeam_team_2.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_3, "testObject_BindingNewTeam_team_3.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_4, "testObject_BindingNewTeam_team_4.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_5, "testObject_BindingNewTeam_team_5.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_6, "testObject_BindingNewTeam_team_6.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_7, "testObject_BindingNewTeam_team_7.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_8, "testObject_BindingNewTeam_team_8.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_9, "testObject_BindingNewTeam_team_9.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_10, "testObject_BindingNewTeam_team_10.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_11, "testObject_BindingNewTeam_team_11.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_12, "testObject_BindingNewTeam_team_12.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_13, "testObject_BindingNewTeam_team_13.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_14, "testObject_BindingNewTeam_team_14.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_15, "testObject_BindingNewTeam_team_15.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_16, "testObject_BindingNewTeam_team_16.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_17, "testObject_BindingNewTeam_team_17.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_18, "testObject_BindingNewTeam_team_18.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_19, "testObject_BindingNewTeam_team_19.json"), (Test.Wire.API.Golden.Generated.BindingNewTeam_team.testObject_BindingNewTeam_team_20, "testObject_BindingNewTeam_team_20.json")],
+        testObjects [(Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_1, "testObject_NewTeam_team_1.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_2, "testObject_NewTeam_team_2.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_3, "testObject_NewTeam_team_3.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_4, "testObject_NewTeam_team_4.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_5, "testObject_NewTeam_team_5.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_6, "testObject_NewTeam_team_6.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_7, "testObject_NewTeam_team_7.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_8, "testObject_NewTeam_team_8.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_9, "testObject_NewTeam_team_9.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_10, "testObject_NewTeam_team_10.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_11, "testObject_NewTeam_team_11.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_12, "testObject_NewTeam_team_12.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_13, "testObject_NewTeam_team_13.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_14, "testObject_NewTeam_team_14.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_15, "testObject_NewTeam_team_15.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_16, "testObject_NewTeam_team_16.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_17, "testObject_NewTeam_team_17.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_18, "testObject_NewTeam_team_18.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_19, "testObject_NewTeam_team_19.json"), (Test.Wire.API.Golden.Generated.NewTeam_team.testObject_NewTeam_team_20, "testObject_NewTeam_team_20.json")],
       testGroup "Golden: TeamBinding_team" $
         testObjects [(Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_1, "testObject_TeamBinding_team_1.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_2, "testObject_TeamBinding_team_2.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_3, "testObject_TeamBinding_team_3.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_4, "testObject_TeamBinding_team_4.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_5, "testObject_TeamBinding_team_5.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_6, "testObject_TeamBinding_team_6.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_7, "testObject_TeamBinding_team_7.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_8, "testObject_TeamBinding_team_8.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_9, "testObject_TeamBinding_team_9.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_10, "testObject_TeamBinding_team_10.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_11, "testObject_TeamBinding_team_11.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_12, "testObject_TeamBinding_team_12.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_13, "testObject_TeamBinding_team_13.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_14, "testObject_TeamBinding_team_14.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_15, "testObject_TeamBinding_team_15.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_16, "testObject_TeamBinding_team_16.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_17, "testObject_TeamBinding_team_17.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_18, "testObject_TeamBinding_team_18.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_19, "testObject_TeamBinding_team_19.json"), (Test.Wire.API.Golden.Generated.TeamBinding_team.testObject_TeamBinding_team_20, "testObject_TeamBinding_team_20.json")],
       testGroup "Golden: Team_team" $
@@ -1185,19 +1168,153 @@ tests =
       testGroup "Golden: TeamDeleteData_team" $
         testObjects [(Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_1, "testObject_TeamDeleteData_team_1.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_2, "testObject_TeamDeleteData_team_2.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_3, "testObject_TeamDeleteData_team_3.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_4, "testObject_TeamDeleteData_team_4.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_5, "testObject_TeamDeleteData_team_5.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_6, "testObject_TeamDeleteData_team_6.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_7, "testObject_TeamDeleteData_team_7.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_8, "testObject_TeamDeleteData_team_8.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_9, "testObject_TeamDeleteData_team_9.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_10, "testObject_TeamDeleteData_team_10.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_11, "testObject_TeamDeleteData_team_11.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_12, "testObject_TeamDeleteData_team_12.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_13, "testObject_TeamDeleteData_team_13.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_14, "testObject_TeamDeleteData_team_14.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_15, "testObject_TeamDeleteData_team_15.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_16, "testObject_TeamDeleteData_team_16.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_17, "testObject_TeamDeleteData_team_17.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_18, "testObject_TeamDeleteData_team_18.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_19, "testObject_TeamDeleteData_team_19.json"), (Test.Wire.API.Golden.Generated.TeamDeleteData_team.testObject_TeamDeleteData_team_20, "testObject_TeamDeleteData_team_20.json")],
       testGroup "Golden: TeamConversation_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_1, "testObject_TeamConversation_team_1.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_2, "testObject_TeamConversation_team_2.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_3, "testObject_TeamConversation_team_3.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_4, "testObject_TeamConversation_team_4.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_5, "testObject_TeamConversation_team_5.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_6, "testObject_TeamConversation_team_6.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_7, "testObject_TeamConversation_team_7.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_8, "testObject_TeamConversation_team_8.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_9, "testObject_TeamConversation_team_9.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_10, "testObject_TeamConversation_team_10.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_11, "testObject_TeamConversation_team_11.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_12, "testObject_TeamConversation_team_12.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_13, "testObject_TeamConversation_team_13.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_14, "testObject_TeamConversation_team_14.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_15, "testObject_TeamConversation_team_15.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_16, "testObject_TeamConversation_team_16.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_17, "testObject_TeamConversation_team_17.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_18, "testObject_TeamConversation_team_18.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_19, "testObject_TeamConversation_team_19.json"), (Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_20, "testObject_TeamConversation_team_20.json")],
+        testObjects
+          [ ( Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_1,
+              "testObject_TeamConversation_team_1.json"
+            ),
+            ( Test.Wire.API.Golden.Generated.TeamConversation_team.testObject_TeamConversation_team_2,
+              "testObject_TeamConversation_team_2.json"
+            )
+          ],
       testGroup "Golden: TeamConversationList_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_1, "testObject_TeamConversationList_team_1.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_2, "testObject_TeamConversationList_team_2.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_3, "testObject_TeamConversationList_team_3.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_4, "testObject_TeamConversationList_team_4.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_5, "testObject_TeamConversationList_team_5.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_6, "testObject_TeamConversationList_team_6.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_7, "testObject_TeamConversationList_team_7.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_8, "testObject_TeamConversationList_team_8.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_9, "testObject_TeamConversationList_team_9.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_10, "testObject_TeamConversationList_team_10.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_11, "testObject_TeamConversationList_team_11.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_12, "testObject_TeamConversationList_team_12.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_13, "testObject_TeamConversationList_team_13.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_14, "testObject_TeamConversationList_team_14.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_15, "testObject_TeamConversationList_team_15.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_16, "testObject_TeamConversationList_team_16.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_17, "testObject_TeamConversationList_team_17.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_18, "testObject_TeamConversationList_team_18.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_19, "testObject_TeamConversationList_team_19.json"), (Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_20, "testObject_TeamConversationList_team_20.json")],
-      testGroup "Golden: TeamFeatureStatusNoConfig_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_1, "testObject_TeamFeatureStatusNoConfig_team_1.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_2, "testObject_TeamFeatureStatusNoConfig_team_2.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_3, "testObject_TeamFeatureStatusNoConfig_team_3.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_4, "testObject_TeamFeatureStatusNoConfig_team_4.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_5, "testObject_TeamFeatureStatusNoConfig_team_5.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_6, "testObject_TeamFeatureStatusNoConfig_team_6.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_7, "testObject_TeamFeatureStatusNoConfig_team_7.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_8, "testObject_TeamFeatureStatusNoConfig_team_8.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_9, "testObject_TeamFeatureStatusNoConfig_team_9.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_10, "testObject_TeamFeatureStatusNoConfig_team_10.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_11, "testObject_TeamFeatureStatusNoConfig_team_11.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_12, "testObject_TeamFeatureStatusNoConfig_team_12.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_13, "testObject_TeamFeatureStatusNoConfig_team_13.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_14, "testObject_TeamFeatureStatusNoConfig_team_14.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_15, "testObject_TeamFeatureStatusNoConfig_team_15.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_16, "testObject_TeamFeatureStatusNoConfig_team_16.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_17, "testObject_TeamFeatureStatusNoConfig_team_17.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_18, "testObject_TeamFeatureStatusNoConfig_team_18.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_19, "testObject_TeamFeatureStatusNoConfig_team_19.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusNoConfig_team.testObject_TeamFeatureStatusNoConfig_team_20, "testObject_TeamFeatureStatusNoConfig_team_20.json")],
-      testGroup "Golden: TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_1, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_1.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_2, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_2.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_3, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_3.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_4, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_4.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_5, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_5.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_6, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_6.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_7, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_7.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_8, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_8.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_9, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_9.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_10, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_10.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_11, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_11.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_12, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_12.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_13, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_13.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_14, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_14.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_15, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_15.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_16, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_16.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_17, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_17.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_18, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_18.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_19, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_19.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team.testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_20, "testObject_TeamFeatureStatusWithConfig_20TeamFeatureAppLockConfig_team_20.json")],
-      testGroup "Golden: TeamFeatureStatusValue_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_1, "testObject_TeamFeatureStatusValue_team_1.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_2, "testObject_TeamFeatureStatusValue_team_2.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_3, "testObject_TeamFeatureStatusValue_team_3.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_4, "testObject_TeamFeatureStatusValue_team_4.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_5, "testObject_TeamFeatureStatusValue_team_5.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_6, "testObject_TeamFeatureStatusValue_team_6.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_7, "testObject_TeamFeatureStatusValue_team_7.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_8, "testObject_TeamFeatureStatusValue_team_8.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_9, "testObject_TeamFeatureStatusValue_team_9.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_10, "testObject_TeamFeatureStatusValue_team_10.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_11, "testObject_TeamFeatureStatusValue_team_11.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_12, "testObject_TeamFeatureStatusValue_team_12.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_13, "testObject_TeamFeatureStatusValue_team_13.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_14, "testObject_TeamFeatureStatusValue_team_14.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_15, "testObject_TeamFeatureStatusValue_team_15.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_16, "testObject_TeamFeatureStatusValue_team_16.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_17, "testObject_TeamFeatureStatusValue_team_17.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_18, "testObject_TeamFeatureStatusValue_team_18.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_19, "testObject_TeamFeatureStatusValue_team_19.json"), (Test.Wire.API.Golden.Generated.TeamFeatureStatusValue_team.testObject_TeamFeatureStatusValue_team_20, "testObject_TeamFeatureStatusValue_team_20.json")],
+        testObjects
+          [ ( Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_1,
+              "testObject_TeamConversationList_team_1.json"
+            ),
+            ( Test.Wire.API.Golden.Generated.TeamConversationList_team.testObject_TeamConversationList_team_2,
+              "testObject_TeamConversationList_team_2.json"
+            )
+          ],
+      testGroup "Golden: Feature_team 1" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_1, "testObject_Feature_team_1.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_2, "testObject_Feature_team_2.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_3, "testObject_Feature_team_3.json")
+          ],
+      testGroup "Golden: Feature_team 2" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_4, "testObject_Feature_team_4.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_5, "testObject_Feature_team_5.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_6, "testObject_Feature_team_6.json")
+          ],
+      testGroup "Golden: Feature_team 3" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_7, "testObject_Feature_team_7.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_8, "testObject_Feature_team_8.json"),
+            (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_9, "testObject_Feature_team_9.json")
+          ],
+      testGroup "Golden: Feature_team 4" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_10, "testObject_Feature_team_10.json")
+          ],
+      testGroup "Golden: Feature_team 5" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_11, "testObject_Feature_team_11.json")
+          ],
+      testGroup "Golden: Feature_team 6" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_12, "testObject_Feature_team_12.json")
+          ],
+      testGroup "Golden: Feature_team 7" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_13, "testObject_Feature_team_13.json")
+          ],
+      testGroup "Golden: Feature_team 8" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_14, "testObject_Feature_team_14.json")
+          ],
+      testGroup "Golden: Feature_team 9" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_15, "testObject_Feature_team_15.json")
+          ],
+      testGroup "Golden: Feature_team 10" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_16, "testObject_Feature_team_16.json")
+          ],
+      testGroup "Golden: Feature_team 11" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Feature_team.testObject_Feature_team_17, "testObject_Feature_team_17.json")
+          ],
+      testGroup "Golden: LockableFeature_team 1" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_1, "testObject_LockableFeature_team_1.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_2, "testObject_LockableFeature_team_2.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_3, "testObject_LockableFeature_team_3.json")
+          ],
+      testGroup "Golden: LockableFeature_team 2" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_4, "testObject_LockableFeature_team_4.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_5, "testObject_LockableFeature_team_5.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_6, "testObject_LockableFeature_team_6.json")
+          ],
+      testGroup "Golden: LockableFeature_team 3" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_7, "testObject_LockableFeature_team_7.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_8, "testObject_LockableFeature_team_8.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_9, "testObject_LockableFeature_team_9.json")
+          ],
+      testGroup "Golden: LockableFeature_team 4" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_10, "testObject_LockableFeature_team_10.json")
+          ],
+      testGroup "Golden: LockableFeature_team 5" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_11, "testObject_LockableFeature_team_11.json")
+          ],
+      testGroup "Golden: LockableFeature_team 6" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_12, "testObject_LockableFeature_team_12.json")
+          ],
+      testGroup "Golden: LockableFeature_team 7" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_13, "testObject_LockableFeature_team_13.json")
+          ],
+      testGroup "Golden: LockableFeature_team 8" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_14, "testObject_LockableFeature_team_14.json")
+          ],
+      testGroup "Golden: LockableFeature_team 9" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_15, "testObject_LockableFeature_team_15.json")
+          ],
+      testGroup "Golden: LockableFeature_team 10" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_16, "testObject_LockableFeature_team_16.json")
+          ],
+      testGroup "Golden: LockableFeature_team 11" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_17, "testObject_LockableFeature_team_17.json")
+          ],
+      testGroup "Golden: LockableFeature_team 12" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_18, "testObject_LockableFeature_team_18.json"),
+            (Test.Wire.API.Golden.Generated.LockableFeature_team.testObject_LockableFeature_team_19, "testObject_LockableFeature_team_19.json")
+          ],
       testGroup "Golden: InvitationRequest_team" $
         testObjects [(Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_1, "testObject_InvitationRequest_team_1.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_2, "testObject_InvitationRequest_team_2.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_3, "testObject_InvitationRequest_team_3.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_4, "testObject_InvitationRequest_team_4.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_5, "testObject_InvitationRequest_team_5.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_6, "testObject_InvitationRequest_team_6.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_7, "testObject_InvitationRequest_team_7.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_8, "testObject_InvitationRequest_team_8.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_9, "testObject_InvitationRequest_team_9.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_10, "testObject_InvitationRequest_team_10.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_11, "testObject_InvitationRequest_team_11.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_12, "testObject_InvitationRequest_team_12.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_13, "testObject_InvitationRequest_team_13.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_14, "testObject_InvitationRequest_team_14.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_15, "testObject_InvitationRequest_team_15.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_16, "testObject_InvitationRequest_team_16.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_17, "testObject_InvitationRequest_team_17.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_18, "testObject_InvitationRequest_team_18.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_19, "testObject_InvitationRequest_team_19.json"), (Test.Wire.API.Golden.Generated.InvitationRequest_team.testObject_InvitationRequest_team_20, "testObject_InvitationRequest_team_20.json")],
       testGroup "Golden: Invitation_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_1, "testObject_Invitation_team_1.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_2, "testObject_Invitation_team_2.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_3, "testObject_Invitation_team_3.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_4, "testObject_Invitation_team_4.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_5, "testObject_Invitation_team_5.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_6, "testObject_Invitation_team_6.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_7, "testObject_Invitation_team_7.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_8, "testObject_Invitation_team_8.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_9, "testObject_Invitation_team_9.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_10, "testObject_Invitation_team_10.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_11, "testObject_Invitation_team_11.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_12, "testObject_Invitation_team_12.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_13, "testObject_Invitation_team_13.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_14, "testObject_Invitation_team_14.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_15, "testObject_Invitation_team_15.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_16, "testObject_Invitation_team_16.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_17, "testObject_Invitation_team_17.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_18, "testObject_Invitation_team_18.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_19, "testObject_Invitation_team_19.json"), (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_20, "testObject_Invitation_team_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_1, "testObject_Invitation_team_1.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_2, "testObject_Invitation_team_2.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_3, "testObject_Invitation_team_3.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_4, "testObject_Invitation_team_4.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_5, "testObject_Invitation_team_5.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_6, "testObject_Invitation_team_6.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_7, "testObject_Invitation_team_7.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_8, "testObject_Invitation_team_8.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_9, "testObject_Invitation_team_9.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_10, "testObject_Invitation_team_10.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_11, "testObject_Invitation_team_11.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_12, "testObject_Invitation_team_12.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_13, "testObject_Invitation_team_13.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_14, "testObject_Invitation_team_14.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_15, "testObject_Invitation_team_15.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_16, "testObject_Invitation_team_16.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_17, "testObject_Invitation_team_17.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_18, "testObject_Invitation_team_18.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_19, "testObject_Invitation_team_19.json"),
+            (Test.Wire.API.Golden.Generated.Invitation_team.testObject_Invitation_team_20, "testObject_Invitation_team_20.json")
+          ],
       testGroup "Golden: InvitationList_team" $
         testObjects [(Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_1, "testObject_InvitationList_team_1.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_2, "testObject_InvitationList_team_2.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_3, "testObject_InvitationList_team_3.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_4, "testObject_InvitationList_team_4.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_5, "testObject_InvitationList_team_5.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_6, "testObject_InvitationList_team_6.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_7, "testObject_InvitationList_team_7.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_8, "testObject_InvitationList_team_8.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_9, "testObject_InvitationList_team_9.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_10, "testObject_InvitationList_team_10.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_11, "testObject_InvitationList_team_11.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_12, "testObject_InvitationList_team_12.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_13, "testObject_InvitationList_team_13.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_14, "testObject_InvitationList_team_14.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_15, "testObject_InvitationList_team_15.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_16, "testObject_InvitationList_team_16.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_17, "testObject_InvitationList_team_17.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_18, "testObject_InvitationList_team_18.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_19, "testObject_InvitationList_team_19.json"), (Test.Wire.API.Golden.Generated.InvitationList_team.testObject_InvitationList_team_20, "testObject_InvitationList_team_20.json")],
       testGroup "Golden: NewLegalHoldService_team" $
@@ -1214,14 +1331,38 @@ tests =
         testObjects [(Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_1, "testObject_DisableLegalHoldForUserRequest_team_1.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_2, "testObject_DisableLegalHoldForUserRequest_team_2.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_3, "testObject_DisableLegalHoldForUserRequest_team_3.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_4, "testObject_DisableLegalHoldForUserRequest_team_4.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_5, "testObject_DisableLegalHoldForUserRequest_team_5.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_6, "testObject_DisableLegalHoldForUserRequest_team_6.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_7, "testObject_DisableLegalHoldForUserRequest_team_7.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_8, "testObject_DisableLegalHoldForUserRequest_team_8.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_9, "testObject_DisableLegalHoldForUserRequest_team_9.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_10, "testObject_DisableLegalHoldForUserRequest_team_10.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_11, "testObject_DisableLegalHoldForUserRequest_team_11.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_12, "testObject_DisableLegalHoldForUserRequest_team_12.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_13, "testObject_DisableLegalHoldForUserRequest_team_13.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_14, "testObject_DisableLegalHoldForUserRequest_team_14.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_15, "testObject_DisableLegalHoldForUserRequest_team_15.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_16, "testObject_DisableLegalHoldForUserRequest_team_16.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_17, "testObject_DisableLegalHoldForUserRequest_team_17.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_18, "testObject_DisableLegalHoldForUserRequest_team_18.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_19, "testObject_DisableLegalHoldForUserRequest_team_19.json"), (Test.Wire.API.Golden.Generated.DisableLegalHoldForUserRequest_team.testObject_DisableLegalHoldForUserRequest_team_20, "testObject_DisableLegalHoldForUserRequest_team_20.json")],
       testGroup "Golden: ApproveLegalHoldForUserRequest_team" $
         testObjects [(Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_1, "testObject_ApproveLegalHoldForUserRequest_team_1.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_2, "testObject_ApproveLegalHoldForUserRequest_team_2.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_3, "testObject_ApproveLegalHoldForUserRequest_team_3.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_4, "testObject_ApproveLegalHoldForUserRequest_team_4.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_5, "testObject_ApproveLegalHoldForUserRequest_team_5.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_6, "testObject_ApproveLegalHoldForUserRequest_team_6.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_7, "testObject_ApproveLegalHoldForUserRequest_team_7.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_8, "testObject_ApproveLegalHoldForUserRequest_team_8.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_9, "testObject_ApproveLegalHoldForUserRequest_team_9.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_10, "testObject_ApproveLegalHoldForUserRequest_team_10.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_11, "testObject_ApproveLegalHoldForUserRequest_team_11.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_12, "testObject_ApproveLegalHoldForUserRequest_team_12.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_13, "testObject_ApproveLegalHoldForUserRequest_team_13.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_14, "testObject_ApproveLegalHoldForUserRequest_team_14.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_15, "testObject_ApproveLegalHoldForUserRequest_team_15.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_16, "testObject_ApproveLegalHoldForUserRequest_team_16.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_17, "testObject_ApproveLegalHoldForUserRequest_team_17.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_18, "testObject_ApproveLegalHoldForUserRequest_team_18.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_19, "testObject_ApproveLegalHoldForUserRequest_team_19.json"), (Test.Wire.API.Golden.Generated.ApproveLegalHoldForUserRequest_team.testObject_ApproveLegalHoldForUserRequest_team_20, "testObject_ApproveLegalHoldForUserRequest_team_20.json")],
+      testGroup "Golden: RequestNewLegalHoldClientV0_team" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClientV0_team_1, "testObject_RequestNewLegalHoldClientV0_team_1.json"),
+            (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClientV0_team_2, "testObject_RequestNewLegalHoldClientV0_team_2.json")
+          ],
       testGroup "Golden: RequestNewLegalHoldClient_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_1, "testObject_RequestNewLegalHoldClient_team_1.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_2, "testObject_RequestNewLegalHoldClient_team_2.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_3, "testObject_RequestNewLegalHoldClient_team_3.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_4, "testObject_RequestNewLegalHoldClient_team_4.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_5, "testObject_RequestNewLegalHoldClient_team_5.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_6, "testObject_RequestNewLegalHoldClient_team_6.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_7, "testObject_RequestNewLegalHoldClient_team_7.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_8, "testObject_RequestNewLegalHoldClient_team_8.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_9, "testObject_RequestNewLegalHoldClient_team_9.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_10, "testObject_RequestNewLegalHoldClient_team_10.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_11, "testObject_RequestNewLegalHoldClient_team_11.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_12, "testObject_RequestNewLegalHoldClient_team_12.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_13, "testObject_RequestNewLegalHoldClient_team_13.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_14, "testObject_RequestNewLegalHoldClient_team_14.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_15, "testObject_RequestNewLegalHoldClient_team_15.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_16, "testObject_RequestNewLegalHoldClient_team_16.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_17, "testObject_RequestNewLegalHoldClient_team_17.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_18, "testObject_RequestNewLegalHoldClient_team_18.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_19, "testObject_RequestNewLegalHoldClient_team_19.json"), (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_20, "testObject_RequestNewLegalHoldClient_team_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_1, "testObject_RequestNewLegalHoldClient_team_1.json"),
+            (Test.Wire.API.Golden.Generated.RequestNewLegalHoldClient_team.testObject_RequestNewLegalHoldClient_team_2, "testObject_RequestNewLegalHoldClient_team_2.json")
+          ],
       testGroup "Golden: NewLegalHoldClient_team" $
         testObjects [(Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_1, "testObject_NewLegalHoldClient_team_1.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_2, "testObject_NewLegalHoldClient_team_2.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_3, "testObject_NewLegalHoldClient_team_3.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_4, "testObject_NewLegalHoldClient_team_4.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_5, "testObject_NewLegalHoldClient_team_5.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_6, "testObject_NewLegalHoldClient_team_6.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_7, "testObject_NewLegalHoldClient_team_7.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_8, "testObject_NewLegalHoldClient_team_8.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_9, "testObject_NewLegalHoldClient_team_9.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_10, "testObject_NewLegalHoldClient_team_10.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_11, "testObject_NewLegalHoldClient_team_11.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_12, "testObject_NewLegalHoldClient_team_12.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_13, "testObject_NewLegalHoldClient_team_13.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_14, "testObject_NewLegalHoldClient_team_14.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_15, "testObject_NewLegalHoldClient_team_15.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_16, "testObject_NewLegalHoldClient_team_16.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_17, "testObject_NewLegalHoldClient_team_17.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_18, "testObject_NewLegalHoldClient_team_18.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_19, "testObject_NewLegalHoldClient_team_19.json"), (Test.Wire.API.Golden.Generated.NewLegalHoldClient_team.testObject_NewLegalHoldClient_team_20, "testObject_NewLegalHoldClient_team_20.json")],
+      testGroup "Golden: LegalHoldServiceConfirmV0_team" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirmV0_team_1, "testObject_LegalHoldServiceConfirmV0_team_1.json"),
+            (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirmV0_team_2, "testObject_LegalHoldServiceConfirmV0_team_2.json")
+          ],
       testGroup "Golden: LegalHoldServiceConfirm_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_1, "testObject_LegalHoldServiceConfirm_team_1.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_2, "testObject_LegalHoldServiceConfirm_team_2.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_3, "testObject_LegalHoldServiceConfirm_team_3.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_4, "testObject_LegalHoldServiceConfirm_team_4.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_5, "testObject_LegalHoldServiceConfirm_team_5.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_6, "testObject_LegalHoldServiceConfirm_team_6.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_7, "testObject_LegalHoldServiceConfirm_team_7.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_8, "testObject_LegalHoldServiceConfirm_team_8.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_9, "testObject_LegalHoldServiceConfirm_team_9.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_10, "testObject_LegalHoldServiceConfirm_team_10.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_11, "testObject_LegalHoldServiceConfirm_team_11.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_12, "testObject_LegalHoldServiceConfirm_team_12.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_13, "testObject_LegalHoldServiceConfirm_team_13.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_14, "testObject_LegalHoldServiceConfirm_team_14.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_15, "testObject_LegalHoldServiceConfirm_team_15.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_16, "testObject_LegalHoldServiceConfirm_team_16.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_17, "testObject_LegalHoldServiceConfirm_team_17.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_18, "testObject_LegalHoldServiceConfirm_team_18.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_19, "testObject_LegalHoldServiceConfirm_team_19.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_20, "testObject_LegalHoldServiceConfirm_team_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_1, "testObject_LegalHoldServiceConfirm_team_1.json"),
+            (Test.Wire.API.Golden.Generated.LegalHoldServiceConfirm_team.testObject_LegalHoldServiceConfirm_team_2, "testObject_LegalHoldServiceConfirm_team_2.json")
+          ],
+      testGroup "Golden: LegalHoldServiceRemoveV0_team" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemoveV0_team_1, "testObject_LegalHoldServiceRemoveV0_team_1.json"),
+            (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemoveV0_team_2, "testObject_LegalHoldServiceRemoveV0_team_2.json")
+          ],
       testGroup "Golden: LegalHoldServiceRemove_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_1, "testObject_LegalHoldServiceRemove_team_1.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_2, "testObject_LegalHoldServiceRemove_team_2.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_3, "testObject_LegalHoldServiceRemove_team_3.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_4, "testObject_LegalHoldServiceRemove_team_4.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_5, "testObject_LegalHoldServiceRemove_team_5.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_6, "testObject_LegalHoldServiceRemove_team_6.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_7, "testObject_LegalHoldServiceRemove_team_7.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_8, "testObject_LegalHoldServiceRemove_team_8.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_9, "testObject_LegalHoldServiceRemove_team_9.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_10, "testObject_LegalHoldServiceRemove_team_10.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_11, "testObject_LegalHoldServiceRemove_team_11.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_12, "testObject_LegalHoldServiceRemove_team_12.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_13, "testObject_LegalHoldServiceRemove_team_13.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_14, "testObject_LegalHoldServiceRemove_team_14.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_15, "testObject_LegalHoldServiceRemove_team_15.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_16, "testObject_LegalHoldServiceRemove_team_16.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_17, "testObject_LegalHoldServiceRemove_team_17.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_18, "testObject_LegalHoldServiceRemove_team_18.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_19, "testObject_LegalHoldServiceRemove_team_19.json"), (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_20, "testObject_LegalHoldServiceRemove_team_20.json")],
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_1, "testObject_LegalHoldServiceRemove_team_1.json"),
+            (Test.Wire.API.Golden.Generated.LegalHoldServiceRemove_team.testObject_LegalHoldServiceRemove_team_2, "testObject_LegalHoldServiceRemove_team_2.json")
+          ],
       testGroup "Golden: TeamMember_team" $
         testObjects [(Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_1, "testObject_TeamMember_team_1.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_2, "testObject_TeamMember_team_2.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_3, "testObject_TeamMember_team_3.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_4, "testObject_TeamMember_team_4.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_5, "testObject_TeamMember_team_5.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_6, "testObject_TeamMember_team_6.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_7, "testObject_TeamMember_team_7.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_8, "testObject_TeamMember_team_8.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_9, "testObject_TeamMember_team_9.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_10, "testObject_TeamMember_team_10.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_11, "testObject_TeamMember_team_11.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_12, "testObject_TeamMember_team_12.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_13, "testObject_TeamMember_team_13.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_14, "testObject_TeamMember_team_14.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_15, "testObject_TeamMember_team_15.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_16, "testObject_TeamMember_team_16.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_17, "testObject_TeamMember_team_17.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_18, "testObject_TeamMember_team_18.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_19, "testObject_TeamMember_team_19.json"), (Test.Wire.API.Golden.Generated.TeamMember_team.testObject_TeamMember_team_20, "testObject_TeamMember_team_20.json")],
       testGroup "Golden: ListType_team" $
@@ -1239,5 +1380,122 @@ tests =
       testGroup "Golden: TeamSearchVisibility_team" $
         testObjects [(Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_1, "testObject_TeamSearchVisibility_team_1.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_2, "testObject_TeamSearchVisibility_team_2.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_3, "testObject_TeamSearchVisibility_team_3.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_4, "testObject_TeamSearchVisibility_team_4.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_5, "testObject_TeamSearchVisibility_team_5.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_6, "testObject_TeamSearchVisibility_team_6.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_7, "testObject_TeamSearchVisibility_team_7.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_8, "testObject_TeamSearchVisibility_team_8.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_9, "testObject_TeamSearchVisibility_team_9.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_10, "testObject_TeamSearchVisibility_team_10.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_11, "testObject_TeamSearchVisibility_team_11.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_12, "testObject_TeamSearchVisibility_team_12.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_13, "testObject_TeamSearchVisibility_team_13.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_14, "testObject_TeamSearchVisibility_team_14.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_15, "testObject_TeamSearchVisibility_team_15.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_16, "testObject_TeamSearchVisibility_team_16.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_17, "testObject_TeamSearchVisibility_team_17.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_18, "testObject_TeamSearchVisibility_team_18.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_19, "testObject_TeamSearchVisibility_team_19.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibility_team.testObject_TeamSearchVisibility_team_20, "testObject_TeamSearchVisibility_team_20.json")],
       testGroup "Golden: TeamSearchVisibilityView_team" $
-        testObjects [(Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_1, "testObject_TeamSearchVisibilityView_team_1.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_2, "testObject_TeamSearchVisibilityView_team_2.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_3, "testObject_TeamSearchVisibilityView_team_3.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_4, "testObject_TeamSearchVisibilityView_team_4.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_5, "testObject_TeamSearchVisibilityView_team_5.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_6, "testObject_TeamSearchVisibilityView_team_6.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_7, "testObject_TeamSearchVisibilityView_team_7.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_8, "testObject_TeamSearchVisibilityView_team_8.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_9, "testObject_TeamSearchVisibilityView_team_9.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_10, "testObject_TeamSearchVisibilityView_team_10.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_11, "testObject_TeamSearchVisibilityView_team_11.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_12, "testObject_TeamSearchVisibilityView_team_12.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_13, "testObject_TeamSearchVisibilityView_team_13.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_14, "testObject_TeamSearchVisibilityView_team_14.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_15, "testObject_TeamSearchVisibilityView_team_15.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_16, "testObject_TeamSearchVisibilityView_team_16.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_17, "testObject_TeamSearchVisibilityView_team_17.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_18, "testObject_TeamSearchVisibilityView_team_18.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_19, "testObject_TeamSearchVisibilityView_team_19.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_20, "testObject_TeamSearchVisibilityView_team_20.json")]
+        testObjects [(Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_1, "testObject_TeamSearchVisibilityView_team_1.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_2, "testObject_TeamSearchVisibilityView_team_2.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_3, "testObject_TeamSearchVisibilityView_team_3.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_4, "testObject_TeamSearchVisibilityView_team_4.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_5, "testObject_TeamSearchVisibilityView_team_5.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_6, "testObject_TeamSearchVisibilityView_team_6.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_7, "testObject_TeamSearchVisibilityView_team_7.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_8, "testObject_TeamSearchVisibilityView_team_8.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_9, "testObject_TeamSearchVisibilityView_team_9.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_10, "testObject_TeamSearchVisibilityView_team_10.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_11, "testObject_TeamSearchVisibilityView_team_11.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_12, "testObject_TeamSearchVisibilityView_team_12.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_13, "testObject_TeamSearchVisibilityView_team_13.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_14, "testObject_TeamSearchVisibilityView_team_14.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_15, "testObject_TeamSearchVisibilityView_team_15.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_16, "testObject_TeamSearchVisibilityView_team_16.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_17, "testObject_TeamSearchVisibilityView_team_17.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_18, "testObject_TeamSearchVisibilityView_team_18.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_19, "testObject_TeamSearchVisibilityView_team_19.json"), (Test.Wire.API.Golden.Generated.TeamSearchVisibilityView_team.testObject_TeamSearchVisibilityView_team_20, "testObject_TeamSearchVisibilityView_team_20.json")],
+      testGroup "Golden: VerificationAction_user" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.VerificationAction_user.testObject_VerificationAction_user_1, "testObject_VerificationAction_user_1"),
+            (Test.Wire.API.Golden.Generated.VerificationAction_user.testObject_VerificationAction_user_2, "testObject_VerificationAction_user_2"),
+            (Test.Wire.API.Golden.Generated.VerificationAction_user.testObject_VerificationAction_user_3, "testObject_VerificationAction_user_3")
+          ],
+      testGroup
+        "Golden: LockableFeaturePatch_team 1"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_1, "testObject_LockableFeaturePatch_team_1.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 2"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_2, "testObject_LockableFeaturePatch_team_2.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 3"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_3, "testObject_LockableFeaturePatch_team_3.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 4"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_4, "testObject_LockableFeaturePatch_team_4.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 5"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_5, "testObject_LockableFeaturePatch_team_5.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 6"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_6, "testObject_LockableFeaturePatch_team_6.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 7"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_7, "testObject_LockableFeaturePatch_team_7.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 8"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_8, "testObject_LockableFeaturePatch_team_8.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 9"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_9, "testObject_LockableFeaturePatch_team_9.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 10"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_10, "testObject_LockableFeaturePatch_team_10.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 11"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_11, "testObject_LockableFeaturePatch_team_11.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 12"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_12, "testObject_LockableFeaturePatch_team_12.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 13"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_13, "testObject_LockableFeaturePatch_team_13.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 14"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_14, "testObject_LockableFeaturePatch_team_14.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 15"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_15, "testObject_LockableFeaturePatch_team_15.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 16"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_16, "testObject_LockableFeaturePatch_team_16.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 17"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_17, "testObject_LockableFeaturePatch_team_17.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 18"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_18, "testObject_LockableFeaturePatch_team_18.json")],
+      testGroup
+        "Golden: LockableFeaturePatch_team 19"
+        $ testObjects
+          [(Test.Wire.API.Golden.Generated.LockableFeaturePatch_team.testObject_LockableFeaturePatch_team_19, "testObject_LockableFeaturePatch_team_19.json")],
+      testGroup
+        "Golden: Event_FeatureConfig"
+        $ testObjects
+          [ (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_1, "testObject_Event_featureConfig_1.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_2, "testObject_Event_featureConfig_2.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_3, "testObject_Event_featureConfig_3.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_4, "testObject_Event_featureConfig_4.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_5, "testObject_Event_featureConfig_5.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_6, "testObject_Event_featureConfig_6.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_7, "testObject_Event_featureConfig_7.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_8, "testObject_Event_featureConfig_8.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_9, "testObject_Event_featureConfig_9.json"),
+            (Test.Wire.API.Golden.Generated.Event_featureConfig.testObject_Event_featureConfig_10, "testObject_Event_featureConfig_10.json")
+          ],
+      testGroup
+        "Golden: Event_Conversation"
+        $ testObjects
+          [ (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_1, "testObject_Event_conversation_1.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_2, "testObject_Event_conversation_2.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_3, "testObject_Event_conversation_3.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_4, "testObject_Event_conversation_4.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_5, "testObject_Event_conversation_5.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_6, "testObject_Event_conversation_6.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_7, "testObject_Event_conversation_7.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_8, "testObject_Event_conversation_8.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_9, "testObject_Event_conversation_9.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_11, "testObject_Event_conversation_11.json"),
+            (Test.Wire.API.Golden.Generated.Event_conversation.testObject_Event_conversation_10, "testObject_Event_conversation_10.json")
+          ],
+      testGroup "Golden: QualifiedUserClientPrekeyMapV4" $
+        testObjects
+          [ (Test.Wire.API.Golden.Generated.QualifiedUserClientPrekeyMapV4_user.testObject_QualifiedUserClientPrekeyMapV4_user_1, "testObject_QualifiedUserClientPrekeyMapV4_1.json"),
+            (Test.Wire.API.Golden.Generated.QualifiedUserClientPrekeyMapV4_user.testObject_QualifiedUserClientPrekeyMapV4_user_2, "testObject_QualifiedUserClientPrekeyMapV4_2.json"),
+            (Test.Wire.API.Golden.Generated.QualifiedUserClientPrekeyMapV4_user.testObject_QualifiedUserClientPrekeyMapV4_user_3, "testObject_QualifiedUserClientPrekeyMapV4_3.json")
+          ]
     ]

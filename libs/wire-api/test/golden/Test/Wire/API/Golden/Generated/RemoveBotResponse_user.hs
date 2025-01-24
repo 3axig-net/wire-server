@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,33 +16,30 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.RemoveBotResponse_user where
 
 import Data.Domain
 import Data.Id (Id (Id))
+import Data.Maybe
 import Data.Qualified
-import qualified Data.UUID as UUID (fromString)
-import Imports (fromJust, read)
+import Data.UUID qualified as UUID (fromString)
+import Imports (read)
 import Wire.API.Conversation.Bot (RemoveBotResponse (..))
 import Wire.API.Event.Conversation
-  ( Event (Event),
-    EventData (..),
-    EventType
-      ( MemberLeave
-      ),
-    QualifiedUserIdList (QualifiedUserIdList, qualifiedUserIdList),
-  )
+import Wire.API.Event.LeaveReason
 
 testObject_RemoveBotResponse_user_1 :: RemoveBotResponse
 testObject_RemoveBotResponse_user_1 =
   RemoveBotResponse
     { rsRemoveBotEvent =
         Event
-          MemberLeave
           (Qualified (Id (fromJust (UUID.fromString "00003ab8-0000-0cff-0000-427f000000df"))) (Domain "faraway.example.com"))
+          Nothing
           (Qualified (Id (fromJust (UUID.fromString "00004166-0000-1e32-0000-52cb0000428d"))) (Domain "faraway.example.com"))
           (read "1864-05-07 01:13:35.741 UTC")
           ( EdMembersLeave
+              EdReasonRemoved
               ( QualifiedUserIdList
                   { qualifiedUserIdList =
                       [ Qualified (Id (fromJust (UUID.fromString "000038c1-0000-4a9c-0000-511300004c8b"))) (Domain "faraway.example.com"),

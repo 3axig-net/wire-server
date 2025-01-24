@@ -1,26 +1,6 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginz-http
-spec:
-  type: ClusterIP
-  ports:
-    - port: {{ .Values.service.nginz.externalHttpPort }}
-      targetPort: 8080
-  selector:
-    wireService: nginz
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginz-tcp
-spec:
-  type: ClusterIP
-  ports:
-    - port: {{ .Values.service.nginz.externalTcpPort }}
-      targetPort: 8081
-  selector:
-    wireService: nginz
+# FUTUREWORK: move services into the respective charts
+{{- if not .Values.config.isAdditionalIngress }}
+{{- if .Values.webapp.enabled }}
 ---
 apiVersion: v1
 kind: Service
@@ -32,8 +12,9 @@ spec:
     - port: {{ .Values.service.webapp.externalPort }}
       targetPort: 8080
   selector:
-    wireService: webapp
-{{- if not .Values.service.s3.externallyCreated }}
+    app: webapp
+{{- end }}
+{{- if .Values.service.useFakeS3 }}
 ---
 apiVersion: v1
 kind: Service
@@ -45,7 +26,7 @@ spec:
     - port: {{ .Values.service.s3.externalPort }}
       targetPort: 9000
   selector:
-    wireService: {{ .Values.service.s3.serviceName }}
+    app: {{ .Values.service.s3.serviceName }}
 {{- end }}
 {{- if .Values.teamSettings.enabled }}
 ---
@@ -59,7 +40,7 @@ spec:
     - port: {{ .Values.service.teamSettings.externalPort }}
       targetPort: 8080
   selector:
-    wireService: team-settings
+    app: team-settings
 {{- end }}
 {{- if .Values.accountPages.enabled }}
 ---
@@ -73,5 +54,6 @@ spec:
     - port: {{ .Values.service.accountPages.externalPort }}
       targetPort: 8080
   selector:
-    wireService: account-pages
+    app: account-pages
+{{- end }}
 {{- end }}

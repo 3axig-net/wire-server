@@ -2,27 +2,27 @@
     "accent_id": -2,
     "assets": [
         {
-            "key": "",
+            "key": "3-5-5cd81cc4-c643-4e9c-849c-c596a88c27fd",
             "type": "image"
         },
         {
-            "key": "",
+            "key": "3-5-5cd81cc4-c643-4e9c-849c-c596a88c27fd",
             "size": "complete",
             "type": "image"
         },
         {
-            "key": "",
+            "key": "3-5-5cd81cc4-c643-4e9c-849c-c596a88c27fd",
             "size": "complete",
             "type": "image"
         }
     ],
     "deleted": true,
+    "email": "some@example",
     "expires_at": "1864-05-11T17:06:58.936Z",
-    "id": "00000000-0000-0000-0000-000100000001",
+    "id": "00000000-0000-0001-0000-000200000001",
     "locale": "da-TN",
     "managed_by": "wire",
     "name": "4􄢻7\u0006\u0012\u0012\u0017bp\u0001麙0Yr\\󰘣vKRg󿽓)󽼺S󰇌􂏦:3B\u0006\u0013\u0003T",
-    "phone": "+837934954",
     "picture": [],
     "qualified_id": {
         "domain": "k.vbg.p",
@@ -31,5 +31,8 @@
     "service": {
         "id": "00000000-0000-0000-0000-000000000001",
         "provider": "00000000-0000-0000-0000-000100000000"
-    }
+    },
+    "status": "deleted",
+    "supported_protocols": [],
+    "text_status": "text status"
 }

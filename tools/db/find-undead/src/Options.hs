@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,8 +19,8 @@
 
 module Options where
 
-import qualified Cassandra as C
-import qualified Data.Text as Text
+import Cassandra qualified as C
+import Data.Text qualified as Text
 import Imports
 import Options.Applicative
 

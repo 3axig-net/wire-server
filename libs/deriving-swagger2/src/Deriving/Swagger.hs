@@ -1,6 +1,8 @@
+{-# LANGUAGE RankNTypes #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,13 +21,13 @@
 -- [deriving-aeson](https://hackage.haskell.org/package/deriving-aeson).
 module Deriving.Swagger where
 
-import qualified Data.Char as Char
+import Data.Char qualified as Char
 import Data.Kind (Constraint)
 import Data.List.Extra (stripSuffix)
+import Data.OpenApi.Internal.Schema (GToSchema)
+import Data.OpenApi.Internal.TypeShape
+import Data.OpenApi.Schema
 import Data.Proxy (Proxy (..))
-import Data.Swagger (SchemaOptions, ToSchema (..), constructorTagModifier, defaultSchemaOptions, fieldLabelModifier, genericDeclareNamedSchema)
-import Data.Swagger.Internal.Schema (GToSchema)
-import Data.Swagger.Internal.TypeShape (TypeHasSimpleShape)
 import GHC.Generics (Generic (Rep))
 import GHC.TypeLits (ErrorMessage (Text), KnownSymbol, Symbol, TypeError, symbolVal)
 import Imports
@@ -81,6 +83,7 @@ import Imports
 -- | A newtype wrapper which gives ToSchema instances with modified options.
 -- 't' has to have an instance of the 'SwaggerOptions' class.
 newtype CustomSwagger t a = CustomSwagger {unCustomSwagger :: a}
+  deriving (Generic, Typeable)
 
 class SwaggerOptions xs where
   swaggerOptions :: SchemaOptions
@@ -94,14 +97,7 @@ instance (StringModifier f, SwaggerOptions xs) => SwaggerOptions (FieldLabelModi
 instance (StringModifier f, SwaggerOptions xs) => SwaggerOptions (ConstructorTagModifier f ': xs) where
   swaggerOptions = (swaggerOptions @xs) {constructorTagModifier = getStringModifier @f}
 
-instance
-  ( SwaggerOptions t,
-    Generic a,
-    GToSchema (Rep a),
-    TypeHasSimpleShape a "genericDeclareNamedSchemaUnrestricted"
-  ) =>
-  ToSchema (CustomSwagger t a)
-  where
+instance (SwaggerOptions t, Generic a, Typeable a, GToSchema (Rep a), Typeable (CustomSwagger t a), TypeHasSimpleShape a "genericDeclareNamedSchemaUnrestricted") => ToSchema (CustomSwagger t a) where
   declareNamedSchema _ = genericDeclareNamedSchema (swaggerOptions @t) (Proxy @a)
 
 -- ** Specify __what__ to modify
@@ -135,13 +131,13 @@ instance (StringModifier a, StringModifier b, StringModifier c, StringModifier d
 -- | Strips the given prefix, has no effect if the prefix doesn't exist
 data StripPrefix t
 
-instance KnownSymbol prefix => StringModifier (StripPrefix prefix) where
+instance (KnownSymbol prefix) => StringModifier (StripPrefix prefix) where
   getStringModifier = fromMaybe <*> stripPrefix (symbolVal (Proxy @prefix))
 
 -- | Strips the given suffix, has no effect if the suffix doesn't exist
 data StripSuffix t
 
-instance KnownSymbol suffix => StringModifier (StripSuffix suffix) where
+instance (KnownSymbol suffix) => StringModifier (StripSuffix suffix) where
   getStringModifier = fromMaybe <*> stripSuffix (symbolVal (Proxy @suffix))
 
 data CamelTo (separator :: Symbol)

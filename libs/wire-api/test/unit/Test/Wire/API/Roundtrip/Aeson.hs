@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,55 +20,64 @@ module Test.Wire.API.Roundtrip.Aeson (tests) where
 import Data.Aeson (FromJSON, ToJSON, parseJSON, toJSON)
 import Data.Aeson.Types (parseEither)
 import Data.Id (ConvId)
-import Data.Swagger (ToSchema, validatePrettyToJSON)
+import Data.OpenApi (ToSchema, validatePrettyToJSON)
 import Imports
-import qualified Test.Tasty as T
+import Test.Tasty qualified as T
 import Test.Tasty.QuickCheck (Arbitrary, counterexample, testProperty, (.&&.), (===))
 import Type.Reflection (typeRep)
-import qualified Wire.API.Asset as Asset
-import qualified Wire.API.Asset.V3.Resumable as Asset.Resumable
-import qualified Wire.API.Call.Config as Call.Config
-import qualified Wire.API.Connection as Connection
-import qualified Wire.API.Conversation as Conversation
-import qualified Wire.API.Conversation.Bot as Conversation.Bot
-import qualified Wire.API.Conversation.Code as Conversation.Code
-import qualified Wire.API.Conversation.Member as Conversation.Member
-import qualified Wire.API.Conversation.Role as Conversation.Role
-import qualified Wire.API.Conversation.Typing as Conversation.Typing
-import qualified Wire.API.CustomBackend as CustomBackend
-import qualified Wire.API.Event.Conversation as Event.Conversation
-import qualified Wire.API.Event.Team as Event.Team
-import qualified Wire.API.Message as Message
-import qualified Wire.API.Notification as Notification
-import qualified Wire.API.Properties as Properties
-import qualified Wire.API.Provider as Provider
-import qualified Wire.API.Provider.Bot as Provider.Bot
-import qualified Wire.API.Provider.External as Provider.External
-import qualified Wire.API.Provider.Service as Provider.Service
-import qualified Wire.API.Provider.Service.Tag as Provider.Service.Tag
-import qualified Wire.API.Push.Token as Push.Token
-import qualified Wire.API.Team as Team
-import qualified Wire.API.Team.Conversation as Team.Conversation
-import qualified Wire.API.Team.Feature as Team.Feature
-import qualified Wire.API.Team.Invitation as Team.Invitation
-import qualified Wire.API.Team.LegalHold as Team.LegalHold
-import qualified Wire.API.Team.LegalHold.External as Team.LegalHold.External
-import qualified Wire.API.Team.Member as Team.Member
-import qualified Wire.API.Team.Permission as Team.Permission
-import qualified Wire.API.Team.Role as Team.Role
-import qualified Wire.API.Team.SearchVisibility as Team.SearchVisibility
-import qualified Wire.API.User as User
-import qualified Wire.API.User.Activation as User.Activation
-import qualified Wire.API.User.Auth as User.Auth
-import qualified Wire.API.User.Client as User.Client
-import qualified Wire.API.User.Client.Prekey as User.Client.Prekey
-import qualified Wire.API.User.Handle as User.Handle
-import qualified Wire.API.User.Identity as User.Identity
-import qualified Wire.API.User.Password as User.Password
-import qualified Wire.API.User.Profile as User.Profile
-import qualified Wire.API.User.RichInfo as User.RichInfo
-import qualified Wire.API.User.Search as User.Search
-import qualified Wire.API.Wrapped as Wrapped
+import Wire.API.Asset qualified as Asset
+import Wire.API.Call.Config qualified as Call.Config
+import Wire.API.Connection qualified as Connection
+import Wire.API.Conversation qualified as Conversation
+import Wire.API.Conversation.Action qualified as Conversation.Action
+import Wire.API.Conversation.Bot qualified as Conversation.Bot
+import Wire.API.Conversation.Code qualified as Conversation.Code
+import Wire.API.Conversation.Member qualified as Conversation.Member
+import Wire.API.Conversation.Role qualified as Conversation.Role
+import Wire.API.Conversation.Typing qualified as Conversation.Typing
+import Wire.API.CustomBackend qualified as CustomBackend
+import Wire.API.Event.Conversation qualified as Event.Conversation
+import Wire.API.Event.Team qualified as Event.Team
+import Wire.API.Event.WebSocketProtocol qualified as EventWebSocketProtocol
+import Wire.API.FederationStatus qualified as FederationStatus
+import Wire.API.Locale qualified as Locale
+import Wire.API.Message qualified as Message
+import Wire.API.OAuth qualified as OAuth
+import Wire.API.Properties qualified as Properties
+import Wire.API.Provider qualified as Provider
+import Wire.API.Provider.Bot qualified as Provider.Bot
+import Wire.API.Provider.External qualified as Provider.External
+import Wire.API.Provider.Service qualified as Provider.Service
+import Wire.API.Provider.Service.Tag qualified as Provider.Service.Tag
+import Wire.API.Push.Token qualified as Push.Token
+import Wire.API.Routes.FederationDomainConfig qualified as FederationDomainConfig
+import Wire.API.Routes.Internal.Brig.EJPD qualified as EJPD
+import Wire.API.Routes.Internal.Galley.TeamsIntra qualified as TeamsIntra
+import Wire.API.Routes.Version qualified as Routes.Version
+import Wire.API.SystemSettings qualified as SystemSettings
+import Wire.API.Team qualified as Team
+import Wire.API.Team.Conversation qualified as Team.Conversation
+import Wire.API.Team.Feature qualified as Team.Feature
+import Wire.API.Team.Invitation qualified as Team.Invitation
+import Wire.API.Team.LegalHold qualified as Team.LegalHold
+import Wire.API.Team.LegalHold.External qualified as Team.LegalHold.External
+import Wire.API.Team.Member qualified as Team.Member
+import Wire.API.Team.Permission qualified as Team.Permission
+import Wire.API.Team.Role qualified as Team.Role
+import Wire.API.Team.SearchVisibility qualified as Team.SearchVisibility
+import Wire.API.User qualified as User
+import Wire.API.User.Activation qualified as User.Activation
+import Wire.API.User.Auth qualified as User.Auth
+import Wire.API.User.Client qualified as User.Client
+import Wire.API.User.Client.Prekey qualified as User.Client.Prekey
+import Wire.API.User.Handle qualified as User.Handle
+import Wire.API.User.Identity qualified as User.Identity
+import Wire.API.User.Password qualified as User.Password
+import Wire.API.User.Profile qualified as User.Profile
+import Wire.API.User.RichInfo qualified as User.RichInfo
+import Wire.API.User.Scim qualified as Scim
+import Wire.API.User.Search qualified as User.Search
+import Wire.API.Wrapped qualified as Wrapped
 
 -- FUTUREWORK(#1446): fix tests marked as failing
 -- (either fixing Arbitrary or serialization instance)
@@ -81,11 +90,6 @@ tests =
       testRoundTrip @Asset.AssetSettings,
       testRoundTrip @Asset.AssetKey,
       testRoundTrip @Asset.Asset,
-      testRoundTrip @Asset.Resumable.ResumableSettings,
-      testRoundTrip @Asset.Resumable.TotalSize,
-      testRoundTrip @Asset.Resumable.ChunkSize,
-      testRoundTrip @Asset.Resumable.Offset,
-      testRoundTrip @Asset.Resumable.ResumableAsset,
       testRoundTrip @Call.Config.TurnHost,
       testRoundTrip @Call.Config.Scheme,
       testRoundTrip @Call.Config.Transport,
@@ -100,11 +104,10 @@ tests =
       testRoundTrip @Connection.UserConnectionList,
       testRoundTrip @Connection.ConnectionUpdate,
       testRoundTrip @Conversation.Conversation,
-      testRoundTrip @Conversation.NewConvUnmanaged,
-      testRoundTrip @Conversation.NewConvManaged,
       testRoundTrip @(Conversation.ConversationList ConvId),
       testRoundTrip @(Conversation.ConversationList Conversation.Conversation),
       testRoundTrip @Conversation.Access,
+      testRoundTrip @Conversation.AccessRoleLegacy,
       testRoundTrip @Conversation.AccessRole,
       testRoundTrip @Conversation.ConvType,
       testRoundTrip @Conversation.ReceiptMode,
@@ -115,11 +118,15 @@ tests =
       testRoundTrip @Conversation.ConversationAccessData,
       testRoundTrip @Conversation.ConversationReceiptModeUpdate,
       testRoundTrip @Conversation.ConversationMessageTimerUpdate,
+      testRoundTrip @Conversation.ConversationMetadata,
       testRoundTrip @Conversation.Bot.AddBot,
       testRoundTrip @Conversation.Bot.AddBotResponse,
       testRoundTrip @Conversation.Bot.RemoveBotResponse,
       testRoundTrip @Conversation.Bot.UpdateBotPrekeys,
       testRoundTrip @Conversation.Code.ConversationCode,
+      testRoundTrip @Conversation.Code.ConversationCodeInfo,
+      testRoundTrip @Conversation.Code.JoinConversationByCode,
+      testRoundTrip @Conversation.Code.CreateConversationCodeRequest,
       testRoundTrip @Conversation.Member.MemberUpdate,
       testRoundTrip @Conversation.Member.MutedStatus,
       testRoundTrip @Conversation.Member.Member,
@@ -131,8 +138,8 @@ tests =
       testRoundTrip @Conversation.Role.ConversationRole,
       testRoundTrip @Conversation.Role.ConversationRolesList,
       testRoundTrip @Conversation.Typing.TypingStatus,
-      testRoundTrip @Conversation.Typing.TypingData,
       testRoundTrip @CustomBackend.CustomBackend,
+      testRoundTrip @EJPD.EJPDContact,
       testRoundTrip @Event.Conversation.Event,
       testRoundTrip @Event.Conversation.EventType,
       testRoundTrip @Event.Conversation.SimpleMember,
@@ -142,14 +149,23 @@ tests =
       testRoundTrip @Event.Conversation.OtrMessage,
       testRoundTrip @Event.Team.Event,
       testRoundTrip @Event.Team.EventType,
+      testRoundTrip @FederationDomainConfig.FederationDomainConfigs,
+      testRoundTrip @FederationDomainConfig.FederationStrategy,
+      testRoundTrip @FederationStatus.FederationStatus,
+      testRoundTrip @FederationStatus.RemoteDomains,
+      testRoundTrip @Locale.Locale,
       testRoundTrip @Message.Priority,
       testRoundTrip @Message.OtrRecipients,
       testRoundTrip @Message.NewOtrMessage,
       testRoundTrip @Message.ClientMismatch,
-      testRoundTrip @Notification.QueuedNotification,
-      testRoundTrip @Notification.QueuedNotificationList,
+      testRoundTrip @OAuth.RedirectUrl,
+      testRoundTrip @OAuth.OAuthApplicationName,
+      testRoundTrip @OAuth.OAuthClientConfig,
+      testRoundTrip @OAuth.OAuthClient,
+      testRoundTrip @OAuth.CreateOAuthAuthorizationCodeRequest,
+      testRoundTrip @OAuth.OAuthAccessTokenRequest,
+      testRoundTrip @OAuth.OAuthApplication,
       testRoundTrip @Properties.PropertyKey,
-      testRoundTrip @Properties.PropertyValue,
       testRoundTrip @Provider.Provider,
       testRoundTrip @Provider.ProviderProfile,
       testRoundTrip @Provider.NewProvider,
@@ -187,7 +203,12 @@ tests =
       testRoundTrip @Push.Token.AppName,
       testRoundTrip @Push.Token.PushToken,
       testRoundTrip @Push.Token.PushTokenList,
-      testRoundTrip @Team.BindingNewTeam,
+      testRoundTrip @Scim.CreateScimToken,
+      testRoundTrip @Scim.CreateScimTokenResponse,
+      testRoundTrip @SystemSettings.SystemSettings,
+      testRoundTrip @SystemSettings.SystemSettingsPublic,
+      testRoundTrip @SystemSettings.SystemSettingsInternal,
+      testRoundTrip @Team.NewTeam,
       testRoundTrip @Team.TeamBinding,
       testRoundTrip @Team.Team,
       testRoundTrip @Team.TeamList,
@@ -195,17 +216,13 @@ tests =
       testRoundTrip @Team.TeamDeleteData,
       testRoundTrip @Team.Conversation.TeamConversation,
       testRoundTrip @Team.Conversation.TeamConversationList,
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureLegalHold),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureSSO),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureSearchVisibility),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureValidateSAMLEmails),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureDigitalSignatures),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureAppLock),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureFileSharing),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureClassifiedDomains),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureConferenceCalling),
-      testRoundTrip @(Team.Feature.TeamFeatureStatus 'Team.Feature.TeamFeatureSelfDeletingMessages),
-      testRoundTrip @Team.Feature.TeamFeatureStatusValue,
+      testRoundTrip @(Team.Feature.LockableFeature Team.Feature.LegalholdConfig),
+      testRoundTrip @(Team.Feature.LockableFeaturePatch Team.Feature.LegalholdConfig),
+      testRoundTrip @(Team.Feature.LockableFeaturePatch Team.Feature.SelfDeletingMessagesConfig),
+      testRoundTrip @(Team.Feature.Feature Team.Feature.LegalholdConfig),
+      testRoundTrip @Team.Feature.AllTeamFeatures,
+      testRoundTrip @Team.Feature.FeatureStatus,
+      testRoundTrip @Team.Feature.LockStatus,
       testRoundTrip @Team.Invitation.InvitationRequest,
       testRoundTrip @Team.Invitation.Invitation,
       testRoundTrip @Team.Invitation.InvitationList,
@@ -216,9 +233,12 @@ tests =
       testRoundTrip @Team.LegalHold.RemoveLegalHoldSettingsRequest,
       testRoundTrip @Team.LegalHold.DisableLegalHoldForUserRequest,
       testRoundTrip @Team.LegalHold.ApproveLegalHoldForUserRequest,
+      testRoundTrip @Team.LegalHold.External.RequestNewLegalHoldClientV0,
       testRoundTrip @Team.LegalHold.External.RequestNewLegalHoldClient,
       testRoundTrip @Team.LegalHold.External.NewLegalHoldClient,
+      testRoundTrip @Team.LegalHold.External.LegalHoldServiceConfirmV0,
       testRoundTrip @Team.LegalHold.External.LegalHoldServiceConfirm,
+      testRoundTrip @Team.LegalHold.External.LegalHoldServiceRemoveV0,
       testRoundTrip @Team.LegalHold.External.LegalHoldServiceRemove,
       testRoundTrip @Team.LegalHold.LegalholdProtectee,
       testRoundTrip @Team.Member.TeamMember,
@@ -238,6 +258,7 @@ tests =
       testRoundTrip @(User.LimitedQualifiedUserIdList 20),
       testRoundTrip @User.UserProfile,
       testRoundTrip @User.User,
+      testRoundTrip @User.UserSet,
       testRoundTrip @User.SelfProfile,
       testRoundTrip @User.InvitationCode,
       testRoundTrip @User.BindingNewTeamUser,
@@ -253,6 +274,8 @@ tests =
       testRoundTrip @User.DeleteUser,
       testRoundTrip @User.VerifyDeleteUser,
       testRoundTrip @User.DeletionCodeTimeout,
+      testRoundTrip @User.VerificationAction,
+      testRoundTrip @User.SendVerificationCode,
       testRoundTrip @User.Activation.ActivationKey,
       -- FUTUREWORK: this should probably be tested individually,
       -- but ActivationTarget currently doesn't have JSON instances itself.
@@ -294,10 +317,9 @@ tests =
       testRoundTrip @User.Client.Prekey.PrekeyBundle,
       testRoundTrip @User.Handle.UserHandleInfo,
       testRoundTrip @User.Handle.CheckHandles,
-      testRoundTrip @User.Identity.Email,
+      testRoundTrip @User.Identity.EmailAddress,
       testRoundTrip @User.Identity.Phone,
       testRoundTrip @User.Identity.UserSSOId,
-      testRoundTrip @User.Identity.UserIdentity,
       testRoundTrip @User.Password.NewPasswordReset,
       testRoundTrip @User.Password.PasswordResetKey,
       -- FUTUREWORK: this should probably be tested individually,
@@ -310,17 +332,24 @@ tests =
       testRoundTrip @User.Profile.ColourId,
       testRoundTrip @User.Profile.AssetSize,
       testRoundTrip @User.Profile.Asset,
-      testRoundTrip @User.Profile.Locale,
       testRoundTrip @User.Profile.ManagedBy,
       testRoundTrip @User.RichInfo.RichField,
       testRoundTrip @User.RichInfo.RichInfoAssocList,
-      testRoundTrip @User.RichInfo.RichInfoMapAndList,
       testRoundTrip @User.RichInfo.RichInfo,
-      testRoundTrip @(User.Search.SearchResult User.Search.Contact),
-      testRoundTrip @User.Search.Contact,
       testRoundTrip @(User.Search.SearchResult User.Search.TeamContact),
+      testRoundTrip @User.Search.PagingState,
       testRoundTrip @User.Search.TeamContact,
-      testRoundTrip @(Wrapped.Wrapped "some_int" Int)
+      testRoundTrip @EventWebSocketProtocol.MessageServerToClient,
+      testRoundTrip @EventWebSocketProtocol.MessageClientToServer,
+      testRoundTrip @(Wrapped.Wrapped "some_int" Int),
+      testRoundTrip @Conversation.Action.SomeConversationAction,
+      testRoundTrip @Routes.Version.Version,
+      testRoundTrip @Routes.Version.VersionNumber,
+      testRoundTrip @TeamsIntra.GuardLegalholdPolicyConflicts,
+      testRoundTrip @TeamsIntra.TeamStatus,
+      testRoundTrip @TeamsIntra.TeamStatusUpdate,
+      testRoundTrip @TeamsIntra.TeamData,
+      testRoundTrip @TeamsIntra.TeamName
     ]
 
 testRoundTrip ::
@@ -336,7 +365,7 @@ testRoundTrip = testProperty msg trip
 
 testRoundTripWithSwagger ::
   forall a.
-  (Arbitrary a, Typeable a, ToJSON a, FromJSON a, ToSchema a, Eq a, Show a) =>
+  (Arbitrary a, ToJSON a, FromJSON a, ToSchema a, Eq a, Show a) =>
   T.TestTree
 testRoundTripWithSwagger = testProperty msg (trip .&&. scm)
   where

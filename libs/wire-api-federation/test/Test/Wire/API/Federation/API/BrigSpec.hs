@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -33,7 +33,7 @@ spec = describe "Wire.API.Federation.API.Brig" $ do
   describe "RoundTripTests" $ do
     jsonRoundTrip @SearchRequest
   describe "JSON Golden Tests" $ do
-    jsonGoldenTest "SearchRequest" [aesonQQ|{"term": "searchedThing"}|] (SearchRequest "searchedThing")
+    jsonGoldenTest "SearchRequest" [aesonQQ|{"term": "searchedThing"}|] (SearchRequest "searchedThing" Nothing Nothing)
 
 -- | FUTUREWORK: Extract this into a library so it is not repeated everywhere.
 jsonRoundTrip :: forall a. (Arbitrary a, Typeable a, ToJSON a, FromJSON a, Eq a, Show a) => Spec

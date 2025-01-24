@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,13 +25,13 @@ import Imports
 import Network.HTTP.Client (HttpException (..), HttpExceptionContent (..), responseStatus)
 import Network.HTTP.Types
 
-httpHandlers :: Monad m => [a -> Handler m Bool]
-httpHandlers = [const . Handler $ return . canRetry]
+httpHandlers :: (Monad m) => [a -> Handler m Bool]
+httpHandlers = [const . Handler $ pure . canRetry]
 
-rpcHandlers :: Monad m => [a -> Handler m Bool]
+rpcHandlers :: (Monad m) => [a -> Handler m Bool]
 rpcHandlers =
   [ const . Handler $ \(RPCException _ _ cause) ->
-      return $ maybe False canRetry (fromException cause)
+      pure $ maybe False canRetry (fromException cause)
   ]
 
 canRetry :: HttpException -> Bool

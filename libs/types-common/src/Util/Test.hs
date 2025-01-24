@@ -1,10 +1,8 @@
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,18 +30,17 @@ newtype IntegrationConfigFile = IntegrationConfigFile String
 instance IsOption IntegrationConfigFile where
   defaultValue = IntegrationConfigFile "/etc/wire/integration/integration.yaml"
   parseValue = fmap IntegrationConfigFile . safeRead
-  optionName = return "integration-config"
-  optionHelp = return "Integration config file to read from"
+  optionName = pure "integration-config"
+  optionHelp = pure "Integration config file to read from"
   optionCLParser =
     fmap IntegrationConfigFile $
       strOption $
-        ( short (untag (return 'i' :: Tagged IntegrationConfigFile Char))
+        ( short (untag (pure 'i' :: Tagged IntegrationConfigFile Char))
             <> long (untag (optionName :: Tagged IntegrationConfigFile String))
             <> help (untag (optionHelp :: Tagged IntegrationConfigFile String))
         )
 
-handleParseError :: (Show a) => Either a b -> IO (Maybe b)
+handleParseError :: (Show a) => Either a b -> IO b
 handleParseError (Left err) = do
-  putStrLn $ "Parse failed: " ++ show err ++ "\nFalling back to environment variables"
-  pure Nothing
-handleParseError (Right val) = pure $ Just val
+  error $ "Parse failed: " ++ show err ++ "\nFalling back to environment variables"
+handleParseError (Right val) = pure val

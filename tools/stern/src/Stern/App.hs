@@ -6,7 +6,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,59 +23,71 @@
 
 module Stern.App where
 
-import qualified Bilge
+import Bilge qualified
 import Bilge.RPC (HasRequestId (..))
 import Control.Error
-import Control.Lens (makeLenses, set, view, (^.))
+import Control.Lens (lensField, lensRules, makeLensesWith, (.~))
 import Control.Monad.Catch (MonadCatch, MonadThrow)
 import Control.Monad.IO.Class
 import Control.Monad.Reader.Class
 import Control.Monad.Trans.Class
 import Data.ByteString.Conversion (toByteString')
-import Data.Default (def)
-import Data.Id (UserId)
-import qualified Data.Metrics.Middleware as Metrics
+import Data.Id
+import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
-import Data.UUID (toString)
-import qualified Data.UUID.V4 as UUID
 import Imports
 import Network.HTTP.Client (responseTimeoutMicro)
-import Network.Wai (Request, ResponseReceived)
-import Network.Wai.Routing (Continue)
-import Network.Wai.Utilities (Error (..), lookupRequestId)
-import qualified Network.Wai.Utilities.Error as WaiError
-import Network.Wai.Utilities.Response (json, setStatus)
-import qualified Network.Wai.Utilities.Server as Server
-import Stern.Options as O
-import qualified System.Logger as Log
+import Network.Wai (Response, ResponseReceived)
+import Network.Wai.Utilities (Error (..))
+import Servant.Client qualified as SC
+import Stern.Options as Opts
+import System.Logger qualified as Log
 import System.Logger.Class hiding (Error, info)
-import qualified System.Logger.Class as LC
-import qualified System.Logger.Extended as Log
+import System.Logger.Class qualified as LC
+import System.Logger.Extended qualified as Log
 import Util.Options
+import Util.SuffixNamer
 
 data Env = Env
-  { _brig :: !Bilge.Request,
-    _galley :: !Bilge.Request,
-    _gundeck :: !Bilge.Request,
-    _ibis :: !Bilge.Request,
-    _galeb :: !Bilge.Request,
-    _applog :: !Logger,
-    _metrics :: !Metrics.Metrics,
-    _requestId :: !Bilge.RequestId,
-    _httpManager :: !Bilge.Manager
+  { brig :: !Bilge.Request,
+    galley :: !Bilge.Request,
+    gundeck :: !Bilge.Request,
+    ibis :: !Bilge.Request,
+    galeb :: !Bilge.Request,
+    appLogger :: !Logger,
+    requestId :: !Bilge.RequestId,
+    httpManager :: !Bilge.Manager,
+    brigServantClientEnv :: !SC.ClientEnv
   }
 
-makeLenses ''Env
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''Env
 
 newEnv :: Opts -> IO Env
-newEnv o = do
-  mt <- Metrics.metrics
-  l <- Log.mkLogger (O.logLevel o) (O.logNetStrings o) (O.logFormat o)
-  Env (mkRequest $ O.brig o) (mkRequest $ O.galley o) (mkRequest $ O.gundeck o) (mkRequest $ O.ibis o) (mkRequest $ O.galeb o) l mt
-    <$> pure def
-    <*> Bilge.newManager (Bilge.defaultManagerSettings {Bilge.managerResponseTimeout = responseTimeoutMicro 10000000})
+newEnv opts = do
+  l <- Log.mkLogger opts.logLevel opts.logNetStrings opts.logFormat
+  manager <- newManager
+  pure $
+    Env
+      (mkRequest opts.brig)
+      (mkRequest opts.galley)
+      (mkRequest opts.gundeck)
+      (mkRequest opts.ibis)
+      (mkRequest opts.galeb)
+      l
+      (RequestId defRequestId)
+      manager
+      (mkClientEnv manager)
   where
-    mkRequest s = Bilge.host (encodeUtf8 (s ^. epHost)) . Bilge.port (s ^. epPort) $ Bilge.empty
+    mkRequest :: Endpoint -> Bilge.Request
+    mkRequest s = Bilge.host (encodeUtf8 s.host) . Bilge.port s.port $ Bilge.empty
+
+    newManager :: IO Bilge.Manager
+    newManager = Bilge.newManager (Bilge.defaultManagerSettings {Bilge.managerResponseTimeout = responseTimeoutMicro 10000000})
+
+    mkClientEnv :: Bilge.Manager -> SC.ClientEnv
+    mkClientEnv manager =
+      let url = SC.BaseUrl SC.Http (Text.unpack opts.brig.host) (fromIntegral opts.brig.port) ""
+       in SC.mkClientEnv manager url
 
 -- Monads
 newtype AppT m a = AppT (ReaderT Env m a)
@@ -93,29 +105,29 @@ deriving instance MonadUnliftIO App
 
 type App = AppT IO
 
-instance (Functor m, MonadIO m) => MonadLogger (AppT m) where
+instance (MonadIO m) => MonadLogger (AppT m) where
   log l m = do
-    g <- view applog
-    r <- view requestId
+    g <- asks (.appLogger)
+    r <- asks (.requestId)
     Log.log g l $ "request" .= Bilge.unRequestId r ~~ m
 
 instance MonadLogger (ExceptT e App) where
   log l m = lift (LC.log l m)
 
-instance MonadIO m => Bilge.MonadHttp (AppT m) where
+instance (MonadIO m) => Bilge.MonadHttp (AppT m) where
   handleRequestWithCont req h = do
-    m <- view httpManager
+    m <- asks (.httpManager)
     liftIO $ Bilge.withResponse req m h
 
-instance Monad m => HasRequestId (AppT m) where
-  getRequestId = view requestId
+instance (Monad m) => HasRequestId (AppT m) where
+  getRequestId = asks (.requestId)
 
 instance HasRequestId (ExceptT e App) where
-  getRequestId = view requestId
+  getRequestId = asks (.requestId)
 
 instance Bilge.MonadHttp (ExceptT e App) where
   handleRequestWithCont req h = do
-    m <- view httpManager
+    m <- asks (.httpManager)
     liftIO $ Bilge.withResponse req m h
 
 runAppT :: Env -> AppT m a -> m a
@@ -126,23 +138,10 @@ runAppT e (AppT ma) = runReaderT ma e
 
 type Handler = ExceptT Error App
 
-runHandler :: Env -> Request -> Handler ResponseReceived -> Continue IO -> IO ResponseReceived
-runHandler e r h k = do
-  i <- reqId (lookupRequestId r)
-  let e' = set requestId (Bilge.RequestId i) e
-  a <- runAppT e' (runExceptT h)
-  either (onError (view applog e) r k) return a
-  where
-    reqId (Just i) = return i
-    reqId Nothing = do
-      uuid <- UUID.nextRandom
-      return $ toByteString' $ "stern-" ++ toString uuid
+runHandler :: Env -> Handler a -> IO (Either Error a)
+runHandler env = runAppT env . runExceptT
 
-onError :: Logger -> Request -> Continue IO -> Error -> IO ResponseReceived
-onError g r k e = do
-  Server.logError g (Just r) e
-  Server.flushRequestBody r
-  k (setStatus (WaiError.code e) (json e))
+type Continue m = Response -> m ResponseReceived
 
 userMsg :: UserId -> Msg -> Msg
 userMsg = field "user" . toByteString'

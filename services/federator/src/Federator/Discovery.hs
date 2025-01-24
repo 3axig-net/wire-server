@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,27 +14,27 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# LANGUAGE TemplateHaskell #-}
 
 module Federator.Discovery where
 
 import Data.Domain (Domain, domainText)
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.String.Conversions (cs)
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Lazy as LText
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Text.Encoding qualified as Text
+import Data.Text.Lazy qualified as LText
 import Federator.Error
 import Imports
-import qualified Network.DNS as DNS
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.DNS qualified as DNS
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai.Utilities.Error qualified as Wai
 import Polysemy
-import qualified Polysemy.Error as Polysemy
+import Polysemy.Error qualified as Polysemy
 import Polysemy.TinyLog (TinyLog)
-import qualified Polysemy.TinyLog as TinyLog
-import qualified System.Logger.Class as Log
+import Polysemy.TinyLog qualified as TinyLog
+import System.Logger.Class qualified as Log
 import Wire.Network.DNS.Effect (DNSLookup)
-import qualified Wire.Network.DNS.Effect as Lookup
+import Wire.Network.DNS.Effect qualified as Lookup
 import Wire.Network.DNS.SRV (SrvEntry (srvTarget), SrvResponse (..), SrvTarget)
 
 data DiscoveryFailure
@@ -45,16 +45,17 @@ data DiscoveryFailure
 instance Exception DiscoveryFailure
 
 instance AsWai DiscoveryFailure where
-  toWai e = Wai.mkError status label (LText.fromStrict (waiErrorDescription e))
+  toWai e = Wai.mkError status label (LText.fromStrict (discoveryErrorDescription e))
     where
       (status, label) = case e of
-        DiscoveryFailureSrvNotAvailable _ -> (HTTP.status422, "srv-record-not-found")
-        DiscoveryFailureDNSError _ -> (HTTP.status500, "discovery-failure")
-  waiErrorDescription :: DiscoveryFailure -> Text
-  waiErrorDescription (DiscoveryFailureSrvNotAvailable msg) =
-    "srv record not found: " <> Text.decodeUtf8 msg
-  waiErrorDescription (DiscoveryFailureDNSError msg) =
-    "DNS error: " <> Text.decodeUtf8 msg
+        DiscoveryFailureSrvNotAvailable _ -> (HTTP.status422, "invalid-domain")
+        DiscoveryFailureDNSError _ -> (HTTP.status400, "discovery-failure")
+
+discoveryErrorDescription :: DiscoveryFailure -> Text
+discoveryErrorDescription (DiscoveryFailureSrvNotAvailable msg) =
+  "srv record not found: " <> Text.decodeUtf8 msg
+discoveryErrorDescription (DiscoveryFailureDNSError msg) =
+  "DNS error: " <> Text.decodeUtf8 msg
 
 data DiscoverFederator m a where
   DiscoverFederator :: Domain -> DiscoverFederator m (Either DiscoveryFailure SrvTarget)
@@ -63,18 +64,27 @@ data DiscoverFederator m a where
 makeSem ''DiscoverFederator
 
 discoverFederatorWithError ::
-  Members '[DiscoverFederator, Polysemy.Error DiscoveryFailure] r =>
+  ( Member DiscoverFederator r,
+    Member (Polysemy.Error DiscoveryFailure) r
+  ) =>
   Domain ->
   Sem r SrvTarget
 discoverFederatorWithError = Polysemy.fromEither <=< discoverFederator
 
 discoverAllFederatorsWithError ::
-  Members '[DiscoverFederator, Polysemy.Error DiscoveryFailure] r =>
+  ( Member DiscoverFederator r,
+    Member (Polysemy.Error DiscoveryFailure) r
+  ) =>
   Domain ->
   Sem r (NonEmpty SrvTarget)
 discoverAllFederatorsWithError = Polysemy.fromEither <=< discoverAllFederators
 
-runFederatorDiscovery :: Members '[DNSLookup, TinyLog] r => Sem (DiscoverFederator ': r) a -> Sem r a
+runFederatorDiscovery ::
+  ( Member DNSLookup r,
+    Member TinyLog r
+  ) =>
+  Sem (DiscoverFederator ': r) a ->
+  Sem r a
 runFederatorDiscovery = interpret $ \case
   DiscoverFederator d ->
     -- FUTUREWORK(federation): orderSrvResult and try the list in order this
@@ -86,9 +96,14 @@ runFederatorDiscovery = interpret $ \case
     -- FUTUREWORK(federation): This string conversion is wrong, we should encode
     -- this using IDNA encoding or expect domain to be bytestring everywhere
     -- (https://wearezeta.atlassian.net/browse/SQCORE-912)
-    domainSrv d = cs $ "_wire-server-federator._tcp." <> domainText d
+    domainSrv d = Text.encodeUtf8 $ "_wire-server-federator._tcp." <> domainText d
 
-lookupDomainByDNS :: Members '[DNSLookup, TinyLog] r => ByteString -> Sem r (Either DiscoveryFailure (NonEmpty SrvTarget))
+lookupDomainByDNS ::
+  ( Member DNSLookup r,
+    Member TinyLog r
+  ) =>
+  ByteString ->
+  Sem r (Either DiscoveryFailure (NonEmpty SrvTarget))
 lookupDomainByDNS domainSrv = do
   res <- Lookup.lookupSRV domainSrv
   case res of

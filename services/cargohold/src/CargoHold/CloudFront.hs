@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -56,7 +56,7 @@ data CloudFront = CloudFront
     _func :: ByteString -> IO ByteString
   }
 
-initCloudFront :: MonadIO m => FilePath -> KeyPairId -> Word -> Domain -> m CloudFront
+initCloudFront :: (MonadIO m) => FilePath -> KeyPairId -> Word -> Domain -> m CloudFront
 initCloudFront kfp kid ttl (Domain dom) =
   liftIO $
     CloudFront baseUrl kid ttl <$> mkPOSIXClock <*> sha1Rsa kfp
@@ -74,8 +74,8 @@ signedURL :: (MonadIO m, ToByteString p) => CloudFront -> p -> m URI
 signedURL (CloudFront base kid ttl clock sign) path = liftIO $ do
   time <- (+ ttl) . round <$> clock
   sig <- sign (toStrict (toLazyByteString (policy url time)))
-  return
-    $! url
+  pure $!
+    url
       { uriQuery =
           Query
             [ ("Expires", toByteString' time),
@@ -86,7 +86,8 @@ signedURL (CloudFront base kid ttl clock sign) path = liftIO $ do
   where
     url = base {uriPath = "/" <> toByteString' path}
     policy r t =
-      "{\"Statement\":[{\"Resource\":\"" <> serializeURIRef r
+      "{\"Statement\":[{\"Resource\":\""
+        <> serializeURIRef r
         <> "\",\
            \\"Condition\":{\
            \\"DateLessThan\":{\
@@ -105,10 +106,10 @@ sha1Rsa fp = do
   sha1 <-
     liftIO $
       getDigestByName "SHA1"
-        >>= maybe (error "OpenSSL: SHA1 not found") return
+        >>= maybe (error "OpenSSL: SHA1 not found") pure
   kbs <- readFile fp
   key <- readPrivateKey kbs PwNone
-  return (SSL.signBS sha1 key)
+  pure (SSL.signBS sha1 key)
 
 mkPOSIXClock :: IO (IO POSIXTime)
 mkPOSIXClock =

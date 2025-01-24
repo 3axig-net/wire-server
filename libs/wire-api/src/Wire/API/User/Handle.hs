@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,24 +21,19 @@
 module Wire.API.User.Handle
   ( UserHandleInfo (..),
     CheckHandles (..),
-
-    -- * Swagger
-    modelUserHandleInfo,
-    modelCheckHandles,
   )
 where
 
 import Control.Applicative
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Id (UserId)
+import Data.OpenApi qualified as S
 import Data.Qualified (Qualified (..), deprecatedSchema)
 import Data.Range
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- UserHandleInfo
@@ -47,12 +42,6 @@ newtype UserHandleInfo = UserHandleInfo {userHandleId :: Qualified UserId}
   deriving stock (Eq, Show, Generic)
   deriving newtype (Arbitrary)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema UserHandleInfo
-
-modelUserHandleInfo :: Doc.Model
-modelUserHandleInfo = Doc.defineModel "UserHandleInfo" $ do
-  Doc.description "User handle info"
-  Doc.property "user" Doc.string' $
-    Doc.description "ID of the user owning the handle"
 
 instance ToSchema UserHandleInfo where
   schema =
@@ -74,15 +63,7 @@ data CheckHandles = CheckHandles
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform CheckHandles)
-
-modelCheckHandles :: Doc.Model
-modelCheckHandles = Doc.defineModel "CheckHandles" $ do
-  Doc.description "Check availability of user handles."
-  Doc.property "handles" (Doc.array Doc.string') $
-    Doc.description "The prioritised list of handles to check (up to 50)"
-  Doc.property "return" Doc.int32' $ do
-    Doc.description "Desired number of free handles to return (1 - 10). Default 1."
-    Doc.optional
+  deriving (S.ToSchema) via Schema CheckHandles
 
 instance ToJSON CheckHandles where
   toJSON (CheckHandles l n) =
@@ -96,3 +77,10 @@ instance FromJSON CheckHandles where
     CheckHandles
       <$> o A..: "handles"
       <*> o A..:? "return" A..!= unsafeRange 1
+
+instance ToSchema CheckHandles where
+  schema =
+    object "CheckHandles" $
+      CheckHandles
+        <$> checkHandlesList .= field "handles" (fromRange .= rangedSchema (array schema))
+        <*> checkHandlesNum .= field "return" schema

@@ -1,12 +1,29 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
+
+-- This file is part of the Wire Server implementation.
+--
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
+--
+-- This program is free software: you can redistribute it and/or modify it under
+-- the terms of the GNU Affero General Public License as published by the Free
+-- Software Foundation, either version 3 of the License, or (at your option) any
+-- later version.
+--
+-- This program is distributed in the hope that it will be useful, but WITHOUT
+-- ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+-- FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+-- details.
+--
+-- You should have received a copy of the GNU Affero General Public License along
+-- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Wire.API.Routes.Internal.Brig.Connection where
 
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Id
+import Data.OpenApi qualified as S
 import Data.Qualified
 import Data.Schema
-import qualified Data.Swagger as S
 import Imports
 import Wire.API.Connection
 
@@ -22,7 +39,7 @@ instance ToSchema ConnectionsStatusRequest where
     object "ConnectionsStatusRequest" $
       ConnectionsStatusRequest
         <$> csrFrom .= field "from" (array schema)
-        <*> csrTo .= optField "to" Nothing (array schema)
+        <*> csrTo .= maybe_ (optField "to" (array schema))
 
 data ConnectionsStatusRequestV2 = ConnectionsStatusRequestV2
   { csrv2From :: ![UserId],
@@ -37,8 +54,8 @@ instance ToSchema ConnectionsStatusRequestV2 where
     object "ConnectionsStatusRequestV2" $
       ConnectionsStatusRequestV2
         <$> csrv2From .= field "from" (array schema)
-        <*> csrv2To .= optField "to" Nothing (array schema)
-        <*> csrv2Relation .= optField "relation" Nothing schema
+        <*> csrv2To .= maybe_ (optField "to" (array schema))
+        <*> csrv2Relation .= maybe_ (optField "relation" schema)
 
 data ConnectionStatus = ConnectionStatus
   { csFrom :: !UserId,

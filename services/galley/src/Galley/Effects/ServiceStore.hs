@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,9 +32,10 @@ module Galley.Effects.ServiceStore
   )
 where
 
-import Galley.Types.Bot
 import Imports
 import Polysemy
+import Wire.API.Bot.Service
+import Wire.API.Provider.Service (ServiceRef)
 
 data ServiceStore m a where
   CreateService :: Service -> ServiceStore m ()

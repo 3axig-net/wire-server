@@ -1,9 +1,9 @@
-Stern - Backoffice facade
+Stern - Backoffice Facade
 =========================
 
-This tool can be used to create a very basic Backoffice tool to simplify performing operations on users and teams such as visualising their user profiles, suspending or even deleting accounts. It is used internally at Wire to provide customer support the means to respond to certain queries from our customers.
+This is a simple web app based on [swagger-ui](https://swagger.io/tools/swagger-ui/) for performing operations on users and teams such as browsing their user profiles, suspending, or deleting accounts. It is used internally at Wire by our customer support team.
 
-Stern provides a swagger interface that accesses multiple other services (mostly using internal endpoints) and is designed to be a simple way to create a basic backoffice functionality. The swagger interface is served at `<ip:stern_port>/stern/api-docs`
+Stern is based on a swagger interface that accesses multiple other services (mostly using internal endpoints) and is designed to be a simple way to create a basic backoffice functionality. Point your browser at <http://localhost:8091>.
 
 ## IMPORTANT NOTES
 
@@ -17,10 +17,13 @@ Some endpoints (marked as such on the Swagger interface) depend on internal serv
 
 TODO: This section is under construction
 
-## How to run stern locally with the `services-demo`
+## How to run stern locally
 
-Follow the instruction in [`deploy/services-demo/README.md`](../../deploy/services-demo/README.md),
-using the `--run-backoffice` option, e.g. `deploy/sevices-demo/demo.sh --run-backoffice`
+Start local services via `dist/run-services`
 
-When you now open `localhost:8080/swagger-ui` in a browser, you can switch to the
-"Back Office" tab.
+Open <http://localhost:8091> in a browser.
+
+## Screenshots
+
+![screen shot 1](screenshots/a.png)
+![screen shot 2](screenshots/b.png)

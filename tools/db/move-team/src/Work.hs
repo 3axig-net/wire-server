@@ -1,14 +1,12 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,30 +23,27 @@
 
 module Work where
 
-import Brig.Types hiding (Client)
 import Cassandra hiding (Set)
 import Common
 import Conduit (mapC)
 import Control.Lens (view, _2, _3, _5)
 import Data.Aeson
 import Data.Conduit
-import qualified Data.Conduit.Combinators as C
+import Data.Conduit.Combinators qualified as C
 import Data.Conduit.Internal (zipSources)
-import qualified Data.Conduit.List as CL
+import Data.Conduit.List qualified as CL
 import Data.Id
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.UUID
 import Galley.Cassandra.Instances ()
 import Imports
 import Schema
 import System.Exit (ExitCode (ExitFailure, ExitSuccess), exitWith)
 import System.FilePath ((</>))
-import qualified System.IO as IO
-import qualified System.Logger as Log
+import System.IO qualified as IO
+import System.Logger qualified as Log
 import System.Process (system)
 import Types
-
-deriving instance Cql Name
 
 assertTargetDirEmpty :: Env -> IO ()
 assertTargetDirEmpty Env {..} = do
@@ -101,7 +96,7 @@ runGalleyTeamMembers env@Env {..} =
 handleTeamMembers :: Env -> (Int32, [RowGalleyTeamMember]) -> IO [RowGalleyTeamMember]
 handleTeamMembers env@Env {..} (i, members) = do
   Log.info envLogger (Log.field "number of team members loaded: " (show (i * envPageSize)))
-  let uids = catMaybes $ fmap Id . view _2 <$> members
+  let uids = mapMaybe (fmap Id . view _2) members
 
   appendJsonLines (envTargetPath </> "brig.clients") (readBrigClients env uids)
   appendJsonLines (envTargetPath </> "brig.connection") (readBrigConnection env uids)
@@ -131,7 +126,7 @@ runGalleyTeamConv env@Env {..} =
 handleTeamConv :: Env -> (Int32, [RowGalleyTeamConv]) -> IO [RowGalleyTeamConv]
 handleTeamConv env@Env {..} (i, convs) = do
   Log.info envLogger (Log.field "number of team convs loaded: " (show (i * envPageSize)))
-  let cids = catMaybes $ fmap Id . view _2 <$> convs
+  let cids = mapMaybe (fmap Id . view _2) convs
   appendJsonLines (envTargetPath </> "galley.conversation") (readGalleyConversation env cids)
   appendJsonLines (envTargetPath </> "galley.member") (readGalleyMember env cids)
   pure convs
@@ -156,14 +151,11 @@ runFullScans env@Env {..} users = do
     readBrigUserKeysAll env
       .| mapC (filter (haveId . view _2))
 
-  -- FUTUREWORK: no need to read this table, it can be populated from `brig.user`
-  appendJsonLines (envTargetPath </> "brig.user_keys_hash") $
-    readBrigUserKeysHashAll env
   appendJsonLines (envTargetPath </> "spar.user") $
     readSparUserAll env
       .| mapC (filter (haveId . view _3))
 
-appendJsonLines :: ToJSON a => FilePath -> ConduitM () [a] IO () -> IO ()
+appendJsonLines :: (ToJSON a) => FilePath -> ConduitM () [a] IO () -> IO ()
 appendJsonLines path conduit =
   IO.withBinaryFile path IO.AppendMode $ \outH ->
     runConduit $ conduit .| sinkJsonLines outH

@@ -3,11 +3,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,20 +25,18 @@
 module Data.Code where
 
 import Cassandra hiding (Value)
-import qualified Data.Aeson as A
-import Data.Aeson.TH
+import Data.Aeson qualified as A
 import Data.Bifunctor (Bifunctor (first))
 import Data.ByteString.Conversion
-import Data.Json.Util
+import Data.OpenApi qualified as S
+import Data.OpenApi.ParamSchema
 import Data.Proxy (Proxy (Proxy))
 import Data.Range
 import Data.Schema
-import Data.String.Conversions (cs)
-import qualified Data.Swagger as S
-import Data.Swagger.ParamSchema
 import Data.Text (pack)
 import Data.Text.Ascii
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding
+import Data.Text.Encoding.Error
 import Data.Time.Clock
 import Imports
 import Servant (FromHttpApiData (..), ToHttpApiData (..))
@@ -47,7 +44,7 @@ import Test.QuickCheck (Arbitrary (arbitrary))
 
 -- | A scoped identifier for a 'Value' with an associated 'Timeout'.
 newtype Key = Key {asciiKey :: Range 20 20 AsciiBase64Url}
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
   deriving newtype
     ( A.FromJSON,
       A.ToJSON,
@@ -66,7 +63,7 @@ instance FromHttpApiData Key where
     first pack $ runParser parser (encodeUtf8 s)
 
 instance ToHttpApiData Key where
-  toQueryParam key = cs (toByteString' key)
+  toQueryParam key = decodeUtf8With lenientDecode (toByteString' key)
 
 -- | A secret value bound to a 'Key' and a 'Timeout'.
 newtype Value = Value {asciiValue :: Range 6 20 AsciiBase64Url}
@@ -89,7 +86,7 @@ instance FromHttpApiData Value where
     first pack $ runParser parser (encodeUtf8 s)
 
 instance ToHttpApiData Value where
-  toQueryParam key = cs (toByteString' key)
+  toQueryParam key = decodeUtf8With lenientDecode (toByteString' key)
 
 -- | A 'Timeout' is rendered in/parsed from JSON as an integer representing the
 -- number of seconds remaining.
@@ -120,9 +117,15 @@ deriving instance Cql Value
 -- (but without a type, using plain fields). This will make it easier to re-use a key/value
 -- pair in the API, keeping "code" in the JSON for backwards compatibility
 data KeyValuePair = KeyValuePair
-  { kcKey :: !Key,
-    kcCode :: !Value
+  { key :: !Key,
+    code :: !Value
   }
   deriving (Eq, Generic, Show)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema KeyValuePair
 
-deriveJSON toJSONFieldName ''KeyValuePair
+instance ToSchema KeyValuePair where
+  schema =
+    object "KeyValuePair" $
+      KeyValuePair
+        <$> key .= field "key" schema
+        <*> code .= field "code" schema

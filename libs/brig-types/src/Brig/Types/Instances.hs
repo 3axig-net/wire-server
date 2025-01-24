@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,29 +17,27 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Brig.Types.Instances
-  (
-  )
-where
+module Brig.Types.Instances () where
 
-import Brig.Types.Client.Prekey
-import Brig.Types.Provider
 import Brig.Types.Provider.Tag
 import Cassandra.CQL
 import Data.ByteString.Conversion
 import Imports
+import Wire.API.Provider
+import Wire.API.Provider.Service
+import Wire.API.User.Client.Prekey
 
 instance Cql PrekeyId where
   ctype = Tagged IntColumn
   toCql = CqlInt . fromIntegral . keyId
-  fromCql (CqlInt i) = return $ PrekeyId (fromIntegral i)
+  fromCql (CqlInt i) = pure $ PrekeyId (fromIntegral i)
   fromCql _ = Left "PrekeyId: Int expected"
 
 instance Cql ServiceTag where
   ctype = Tagged BigIntColumn
 
   fromCql (CqlBigInt i) = case intToTag i of
-    Just t -> return t
+    Just t -> pure t
     Nothing -> Left $ "unexpected service tag: " ++ show i
   fromCql _ = Left "service tag: int expected"
 
@@ -73,10 +71,10 @@ instance Cql ServiceKey where
     s <- required "size"
     p <- required "pem"
     case (t :: Int32) of
-      0 -> return $! ServiceKey RsaServiceKey s p
+      0 -> pure $! ServiceKey RsaServiceKey s p
       _ -> Left $ "Unexpected service key type: " ++ show t
     where
-      required :: Cql r => Text -> Either String r
+      required :: (Cql r) => Text -> Either String r
       required f =
         maybe
           (Left ("ServiceKey: Missing required field '" ++ show f ++ "'"))

@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,12 +32,18 @@ module Spar.Data.Instances
 where
 
 import Cassandra as Cas
+import Data.ByteString (toStrict)
 import Data.ByteString.Conversion (fromByteString, toByteString)
-import Data.String.Conversions
+import Data.Functor.Alt (Alt ((<!>)))
+import qualified Data.Text.Encoding as T
+import Data.Text.Encoding.Error
+import qualified Data.Text.Lazy as LT
+import Data.Text.Lazy.Encoding as LT
 import Data.X509 (SignedCertificate)
 import Imports
 import SAML2.Util (parseURI')
 import qualified SAML2.WebSSO as SAML
+import Spar.Scim.Types (ScimUserCreationStatus (..))
 import Text.XML.DSig (parseKeyInfo, renderKeyInfo)
 import URI.ByteString
 import Wire.API.User.Saml
@@ -50,11 +56,11 @@ instance Cql SAML.XmlText where
   fromCql (CqlText t) = pure $ SAML.mkXmlText t
   fromCql _ = Left "XmlText: expected CqlText"
 
-instance Cql (SignedCertificate) where
+instance Cql SignedCertificate where
   ctype = Tagged BlobColumn
-  toCql = CqlBlob . cs . renderKeyInfo
+  toCql = CqlBlob . LT.encodeUtf8 . renderKeyInfo
 
-  fromCql (CqlBlob t) = parseKeyInfo False (cs t)
+  fromCql (CqlBlob t) = parseKeyInfo False (LT.decodeUtf8With lenientDecode t)
   fromCql _ = Left "SignedCertificate: expected CqlBlob"
 
 instance Cql (URIRef Absolute) where
@@ -66,9 +72,9 @@ instance Cql (URIRef Absolute) where
 
 instance Cql SAML.NameID where
   ctype = Tagged TextColumn
-  toCql = CqlText . cs . SAML.encodeElem
+  toCql = CqlText . LT.toStrict . SAML.encodeElem
 
-  fromCql (CqlText t) = SAML.decodeElem (cs t)
+  fromCql (CqlText t) = SAML.decodeElem (LT.fromStrict t)
   fromCql _ = Left "NameID: expected CqlText"
 
 deriving instance Cql SAML.Issuer
@@ -88,8 +94,8 @@ instance Cql VerdictFormatCon where
   toCql VerdictFormatConMobile = CqlInt 1
 
   fromCql (CqlInt i) = case i of
-    0 -> return VerdictFormatConWeb
-    1 -> return VerdictFormatConMobile
+    0 -> pure VerdictFormatConWeb
+    1 -> pure VerdictFormatConMobile
     n -> Left $ "unexpected VerdictFormatCon: " ++ show n
   fromCql _ = Left "member-status: int expected"
 
@@ -106,8 +112,12 @@ deriving instance Cql ScimToken
 
 instance Cql ScimTokenHash where
   ctype = Tagged TextColumn
-  toCql = CqlText . cs . toByteString
-  fromCql (CqlText t) = maybe (Left "ScimTokenHash: parse error") Right (fromByteString . cs $ t)
+  toCql = CqlText . T.decodeUtf8With lenientDecode . toStrict . toByteString
+  fromCql (CqlText t) =
+    maybe
+      (Left "ScimTokenHash: parse error")
+      Right
+      (fromByteString . T.encodeUtf8 $ t)
   fromCql _ = Left "ScimTokenHash: expected CqlText"
 
 instance Cql ScimTokenLookupKey where
@@ -116,5 +126,18 @@ instance Cql ScimTokenLookupKey where
     ScimTokenLookupKeyHashed h -> toCql h
     ScimTokenLookupKeyPlaintext t -> toCql t
   fromCql s@(CqlText _) =
-    ScimTokenLookupKeyHashed <$> fromCql s <|> ScimTokenLookupKeyPlaintext <$> fromCql s
+    (ScimTokenLookupKeyHashed <$> fromCql s)
+      <!> (ScimTokenLookupKeyPlaintext <$> fromCql s)
   fromCql _ = Left "ScimTokenLookupKey: expected CqlText"
+
+instance Cql ScimUserCreationStatus where
+  ctype = Tagged IntColumn
+
+  toCql ScimUserCreated = CqlInt 0
+  toCql ScimUserCreating = CqlInt 1
+
+  fromCql (CqlInt i) = case i of
+    0 -> pure ScimUserCreated
+    1 -> pure ScimUserCreating
+    n -> Left $ "unexpected ScimUserCreationStatus: " ++ show n
+  fromCql _ = Left "int expected"

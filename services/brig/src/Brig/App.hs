@@ -1,9 +1,13 @@
+{-# LANGUAGE DeepSubsumption #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TemplateHaskell #-}
+-- FUTUREWORK: Get rid of this option once Polysemy is fully introduced to Brig
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,307 +26,326 @@ module Brig.App
   ( schemaVersion,
 
     -- * App Environment
-    Env,
+    Env (..),
+    mkIndexEnv,
     newEnv,
     closeEnv,
-    awsEnv,
-    smtpEnv,
-    stompEnv,
-    cargohold,
-    galley,
-    gundeck,
-    federator,
-    userTemplates,
-    providerTemplates,
-    teamTemplates,
-    templateBranding,
-    requestId,
-    httpManager,
-    extGetManager,
-    nexmoCreds,
-    twilioCreds,
-    settings,
-    currentTime,
-    geoDb,
-    zauthEnv,
-    digestSHA256,
-    digestMD5,
-    metrics,
-    applog,
-    turnEnv,
-    turnEnvV2,
-    sftEnv,
-    internalEvents,
-    emailSender,
-    randomPrekeyLocalLock,
+    providerTemplatesWithLocale,
+    teamTemplatesWithLocale,
+    teamTemplatesNoLocale,
+    cargoholdLens,
+    galleyLens,
+    galleyEndpointLens,
+    sparEndpointLens,
+    gundeckEndpointLens,
+    cargoholdEndpointLens,
+    federatorLens,
+    wireServerEnterpriseEndpointLens,
+    casClientLens,
+    smtpEnvLens,
+    emailSenderLens,
+    awsEnvLens,
+    appLoggerLens,
+    internalEventsLens,
+    requestIdLens,
+    userTemplatesLens,
+    providerTemplatesLens,
+    teamTemplatesLens,
+    templateBrandingLens,
+    httpManagerLens,
+    http2ManagerLens,
+    extGetManagerLens,
+    settingsLens,
+    fsWatcherLens,
+    turnEnvLens,
+    sftEnvLens,
+    currentTimeLens,
+    zauthEnvLens,
+    digestSHA256Lens,
+    digestMD5Lens,
+    indexEnvLens,
+    randomPrekeyLocalLockLens,
+    keyPackageLocalLockLens,
+    rabbitmqChannelLens,
+    disabledVersionsLens,
+    enableSFTFederationLens,
 
     -- * App Monad
-    AppT,
-    AppIO,
-    runAppT,
-    runAppResourceT,
-    forkAppIO,
-    locationOf,
+    AppT (..),
     viewFederationDomain,
     qualifyLocal,
+    qualifyLocal',
+    ensureLocal,
+
+    -- * Crutches that should be removed once Brig has been completely transitioned to Polysemy
+    wrapClient,
+    wrapClientE,
+    wrapClientM,
+    wrapHttpClient,
+    wrapHttpClientE,
+    wrapHttp,
+    HttpClientIO (..),
+    runHttpClientIO,
+    liftSem,
+    lowerAppT,
+    initHttpManagerWithTLSConfig,
+    adhocUserKeyStoreInterpreter,
+    adhocSessionStoreInterpreter,
   )
 where
 
-import Bilge (Manager, MonadHttp, RequestId (..), newManager, withResponse)
-import qualified Bilge as RPC
+import Bilge qualified as RPC
+import Bilge.IO
 import Bilge.RPC (HasRequestId (..))
-import qualified Brig.AWS as AWS
-import qualified Brig.Calling as Calling
-import Brig.Options (Opts, Settings)
-import qualified Brig.Options as Opt
+import Brig.AWS qualified as AWS
+import Brig.Calling qualified as Calling
+import Brig.DeleteQueue.Interpreter
+import Brig.Options (ElasticSearchOpts, Opts, Settings (..))
+import Brig.Options qualified as Opt
 import Brig.Provider.Template
-import qualified Brig.Queue.Stomp as Stomp
-import Brig.Queue.Types (Queue (..))
-import qualified Brig.SMTP as SMTP
+import Brig.Queue.Stomp qualified as Stomp
+import Brig.Queue.Types
+import Brig.Schema.Run qualified as Migrations
 import Brig.Team.Template
-import Brig.Template (Localised, TemplateBranding, forLocale, genTemplateBranding)
-import Brig.Types (Locale (..), TurnURI)
+import Brig.Template (Localised, genTemplateBranding)
 import Brig.User.Search.Index (IndexEnv (..), MonadIndexIO (..), runIndexIO)
 import Brig.User.Template
 import Brig.ZAuth (MonadZAuth (..), runZAuth)
-import qualified Brig.ZAuth as ZAuth
-import Cassandra (Keyspace (Keyspace), MonadClient, runClient)
-import qualified Cassandra as Cas
-import Cassandra.Schema (versionCheck)
-import qualified Cassandra.Settings as Cas
+import Brig.ZAuth qualified as ZAuth
+import Cassandra (runClient)
+import Cassandra qualified as Cas
+import Cassandra.Util (initCassandraForService)
 import Control.AutoUpdate
 import Control.Error
-import Control.Exception.Enclosed (handleAny)
 import Control.Lens hiding (index, (.=))
-import Control.Monad.Catch (MonadCatch, MonadMask)
+import Control.Monad.Catch
 import Control.Monad.Trans.Resource
 import Data.ByteString.Conversion
-import Data.Default (def)
+import Data.Credentials (Credentials (..))
 import Data.Domain
-import qualified Data.GeoIP2 as GeoIp
-import Data.IP
-import Data.Id (UserId)
-import qualified Data.List.NonEmpty as NE
-import Data.List1 (List1, list1)
-import Data.Metrics (Metrics)
-import qualified Data.Metrics.Middleware as Metrics
+import Data.Id
 import Data.Misc
 import Data.Qualified
-import Data.Text (unpack)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Text.Encoding (encodeUtf8)
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.IO as Text
+import Data.Text.Encoding qualified as Text
+import Data.Text.IO qualified as Text
 import Data.Time.Clock
-import Data.Yaml (FromJSON)
-import qualified Database.Bloodhound as ES
+import Database.Bloodhound qualified as ES
+import HTTP2.Client.Manager (Http2Manager, http2ManagerWithSSLCtx)
 import Imports
-import Network.HTTP.Client (ManagerSettings (..), responseTimeoutMicro)
+import Network.AMQP qualified as Q
+import Network.AMQP.Extended qualified as Q
+import Network.HTTP.Client (responseTimeoutMicro)
 import Network.HTTP.Client.OpenSSL
 import OpenSSL.EVP.Digest (Digest, getDigestByName)
 import OpenSSL.Session (SSLOption (..))
-import qualified OpenSSL.Session as SSL
-import qualified OpenSSL.X509.SystemStore as SSL
-import qualified Ropes.Nexmo as Nexmo
-import qualified Ropes.Twilio as Twilio
+import OpenSSL.Session qualified as SSL
+import Polysemy
+import Polysemy.Fail
+import Polysemy.Final
+import Polysemy.Input (Input, input)
+import Prometheus
 import Ssl.Util
-import qualified System.FSNotify as FS
-import qualified System.FilePath as Path
+import System.FSNotify qualified as FS
 import System.Logger.Class hiding (Settings, settings)
-import qualified System.Logger.Class as LC
-import qualified System.Logger.Extended as Log
+import System.Logger.Class qualified as LC
+import System.Logger.Extended qualified as Log
 import Util.Options
-import Wire.API.User.Identity (Email)
+import Util.SuffixNamer
+import Wire.API.Federation.Error (federationNotImplemented)
+import Wire.API.Locale (Locale)
+import Wire.API.Routes.Version
+import Wire.API.User.Identity
+import Wire.EmailSending.SMTP qualified as SMTP
+import Wire.EmailSubsystem.Template (TemplateBranding, forLocale)
+import Wire.SessionStore
+import Wire.SessionStore.Cassandra
+import Wire.UserKeyStore
+import Wire.UserKeyStore.Cassandra
+import Wire.UserStore
+import Wire.UserStore.Cassandra
 
 schemaVersion :: Int32
-schemaVersion = 66
+schemaVersion = Migrations.lastSchemaVersion
 
 -------------------------------------------------------------------------------
 -- Environment
 
 data Env = Env
-  { _cargohold :: RPC.Request,
-    _galley :: RPC.Request,
-    _gundeck :: RPC.Request,
-    _federator :: Maybe Endpoint, -- FUTUREWORK: should we use a better type here? E.g. to avoid fresh connections all the time?
-    _casClient :: Cas.ClientState,
-    _smtpEnv :: Maybe SMTP.SMTP,
-    _emailSender :: Email,
-    _awsEnv :: AWS.Env,
-    _stompEnv :: Maybe Stomp.Env,
-    _metrics :: Metrics,
-    _applog :: Logger,
-    _internalEvents :: Queue,
-    _requestId :: RequestId,
-    _usrTemplates :: Localised UserTemplates,
-    _provTemplates :: Localised ProviderTemplates,
-    _tmTemplates :: Localised TeamTemplates,
-    _templateBranding :: TemplateBranding,
-    _httpManager :: Manager,
-    _extGetManager :: (Manager, [Fingerprint Rsa] -> SSL.SSL -> IO ()),
-    _settings :: Settings,
-    _nexmoCreds :: Nexmo.Credentials,
-    _twilioCreds :: Twilio.Credentials,
-    _geoDb :: Maybe (IORef GeoIp.GeoDB),
-    _fsWatcher :: FS.WatchManager,
-    _turnEnv :: IORef Calling.Env,
-    _turnEnvV2 :: IORef Calling.Env,
-    _sftEnv :: Maybe Calling.SFTEnv,
-    _currentTime :: IO UTCTime,
-    _zauthEnv :: ZAuth.Env,
-    _digestSHA256 :: Digest,
-    _digestMD5 :: Digest,
-    _indexEnv :: IndexEnv,
-    _randomPrekeyLocalLock :: Maybe (MVar ())
+  { cargohold :: RPC.Request,
+    galley :: RPC.Request,
+    galleyEndpoint :: Endpoint,
+    sparEndpoint :: Endpoint,
+    gundeckEndpoint :: Endpoint,
+    cargoholdEndpoint :: Endpoint,
+    federator :: Maybe Endpoint, -- FUTUREWORK: should we use a better type here? E.g. to avoid fresh connections all the time?
+    wireServerEnterpriseEndpoint :: Maybe Endpoint,
+    casClient :: Cas.ClientState,
+    smtpEnv :: Maybe SMTP.SMTP,
+    emailSender :: EmailAddress,
+    awsEnv :: AWS.Env,
+    appLogger :: Logger,
+    internalEvents :: QueueEnv,
+    requestId :: RequestId,
+    userTemplates :: Localised UserTemplates,
+    providerTemplates :: Localised ProviderTemplates,
+    teamTemplates :: Localised TeamTemplates,
+    templateBranding :: TemplateBranding,
+    httpManager :: Manager,
+    http2Manager :: Http2Manager,
+    extGetManager :: (Manager, [Fingerprint Rsa] -> SSL.SSL -> IO ()),
+    settings :: Settings,
+    fsWatcher :: FS.WatchManager,
+    turnEnv :: Calling.TurnEnv,
+    sftEnv :: Maybe Calling.SFTEnv,
+    currentTime :: IO UTCTime,
+    zauthEnv :: ZAuth.Env,
+    digestSHA256 :: Digest,
+    digestMD5 :: Digest,
+    indexEnv :: IndexEnv,
+    randomPrekeyLocalLock :: Maybe (MVar ()),
+    keyPackageLocalLock :: MVar (),
+    rabbitmqChannel :: Maybe (MVar Q.Channel),
+    disabledVersions :: Set Version,
+    enableSFTFederation :: Maybe Bool
   }
 
-makeLenses ''Env
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''Env
+
+validateOptions :: Opts -> IO ()
+validateOptions o =
+  case (o.federatorInternal, o.rabbitmq) of
+    (Nothing, Just _) -> error "RabbitMQ config is specified and federator is not, please specify both or none"
+    (Just _, Nothing) -> error "Federator is specified and RabbitMQ config is not, please specify both or none"
+    _ -> pure ()
 
 newEnv :: Opts -> IO Env
-newEnv o = do
+newEnv opts = do
+  validateOptions opts
   Just md5 <- getDigestByName "MD5"
   Just sha256 <- getDigestByName "SHA256"
   Just sha512 <- getDigestByName "SHA512"
-  mtr <- Metrics.metrics
-  lgr <- Log.mkLogger (Opt.logLevel o) (Opt.logNetStrings o) (Opt.logFormat o)
-  cas <- initCassandra o lgr
+  lgr <- Log.mkLogger (Opt.logLevel opts) (Opt.logNetStrings opts) (Opt.logFormat opts)
+  cas <- initCassandra opts lgr
   mgr <- initHttpManager
+  h2Mgr <- initHttp2Manager
   ext <- initExtGetManager
-  utp <- loadUserTemplates o
-  ptp <- loadProviderTemplates o
-  ttp <- loadTeamTemplates o
-  let branding = genTemplateBranding . Opt.templateBranding . Opt.general . Opt.emailSMS $ o
-  (emailAWSOpts, emailSMTP) <- emailConn lgr $ Opt.email (Opt.emailSMS o)
-  aws <- AWS.mkEnv lgr (Opt.aws o) emailAWSOpts mgr
-  zau <- initZAuth o
+  utp <- loadUserTemplates opts
+  ptp <- loadProviderTemplates opts
+  ttp <- loadTeamTemplates opts
+  let branding = genTemplateBranding . Opt.templateBranding . Opt.general . Opt.emailSMS $ opts
+  (emailAWSOpts, emailSMTP) <- emailConn lgr $ Opt.email (Opt.emailSMS opts)
+  aws <- AWS.mkEnv lgr (Opt.aws opts) emailAWSOpts mgr
+  zau <- initZAuth opts
   clock <- mkAutoUpdate defaultUpdateSettings {updateAction = getCurrentTime}
   w <-
     FS.startManagerConf $
-      FS.defaultConfig {FS.confDebounce = FS.Debounce 0.5, FS.confPollInterval = 10000000}
-  g <- geoSetup lgr w $ Opt.geoDb o
-  (turn, turnV2) <- turnSetup lgr w sha512 (Opt.turn o)
-  let sett = Opt.optSettings o
-  nxm <- initCredentials (Opt.setNexmo sett)
-  twl <- initCredentials (Opt.setTwilio sett)
-  stomp <- case (Opt.stomp o, Opt.setStomp sett) of
-    (Nothing, Nothing) -> pure Nothing
-    (Just s, Just c) -> Just . Stomp.mkEnv s <$> initCredentials c
-    (Just _, Nothing) -> error "STOMP is configured but 'setStomp' is not set"
-    (Nothing, Just _) -> error "'setStomp' is present but STOMP is not configured"
-  -- This is messy. See Note [queue refactoring] to learn how we
-  -- eventually plan to solve this mess.
-  eventsQueue <- case Opt.internalEventsQueue (Opt.internalEvents o) of
-    StompQueue q -> pure (StompQueue q)
-    SqsQueue q -> SqsQueue <$> AWS.getQueueUrl (aws ^. AWS.amazonkaEnv) q
-  mSFTEnv <- mapM Calling.mkSFTEnv $ Opt.sft o
-  prekeyLocalLock <- case Opt.randomPrekeys o of
-    Just True -> Just <$> newMVar ()
-    _ -> pure Nothing
-  return
-    $! Env
-      { _cargohold = mkEndpoint $ Opt.cargohold o,
-        _galley = mkEndpoint $ Opt.galley o,
-        _gundeck = mkEndpoint $ Opt.gundeck o,
-        _federator = Opt.federatorInternal o,
-        _casClient = cas,
-        _smtpEnv = emailSMTP,
-        _emailSender = Opt.emailSender . Opt.general . Opt.emailSMS $ o,
-        _awsEnv = aws,
-        _stompEnv = stomp,
-        _metrics = mtr,
-        _applog = lgr,
-        _internalEvents = eventsQueue,
-        _requestId = def,
-        _usrTemplates = utp,
-        _provTemplates = ptp,
-        _tmTemplates = ttp,
-        _templateBranding = branding,
-        _httpManager = mgr,
-        _extGetManager = ext,
-        _settings = sett,
-        _nexmoCreds = nxm,
-        _twilioCreds = twl,
-        _geoDb = g,
-        _turnEnv = turn,
-        _turnEnvV2 = turnV2,
-        _sftEnv = mSFTEnv,
-        _fsWatcher = w,
-        _currentTime = clock,
-        _zauthEnv = zau,
-        _digestMD5 = md5,
-        _digestSHA256 = sha256,
-        _indexEnv = mkIndexEnv o lgr mgr mtr,
-        _randomPrekeyLocalLock = prekeyLocalLock
+      FS.defaultConfig {FS.confWatchMode = FS.WatchModeOS}
+  let turnOpts = Opt.turn opts
+  turnSecret <- Text.encodeUtf8 . Text.strip <$> Text.readFile (Opt.secret turnOpts)
+  turn <- Calling.mkTurnEnv (Opt.serversSource turnOpts) (Opt.tokenTTL turnOpts) (Opt.configTTL turnOpts) turnSecret sha512
+  eventsQueue :: QueueEnv <- case opts.internalEvents.internalEventsQueue of
+    StompQueueOpts q -> do
+      stomp :: Stomp.Env <- case (opts.stompOptions, opts.settings.stomp) of
+        (Just s, Just c) -> Stomp.mkEnv s <$> initCredentials c
+        (Just _, Nothing) -> error "STOMP is configured but 'setStomp' is not set"
+        (Nothing, Just _) -> error "'setStomp' is present but STOMP is not configured"
+        (Nothing, Nothing) -> error "stomp is selected for internal events, but not configured in 'setStomp', STOMP"
+      pure (StompQueueEnv (Stomp.broker stomp) q)
+    SqsQueueOpts q -> do
+      let throttleMillis = fromMaybe Opt.defSqsThrottleMillis opts.settings.sqsThrottleMillis
+      SqsQueueEnv aws throttleMillis <$> AWS.getQueueUrl (aws ^. AWS.amazonkaEnv) q
+  mSFTEnv <- mapM (Calling.mkSFTEnv sha512) $ Opt.sft opts
+  prekeyLocalLock <- case Opt.randomPrekeys opts of
+    Just True -> do
+      Log.info lgr $ Log.msg (Log.val "randomPrekeys: active")
+      Just <$> newMVar ()
+    _ -> do
+      Log.info lgr $ Log.msg (Log.val "randomPrekeys: not active; using dynamoDB instead.")
+      pure Nothing
+  kpLock <- newMVar ()
+  rabbitChan <- traverse (Q.mkRabbitMqChannelMVar lgr) opts.rabbitmq
+  let allDisabledVersions = foldMap expandVersionExp opts.settings.disabledAPIVersions
+  idxEnv <- mkIndexEnv opts.elasticsearch lgr (Opt.galley opts) mgr
+  pure $!
+    Env
+      { cargohold = mkEndpoint $ opts.cargohold,
+        galley = mkEndpoint $ opts.galley,
+        galleyEndpoint = opts.galley,
+        sparEndpoint = opts.spar,
+        gundeckEndpoint = opts.gundeck,
+        cargoholdEndpoint = opts.cargohold,
+        federator = opts.federatorInternal,
+        wireServerEnterpriseEndpoint = opts.wireServerEnterprise,
+        casClient = cas,
+        smtpEnv = emailSMTP,
+        emailSender = opts.emailSMS.general.emailSender,
+        awsEnv = aws, -- used by `journalEvent` directly
+        appLogger = lgr,
+        internalEvents = (eventsQueue :: QueueEnv),
+        requestId = RequestId defRequestId,
+        userTemplates = utp,
+        providerTemplates = ptp,
+        teamTemplates = ttp,
+        templateBranding = branding,
+        httpManager = mgr,
+        http2Manager = h2Mgr,
+        extGetManager = ext,
+        settings = opts.settings,
+        turnEnv = turn,
+        sftEnv = mSFTEnv,
+        fsWatcher = w,
+        currentTime = clock,
+        zauthEnv = zau,
+        digestMD5 = md5,
+        digestSHA256 = sha256,
+        indexEnv = idxEnv,
+        randomPrekeyLocalLock = prekeyLocalLock,
+        keyPackageLocalLock = kpLock,
+        rabbitmqChannel = rabbitChan,
+        disabledVersions = allDisabledVersions,
+        enableSFTFederation = opts.multiSFT
       }
   where
-    emailConn _ (Opt.EmailAWS aws) = return (Just aws, Nothing)
+    emailConn _ (Opt.EmailAWS aws) = pure (Just aws, Nothing)
     emailConn lgr (Opt.EmailSMTP s) = do
-      let host = (Opt.smtpEndpoint s) ^. epHost
-          port = Just $ fromInteger $ toInteger $ (Opt.smtpEndpoint s) ^. epPort
+      let h = s.smtpEndpoint.host
+          p = Just . fromInteger . toInteger $ s.smtpEndpoint.port
       smtpCredentials <- case Opt.smtpCredentials s of
-        Just (Opt.EmailSMTPCredentials u p) -> do
-          pass <- initCredentials p
-          return $ Just (SMTP.Username u, SMTP.Password pass)
-        _ -> return Nothing
-      smtp <- SMTP.initSMTP lgr host port smtpCredentials (Opt.smtpConnType s)
-      return (Nothing, Just smtp)
-    mkEndpoint service = RPC.host (encodeUtf8 (service ^. epHost)) . RPC.port (service ^. epPort) $ RPC.empty
+        Just (Opt.EmailSMTPCredentials u p') -> do
+          Just . (SMTP.Username u,) . SMTP.Password <$> initCredentials p'
+        _ -> pure Nothing
+      smtp <- SMTP.initSMTP lgr h p smtpCredentials (Opt.smtpConnType s)
+      pure (Nothing, Just smtp)
+    mkEndpoint service = RPC.host (encodeUtf8 service.host) . RPC.port service.port $ RPC.empty
 
-mkIndexEnv :: Opts -> Logger -> Manager -> Metrics -> IndexEnv
-mkIndexEnv o lgr mgr mtr =
-  let bhe = ES.mkBHEnv (ES.Server (Opt.url (Opt.elasticsearch o))) mgr
-      lgr' = Log.clone (Just "index.brig") lgr
-      mainIndex = ES.IndexName $ Opt.index (Opt.elasticsearch o)
-      additionalIndex = ES.IndexName <$> Opt.additionalWriteIndex (Opt.elasticsearch o)
-   in IndexEnv mtr lgr' bhe Nothing mainIndex additionalIndex
+mkIndexEnv :: ElasticSearchOpts -> Logger -> Endpoint -> Manager -> IO IndexEnv
+mkIndexEnv esOpts logger galleyEp rpcHttpManager = do
+  mEsCreds :: Maybe Credentials <- for esOpts.credentials initCredentials
+  mEsAddCreds :: Maybe Credentials <- for esOpts.additionalCredentials initCredentials
 
-geoSetup :: Logger -> FS.WatchManager -> Maybe FilePath -> IO (Maybe (IORef GeoIp.GeoDB))
-geoSetup _ _ Nothing = return Nothing
-geoSetup lgr w (Just db) = do
-  path <- canonicalizePath db
-  geodb <- newIORef =<< GeoIp.openGeoDB path
-  startWatching w path (replaceGeoDb lgr geodb)
-  return $ Just geodb
-
-turnSetup :: Logger -> FS.WatchManager -> Digest -> Opt.TurnOpts -> IO (IORef Calling.Env, IORef Calling.Env)
-turnSetup lgr w dig o = do
-  secret <- Text.encodeUtf8 . Text.strip <$> Text.readFile (Opt.secret o)
-  cfg <- setupTurn secret (Opt.servers o)
-  cfgV2 <- setupTurn secret (Opt.serversV2 o)
-  return (cfg, cfgV2)
-  where
-    setupTurn secret cfg = do
-      path <- canonicalizePath cfg
-      servers <- fromMaybe (error "Empty TURN list, check turn file!") <$> readTurnList path
-      te <- newIORef =<< Calling.newEnv dig servers (Opt.tokenTTL o) (Opt.configTTL o) secret
-      startWatching w path (replaceTurnServers lgr te)
-      return te
-
-startWatching :: FS.WatchManager -> FilePath -> FS.Action -> IO ()
-startWatching w p = void . FS.watchDir w (Path.dropFileName p) predicate
-  where
-    predicate (FS.Added f _ _) = Path.equalFilePath f p
-    predicate (FS.Modified f _ _) = Path.equalFilePath f p
-    predicate (FS.Removed _ _ _) = False
-    predicate (FS.Unknown _ _ _) = False
-
-replaceGeoDb :: Logger -> IORef GeoIp.GeoDB -> FS.Event -> IO ()
-replaceGeoDb g ref e = do
-  let logErr x = Log.err g (msg $ val "Error loading GeoIP database: " +++ show x)
-  handleAny logErr $ do
-    GeoIp.openGeoDB (FS.eventPath e) >>= atomicWriteIORef ref
-    Log.info g (msg $ val "New GeoIP database loaded.")
-
-replaceTurnServers :: Logger -> IORef Calling.Env -> FS.Event -> IO ()
-replaceTurnServers g ref e = do
-  let logErr x = Log.err g (msg $ val "Error loading turn servers: " +++ show x)
-  handleAny logErr $
-    readTurnList (FS.eventPath e) >>= \case
-      Just servers ->
-        readIORef ref >>= \old -> do
-          atomicWriteIORef ref (old & Calling.turnServers .~ servers)
-          Log.info g (msg $ val "New turn servers loaded.")
-      Nothing -> Log.warn g (msg $ val "Empty or malformed turn servers list, ignoring!")
+  let mkBhEnv skipVerifyTls mCustomCa mCreds url = do
+        mgr <- initHttpManagerWithTLSConfig skipVerifyTls mCustomCa
+        let bhe = ES.mkBHEnv url mgr
+        pure $ maybe bhe (\creds -> bhe {ES.bhRequestHook = ES.basicAuthHook (ES.EsUsername creds.username) (ES.EsPassword creds.password)}) mCreds
+      esLogger = Log.clone (Just "index.brig") logger
+  bhEnv <- mkBhEnv esOpts.insecureSkipVerifyTls esOpts.caCert mEsCreds esOpts.url
+  additionalBhEnv <-
+    for esOpts.additionalWriteIndexUrl $
+      mkBhEnv esOpts.additionalInsecureSkipVerifyTls esOpts.additionalCaCert mEsAddCreds
+  pure $
+    IndexEnv
+      { idxLogger = esLogger,
+        idxElastic = bhEnv,
+        idxRequest = Nothing,
+        idxName = esOpts.index,
+        idxAdditionalName = esOpts.additionalWriteIndex,
+        idxAdditionalElastic = additionalBhEnv,
+        idxGalley = galleyEp,
+        idxRpcHttpManager = rpcHttpManager,
+        idxCredentials = mEsCreds
+      }
 
 initZAuth :: Opts -> IO ZAuth.Env
 initZAuth o = do
@@ -338,14 +361,25 @@ initZAuth o = do
 
 initHttpManager :: IO Manager
 initHttpManager = do
+  initHttpManagerWithTLSConfig False Nothing
+
+initHttpManagerWithTLSConfig :: Bool -> Maybe FilePath -> IO Manager
+initHttpManagerWithTLSConfig skipTlsVerify mCustomCa = do
   -- See Note [SSL context]
   ctx <- SSL.context
   SSL.contextAddOption ctx SSL_OP_NO_SSLv2
   SSL.contextAddOption ctx SSL_OP_NO_SSLv3
   SSL.contextSetCiphers ctx "HIGH"
-  SSL.contextSetVerificationMode ctx $
-    SSL.VerifyPeer True True Nothing
-  SSL.contextLoadSystemCerts ctx
+  if skipTlsVerify
+    then SSL.contextSetVerificationMode ctx SSL.VerifyNone
+    else
+      SSL.contextSetVerificationMode ctx $
+        SSL.VerifyPeer True True Nothing
+  case mCustomCa of
+    Nothing -> SSL.contextSetDefaultVerifyPaths ctx
+    Just customCa -> do
+      filePath <- canonicalizePath customCa
+      SSL.contextSetCAFile ctx filePath
   -- Unfortunately, there are quite some AWS services we talk to
   -- (e.g. SES, Dynamo) that still only support TLSv1.
   -- Ideally: SSL.contextAddOption ctx SSL_OP_NO_TLSv1
@@ -355,6 +389,18 @@ initHttpManager = do
         managerIdleConnectionCount = 4096,
         managerResponseTimeout = responseTimeoutMicro 10000000
       }
+
+initHttp2Manager :: IO Http2Manager
+initHttp2Manager = do
+  ctx <- SSL.context
+  SSL.contextAddOption ctx SSL_OP_NO_SSLv2
+  SSL.contextAddOption ctx SSL_OP_NO_SSLv3
+  SSL.contextAddOption ctx SSL_OP_NO_TLSv1
+  SSL.contextSetCiphers ctx "HIGH"
+  SSL.contextSetVerificationMode ctx $
+    SSL.VerifyPeer True True Nothing
+  SSL.contextSetDefaultVerifyPaths ctx
+  http2ManagerWithSSLCtx ctx
 
 -- Note [SSL context]
 -- ~~~~~~~~~~~~
@@ -375,7 +421,7 @@ initExtGetManager = do
   -- We use public key pinning with service providers and want to
   -- support self-signed certificates as well, hence 'VerifyNone'.
   SSL.contextSetVerificationMode ctx SSL.VerifyNone
-  SSL.contextLoadSystemCerts ctx
+  SSL.contextSetDefaultVerifyPaths ctx
   mgr <-
     newManager
       (opensslManagerSettings (pure ctx)) -- see Note [SSL context]
@@ -384,160 +430,241 @@ initExtGetManager = do
           managerResponseTimeout = responseTimeoutMicro 10000000
         }
   Just sha <- getDigestByName "SHA256"
-  return (mgr, mkVerify sha)
+  pure (mgr, mkVerify sha)
   where
     mkVerify sha fprs =
       let pinset = map toByteString' fprs
        in verifyRsaFingerprint sha pinset
 
 initCassandra :: Opts -> Logger -> IO Cas.ClientState
-initCassandra o g = do
-  c <-
-    maybe
-      (Cas.initialContactsPlain (Opt.cassandra o ^. casEndpoint . epHost))
-      (Cas.initialContactsDisco "cassandra_brig")
-      (unpack <$> Opt.discoUrl o)
-  p <-
-    Cas.init $
-      Cas.setLogger (Cas.mkLogger (Log.clone (Just "cassandra.brig") g))
-        . Cas.setContacts (NE.head c) (NE.tail c)
-        . Cas.setPortNumber (fromIntegral (Opt.cassandra o ^. casEndpoint . epPort))
-        . Cas.setKeyspace (Keyspace (Opt.cassandra o ^. casKeyspace))
-        . Cas.setMaxConnections 4
-        . Cas.setPoolStripes 4
-        . Cas.setSendTimeout 3
-        . Cas.setResponseTimeout 10
-        . Cas.setProtocolVersion Cas.V4
-        . Cas.setPolicy (Cas.dcFilterPolicyIfConfigured g (Opt.cassandra o ^. casFilterNodesByDatacentre))
-        $ Cas.defSettings
-  runClient p $ versionCheck schemaVersion
-  return p
+initCassandra o g =
+  initCassandraForService
+    (Opt.cassandra o)
+    "brig"
+    (Opt.discoUrl o)
+    (Just schemaVersion)
+    g
 
-initCredentials :: (FromJSON a) => FilePathSecrets -> IO a
-initCredentials secretFile = do
-  dat <- loadSecret secretFile
-  return $ either (\e -> error $ "Could not load secrets from " ++ show secretFile ++ ": " ++ e) id dat
+teamTemplatesWithLocale :: (MonadReader Env m) => Maybe Locale -> m (Locale, TeamTemplates)
+teamTemplatesWithLocale l = forLocale l <$> asks (.teamTemplates)
 
-userTemplates :: Monad m => Maybe Locale -> AppT m (Locale, UserTemplates)
-userTemplates l = forLocale l <$> view usrTemplates
+providerTemplatesWithLocale :: (MonadReader Env m) => Maybe Locale -> m (Locale, ProviderTemplates)
+providerTemplatesWithLocale l = forLocale l <$> asks (.providerTemplates)
 
-providerTemplates :: Monad m => Maybe Locale -> AppT m (Locale, ProviderTemplates)
-providerTemplates l = forLocale l <$> view provTemplates
-
-teamTemplates :: Monad m => Maybe Locale -> AppT m (Locale, TeamTemplates)
-teamTemplates l = forLocale l <$> view tmTemplates
+-- this works because team templates is not affected by `forLocale`; it is useful where we
+-- use the `TeamTemplates` only for finding invitation url templates (those are not localized).
+teamTemplatesNoLocale :: (MonadReader Env m) => m TeamTemplates
+teamTemplatesNoLocale = snd <$> teamTemplatesWithLocale Nothing
 
 closeEnv :: Env -> IO ()
 closeEnv e = do
-  Cas.shutdown $ e ^. casClient
-  FS.stopManager $ e ^. fsWatcher
-  Log.flush $ e ^. applog
-  Log.close $ e ^. applog
+  Cas.shutdown $ e.casClient
+  FS.stopManager $ e.fsWatcher
+  Log.flush $ e.appLogger
+  Log.close $ e.appLogger
 
 -------------------------------------------------------------------------------
 -- App Monad
-newtype AppT m a = AppT
-  { unAppT :: ReaderT Env m a
+
+newtype AppT r a = AppT
+  { unAppT :: (Member (Final IO) r) => ReaderT Env (Sem r) a
+  }
+  deriving
+    ( Semigroup,
+      Monoid
+    )
+    via (Ap (AppT r) a)
+
+lowerAppT :: (Member (Final IO) r) => Env -> AppT r a -> Sem r a
+lowerAppT env (AppT r) = runReaderT r env
+
+instance Functor (AppT r) where
+  fmap fab (AppT x0) = AppT $ fmap fab x0
+
+instance Applicative (AppT r) where
+  pure a = AppT $ pure a
+  (AppT x0) <*> (AppT x1) = AppT $ x0 <*> x1
+
+instance Monad (AppT r) where
+  (AppT x0) >>= f = AppT $ x0 >>= unAppT . f
+
+instance MonadIO (AppT r) where
+  liftIO io = AppT $ lift $ embedFinal io
+
+instance MonadMonitor (AppT r) where
+  doIO = liftIO
+
+instance MonadThrow (AppT r) where
+  throwM = liftIO . throwM
+
+instance (Member Fail r) => MonadFail (AppT r) where
+  fail = AppT . fail
+
+instance (Member (Final IO) r) => MonadThrow (Sem r) where
+  throwM = embedFinal . throwM @IO
+
+instance (Member (Final IO) r) => MonadCatch (Sem r) where
+  catch m handler = withStrategicToFinal @IO $ do
+    m' <- runS m
+    st <- getInitialStateS
+    handler' <- bindS handler
+    pure $ m' `catch` \e -> handler' $ e <$ st
+
+instance MonadCatch (AppT r) where
+  catch (AppT m) handler = AppT $
+    ReaderT $ \env ->
+      catch (runReaderT m env) (\x -> runReaderT (unAppT $ handler x) env)
+
+instance MonadReader Env (AppT r) where
+  ask = AppT ask
+  local f (AppT m) = AppT $ local f m
+
+liftSem :: Sem r a -> AppT r a
+liftSem sem = AppT $ lift sem
+
+instance (MonadIO m) => MonadLogger (ReaderT Env m) where
+  log l m = do
+    g <- asks (.appLogger)
+    r <- asks (.requestId)
+    Log.log g l $ field "request" (unRequestId r) ~~ m
+
+instance MonadLogger (AppT r) where
+  log l m = do
+    g <- asks (.appLogger)
+    r <- asks (.requestId)
+    AppT $
+      lift $
+        embedFinal @IO $
+          Log.log g l $
+            field "request" (unRequestId r) ~~ m
+
+instance MonadLogger (ExceptT err (AppT r)) where
+  log l m = lift (LC.log l m)
+
+instance MonadHttp (AppT r) where
+  handleRequestWithCont req handler = do
+    manager <- asks (.httpManager)
+    liftIO $ withResponse req manager handler
+
+instance MonadZAuth (AppT r) where
+  liftZAuth za = asks (.zauthEnv) >>= \e -> runZAuth e za
+
+instance MonadZAuth (ExceptT err (AppT r)) where
+  liftZAuth za = lift (asks (.zauthEnv)) >>= flip runZAuth za
+
+-- | The function serves as a crutch while Brig is being polysemised. Use it
+-- whenever the compiler complains that there is no instance of `MonadClient`
+-- for `AppT r`. It can be removed once there is no `AppT` anymore.
+wrapClient :: ReaderT Env Cas.Client a -> AppT r a
+wrapClient m = do
+  env <- ask
+  runClient env.casClient $ runReaderT m env
+
+wrapClientE :: ExceptT e (ReaderT Env Cas.Client) a -> ExceptT e (AppT r) a
+wrapClientE = mapExceptT wrapClient
+
+wrapClientM :: MaybeT (ReaderT Env Cas.Client) b -> MaybeT (AppT r) b
+wrapClientM = mapMaybeT wrapClient
+
+wrapHttp ::
+  HttpClientIO a ->
+  AppT r a
+wrapHttp action = do
+  env <- ask
+  runHttpClientIO env action
+
+newtype HttpClientIO a = HttpClientIO
+  { unHttpClientIO :: ReaderT Env (HttpT Cas.Client) a
   }
   deriving newtype
     ( Functor,
       Applicative,
       Monad,
+      MonadReader Env,
+      MonadLogger,
+      MonadHttp,
       MonadIO,
       MonadThrow,
       MonadCatch,
       MonadMask,
-      MonadReader Env
+      MonadUnliftIO,
+      MonadIndexIO
     )
-  deriving
-    ( Semigroup,
-      Monoid
-    )
-    via (Ap (AppT m) a)
 
-type AppIO = AppT IO
+runHttpClientIO :: (MonadIO m) => Env -> HttpClientIO a -> m a
+runHttpClientIO env =
+  runClient (env.casClient)
+    . runHttpT (env.httpManager)
+    . flip runReaderT env
+    . unHttpClientIO
 
-instance MonadIO m => MonadLogger (AppT m) where
-  log l m = do
-    g <- view applog
-    r <- view requestId
-    Log.log g l $ field "request" (unRequestId r) ~~ m
+instance MonadZAuth HttpClientIO where
+  liftZAuth za = asks (.zauthEnv) >>= flip runZAuth za
 
-instance MonadIO m => MonadLogger (ExceptT err (AppT m)) where
-  log l m = lift (LC.log l m)
+instance HasRequestId HttpClientIO where
+  getRequestId = asks (.requestId)
 
-instance (Monad m, MonadIO m) => MonadHttp (AppT m) where
-  handleRequestWithCont req handler = do
-    manager <- view httpManager
-    liftIO $ withResponse req manager handler
+instance Cas.MonadClient HttpClientIO where
+  liftClient cl = do
+    env <- ask
+    liftIO $ runClient (asks (.casClient) env) cl
+  localState f = local (casClientLens %~ f)
 
-instance MonadIO m => MonadZAuth (AppT m) where
-  liftZAuth za = view zauthEnv >>= \e -> runZAuth e za
+instance MonadMonitor HttpClientIO where
+  doIO = liftIO
 
-instance MonadIO m => MonadZAuth (ExceptT err (AppT m)) where
-  liftZAuth = lift . liftZAuth
+wrapHttpClient ::
+  HttpClientIO a ->
+  AppT r a
+wrapHttpClient = wrapHttp
 
-instance (MonadThrow m, MonadCatch m, MonadIO m) => MonadClient (AppT m) where
-  liftClient m = view casClient >>= \c -> runClient c m
-  localState f = local (over casClient f)
+wrapHttpClientE :: ExceptT e HttpClientIO a -> ExceptT e (AppT r) a
+wrapHttpClientE = mapExceptT wrapHttpClient
 
-instance MonadIndexIO AppIO where
-  liftIndexIO m = view indexEnv >>= \e -> runIndexIO e m
+instance (MonadIO m) => MonadIndexIO (ReaderT Env m) where
+  liftIndexIO m = asks (.indexEnv) >>= \e -> runIndexIO e m
 
-instance (MonadIndexIO (AppT m), Monad m) => MonadIndexIO (ExceptT err (AppT m)) where
-  liftIndexIO m = view indexEnv >>= \e -> runIndexIO e m
+instance MonadIndexIO (AppT r) where
+  liftIndexIO m = do
+    AppT $ mapReaderT (embedToFinal @IO) $ liftIndexIO m
 
-instance Monad m => HasRequestId (AppT m) where
-  getRequestId = view requestId
+instance (MonadIndexIO (AppT r)) => MonadIndexIO (ExceptT err (AppT r)) where
+  liftIndexIO m = asks (.indexEnv) >>= \e -> runIndexIO e m
 
-instance MonadUnliftIO m => MonadUnliftIO (AppT m) where
-  withRunInIO inner =
-    AppT . ReaderT $ \r ->
-      withRunInIO $ \run ->
-        inner (run . flip runReaderT r . unAppT)
+instance HasRequestId (AppT r) where
+  getRequestId = asks (.requestId)
 
-runAppT :: Env -> AppT m a -> m a
-runAppT e (AppT ma) = runReaderT ma e
+-------------------------------------------------------------------------------
+-- Ad hoc interpreters
 
-runAppResourceT :: ResourceT AppIO a -> AppIO a
-runAppResourceT ma = do
-  e <- ask
-  liftIO . runResourceT $ transResourceT (runAppT e) ma
+-- | similarly to `wrapClient`, this function serves as a crutch while Brig is being polysemised.
+adhocUserKeyStoreInterpreter :: (MonadIO m, MonadReader Env m) => Sem '[UserKeyStore, UserStore, Embed IO] a -> m a
+adhocUserKeyStoreInterpreter action = do
+  clientState <- asks (.casClient)
+  liftIO $ runM . interpretUserStoreCassandra clientState . interpretUserKeyStoreCassandra clientState $ action
 
-forkAppIO :: Maybe UserId -> AppIO a -> AppIO ()
-forkAppIO u ma = do
-  a <- ask
-  g <- view applog
-  r <- view requestId
-  let logErr e = Log.err g $ request r ~~ user u ~~ msg (show e)
-  void . liftIO . forkIO $
-    either logErr (const $ return ())
-      =<< runExceptT (syncIO $ runAppT a ma)
-  where
-    request = field "request" . unRequestId
-    user = maybe id (field "user" . toByteString)
-
-locationOf :: (MonadIO m, MonadReader Env m) => IP -> m (Maybe Location)
-locationOf ip =
-  view geoDb >>= \case
-    Just g -> do
-      database <- liftIO $ readIORef g
-      return $! do
-        loc <- GeoIp.geoLocation =<< hush (GeoIp.findGeoData database "en" ip)
-        return $ location (Latitude $ GeoIp.locationLatitude loc) (Longitude $ GeoIp.locationLongitude loc)
-    Nothing -> return Nothing
-
-readTurnList :: FilePath -> IO (Maybe (List1 TurnURI))
-readTurnList = Text.readFile >=> return . fn . mapMaybe fromByteString . fmap Text.encodeUtf8 . Text.lines
-  where
-    fn [] = Nothing
-    fn (x : xs) = Just (list1 x xs)
+-- | similarly to `wrapClient`, this function serves as a crutch while Brig is being polysemised.
+adhocSessionStoreInterpreter :: (MonadIO m, MonadReader Env m) => Sem '[SessionStore, Embed IO] a -> m a
+adhocSessionStoreInterpreter action = do
+  clientState <- asks (.casClient)
+  liftIO $ runM . interpretSessionStoreCassandra clientState $ action
 
 --------------------------------------------------------------------------------
 -- Federation
 
-viewFederationDomain :: MonadReader Env m => m Domain
-viewFederationDomain = view (settings . Opt.federationDomain)
+viewFederationDomain :: (MonadReader Env m) => m Domain
+viewFederationDomain = asks (.settings.federationDomain)
 
-qualifyLocal :: MonadReader Env m => a -> m (Local a)
+-- FUTUREWORK: rename to 'qualifyLocalMtl'
+qualifyLocal :: (MonadReader Env m) => a -> m (Local a)
 qualifyLocal a = toLocalUnsafe <$> viewFederationDomain <*> pure a
+
+-- FUTUREWORK: rename to 'qualifyLocalPoly'
+qualifyLocal' :: ((Member (Input (Local ()))) r) => a -> Sem r (Local a)
+qualifyLocal' a = flip toLocalUnsafe a . tDomain <$> input
+
+-- | Convert a qualified value into a local one. Throw if the value is not actually local.
+ensureLocal :: Qualified a -> AppT r (Local a)
+ensureLocal x = do
+  loc <- qualifyLocal ()
+  foldQualified loc pure (\_ -> throwM federationNotImplemented) x

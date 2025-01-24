@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,28 +23,36 @@ module Brig.API.Connection.Remote
   )
 where
 
-import Brig.API.Connection.Util (ConnectionM, checkLimit)
+import Brig.API.Connection.Util
 import Brig.API.Types (ConnectionError (..))
 import Brig.App
-import qualified Brig.Data.Connection as Data
-import Brig.Federation.Client (sendConnectionAction)
-import qualified Brig.IO.Intra as Intra
-import Brig.Types
-import Brig.Types.User.Event
+import Brig.Data.Connection qualified as Data
+import Brig.Data.User qualified as Data
+import Brig.Federation.Client as Federation
+import Brig.IO.Intra qualified as Intra
+import Brig.Options
 import Control.Comonad
 import Control.Error.Util ((??))
-import Control.Monad.Trans.Except (runExceptT, throwE)
+import Control.Monad.Trans.Except
 import Data.Id as Id
 import Data.Qualified
-import Galley.Types.Conversations.Intra (Actor (..), DesiredMembership (..), UpsertOne2OneConversationRequest (..), UpsertOne2OneConversationResponse (uuorConvId))
+import Galley.Types.Conversations.One2One (one2OneConvId)
 import Imports
 import Network.Wai.Utilities.Error
-import Wire.API.Connection (relationWithHistory)
+import Polysemy
+import Wire.API.Connection
 import Wire.API.Federation.API.Brig
   ( NewConnectionResponse (..),
     RemoteConnectionAction (..),
   )
+import Wire.API.Routes.Internal.Galley.ConversationsIntra
 import Wire.API.Routes.Public.Util (ResponseForExistedCreated (..))
+import Wire.API.User
+import Wire.API.UserEvent
+import Wire.FederationConfigStore
+import Wire.GalleyAPIAccess
+import Wire.NotificationSubsystem
+import Wire.UserStore
 
 data LocalConnectionAction
   = LocalConnect
@@ -100,39 +108,41 @@ transition (RCA RemoteRescind) Pending = Just Cancelled
 transition (RCA RemoteRescind) Accepted = Just Sent
 transition (RCA RemoteRescind) _ = Nothing
 
--- When user A has made a request -> Only user A's membership in conv is affected -> User A wants to be in one2one conv with B, or User A doesn't want to be in one2one conv with B
+-- When user A has made a request -> Only user A's membership in conv is
+-- affected -> User A wants to be in one2one conv with B, or User A doesn't want
+-- to be in one2one conv with B
 updateOne2OneConv ::
   Local UserId ->
   Maybe ConnId ->
   Remote UserId ->
-  Maybe (Qualified ConvId) ->
-  Relation ->
+  Qualified ConvId ->
+  DesiredMembership ->
   Actor ->
-  AppIO (Qualified ConvId)
-updateOne2OneConv lUsr _mbConn remoteUser mbConvId rel actor = do
+  (AppT r) ()
+updateOne2OneConv lUsr _mbConn remoteUser convId desiredMem actor = do
   let request =
         UpsertOne2OneConversationRequest
           { uooLocalUser = lUsr,
             uooRemoteUser = remoteUser,
             uooActor = actor,
-            uooActorDesiredMembership = desiredMembership actor rel,
-            uooConvId = mbConvId
+            uooActorDesiredMembership = desiredMem,
+            uooConvId = convId
           }
-  uuorConvId <$> Intra.upsertOne2OneConversation request
-  where
-    desiredMembership :: Actor -> Relation -> DesiredMembership
-    desiredMembership a r =
-      let isIncluded =
-            a
-              `elem` case r of
-                Accepted -> [LocalActor, RemoteActor]
-                Blocked -> []
-                Pending -> [RemoteActor]
-                Ignored -> [RemoteActor]
-                Sent -> [LocalActor]
-                Cancelled -> []
-                MissingLegalholdConsent -> []
-       in if isIncluded then Included else Excluded
+  void $ wrapHttp (Intra.upsertOne2OneConversation request)
+
+desiredMembership :: Actor -> Relation -> DesiredMembership
+desiredMembership a r =
+  let isIncluded =
+        a
+          `elem` case r of
+            Accepted -> [LocalActor, RemoteActor]
+            Blocked -> []
+            Pending -> [RemoteActor]
+            Ignored -> [RemoteActor]
+            Sent -> [LocalActor]
+            Cancelled -> []
+            MissingLegalholdConsent -> []
+   in if isIncluded then Included else Excluded
 
 -- | Perform a state transition on a connection, handle conversation updates and
 -- push events.
@@ -142,66 +152,102 @@ updateOne2OneConv lUsr _mbConn remoteUser mbConvId rel actor = do
 --
 -- Returns the connection, and whether it was updated or not.
 transitionTo ::
+  (Member GalleyAPIAccess r, Member NotificationSubsystem r) =>
   Local UserId ->
   Maybe ConnId ->
   Remote UserId ->
   Maybe UserConnection ->
   Maybe Relation ->
   Actor ->
-  ConnectionM (ResponseForExistedCreated UserConnection, Bool)
+  (ConnectionM r) (ResponseForExistedCreated UserConnection, Bool)
 transitionTo self _ _ Nothing Nothing _ =
   -- This can only happen if someone tries to ignore as a first action on a
   -- connection. This shouldn't be possible.
   throwE (InvalidTransition (tUnqualified self))
 transitionTo self mzcon other Nothing (Just rel) actor = lift $ do
-  -- update 1-1 connection
-  qcnv <- updateOne2OneConv self mzcon other Nothing rel actor
+  -- Create 1-1 proteus conversation.
+  --
+  -- We do nothing here for MLS as haveing no pre-existing connection implies
+  -- there was no conversation. Creating an MLS converstaion is special due to
+  -- key packages, etc. so the clients have to make another call for this.
+  let proteusConv = one2OneConvId BaseProtocolProteusTag (tUntagged self) (tUntagged other)
+  updateOne2OneConv self mzcon other proteusConv (desiredMembership actor rel) actor
 
   -- create connection
   connection <-
-    Data.insertConnection
-      self
-      (qUntagged other)
-      (relationWithHistory rel)
-      qcnv
+    wrapClient $
+      Data.insertConnection
+        self
+        (tUntagged other)
+        (relationWithHistory rel)
+        proteusConv
 
   -- send event
   pushEvent self mzcon connection
   pure (Created connection, True)
 transitionTo _self _zcon _other (Just connection) Nothing _actor = pure (Existed connection, False)
-transitionTo self mzcon other (Just connection) (Just rel) actor = lift $ do
+transitionTo self mzcon other (Just connection) (Just rel) actor = do
   -- update 1-1 conversation
-  void $ updateOne2OneConv self Nothing other (ucConvId connection) rel actor
+  let proteusConvId =
+        fromMaybe
+          (one2OneConvId BaseProtocolProteusTag (tUntagged self) (tUntagged other))
+          $ ucConvId connection
+      desiredMem = desiredMembership actor rel
+  lift $ updateOne2OneConv self Nothing other proteusConvId desiredMem actor
+  mlsEnabled <- asks (.settings.enableMLS)
+  when (fromMaybe False mlsEnabled) $ do
+    let mlsConvId = one2OneConvId BaseProtocolMLSTag (tUntagged self) (tUntagged other)
+    isEstablished <- lift . liftSem $ isMLSOne2OneEstablished self (tUntagged other)
+    lift
+      . when
+        ( isEstablished == Established
+            || (isEstablished == NotAMember && ucStatus connection == Blocked && rel == Accepted)
+        )
+      $ updateOne2OneConv self Nothing other mlsConvId desiredMem actor
 
   -- update connection
-  connection' <- Data.updateConnection connection (relationWithHistory rel)
+  connection' <- lift $ wrapClient $ Data.updateConnection connection (relationWithHistory rel)
 
   -- send event
-  pushEvent self mzcon connection'
+  lift $ pushEvent self mzcon connection'
   pure (Existed connection', True)
 
 -- | Send an event to the local user when the state of a connection changes.
-pushEvent :: Local UserId -> Maybe ConnId -> UserConnection -> AppIO ()
+pushEvent ::
+  (Member NotificationSubsystem r) =>
+  Local UserId ->
+  Maybe ConnId ->
+  UserConnection ->
+  AppT r ()
 pushEvent self mzcon connection = do
-  let event = ConnectionUpdated connection Nothing Nothing
-  Intra.onConnectionEvent (tUnqualified self) mzcon event
+  let event = ConnectionUpdated connection Nothing
+  liftSem $ Intra.onConnectionEvent (tUnqualified self) mzcon event
 
 performLocalAction ::
+  (Member GalleyAPIAccess r, Member NotificationSubsystem r) =>
   Local UserId ->
   Maybe ConnId ->
   Remote UserId ->
   Maybe UserConnection ->
   LocalConnectionAction ->
-  ConnectionM (ResponseForExistedCreated UserConnection, Bool)
+  (ConnectionM r) (ResponseForExistedCreated UserConnection, Bool)
 performLocalAction self mzcon other mconnection action = do
   let rel0 = maybe Cancelled ucStatus mconnection
   checkLimitForLocalAction self rel0 action
   mrel2 <- for (transition (LCA action) rel0) $ \rel1 -> do
     mreaction <- fmap join . for (remoteAction action) $ \ra -> do
-      response <- sendConnectionAction self other ra !>> ConnectFederationError
+      mSelfTeam <- lift . wrapClient . Data.lookupUserTeam . tUnqualified $ self
+      response <-
+        sendConnectionAction
+          self
+          (qualifyAs self <$> mSelfTeam)
+          other
+          ra
+          !>> ConnectFederationError
       case (response :: NewConnectionResponse) of
         NewConnectionResponseOk reaction -> pure reaction
-        NewConnectionResponseUserNotActivated -> throwE (InvalidUser (qUntagged other))
+        NewConnectionResponseNotFederating -> throwE ConnectTeamFederationError
+        NewConnectionResponseUserNotActivated -> throwE (InvalidUser (tUntagged other))
     pure $
       fromMaybe rel1 $ do
         reactionAction <- (mreaction :: Maybe RemoteConnectionAction)
@@ -234,11 +280,12 @@ performLocalAction self mzcon other mconnection action = do
 -- B connects & A reacts:  Accepted  Accepted
 -- @
 performRemoteAction ::
+  (Member GalleyAPIAccess r, Member NotificationSubsystem r) =>
   Local UserId ->
   Remote UserId ->
   Maybe UserConnection ->
   RemoteConnectionAction ->
-  AppIO (Maybe RemoteConnectionAction)
+  (AppT r) (Maybe RemoteConnectionAction)
 performRemoteAction self other mconnection action = do
   let rel0 = maybe Cancelled ucStatus mconnection
   let rel1 = transition (RCA action) rel0
@@ -251,22 +298,34 @@ performRemoteAction self other mconnection action = do
     reaction _ = Nothing
 
 createConnectionToRemoteUser ::
+  ( Member GalleyAPIAccess r,
+    Member FederationConfigStore r,
+    Member UserStore r,
+    Member NotificationSubsystem r
+  ) =>
   Local UserId ->
   ConnId ->
   Remote UserId ->
-  ConnectionM (ResponseForExistedCreated UserConnection)
+  ConnectionM r (ResponseForExistedCreated UserConnection)
 createConnectionToRemoteUser self zcon other = do
-  mconnection <- lift $ Data.lookupConnection self (qUntagged other)
+  ensureNotSameAndActivated self (tUntagged other)
+  ensureFederatesWith other
+  mconnection <- lift . wrapClient $ Data.lookupConnection self (tUntagged other)
   fst <$> performLocalAction self (Just zcon) other mconnection LocalConnect
 
 updateConnectionToRemoteUser ::
+  ( Member GalleyAPIAccess r,
+    Member NotificationSubsystem r,
+    Member FederationConfigStore r
+  ) =>
   Local UserId ->
   Remote UserId ->
   Relation ->
   Maybe ConnId ->
-  ConnectionM (Maybe UserConnection)
+  (ConnectionM r) (Maybe UserConnection)
 updateConnectionToRemoteUser self other rel1 zcon = do
-  mconnection <- lift $ Data.lookupConnection self (qUntagged other)
+  ensureFederatesWith other
+  mconnection <- lift . wrapClient $ Data.lookupConnection self (tUntagged other)
   action <-
     actionForTransition rel1
       ?? InvalidTransition (tUnqualified self)
@@ -281,7 +340,21 @@ updateConnectionToRemoteUser self other rel1 zcon = do
     actionForTransition Pending = Nothing
     actionForTransition MissingLegalholdConsent = Nothing
 
-checkLimitForLocalAction :: Local UserId -> Relation -> LocalConnectionAction -> ConnectionM ()
+checkLimitForLocalAction :: Local UserId -> Relation -> LocalConnectionAction -> (ConnectionM r) ()
 checkLimitForLocalAction u oldRel action =
   when (oldRel `notElem` [Accepted, Sent] && (action == LocalConnect)) $
     checkLimit u
+
+-- | Check if the local backend federates with the remote user's team. Throw an
+-- exception if it does not federate.
+ensureFederatesWith ::
+  (Member FederationConfigStore r) =>
+  Remote UserId ->
+  ConnectionM r ()
+ensureFederatesWith remote = do
+  profiles <-
+    withExceptT ConnectFederationError $
+      getUsersByIds (tDomain remote) [tUnqualified remote]
+  let rTeam = qualifyAs remote $ profileTeam =<< listToMaybe profiles
+  unlessM (lift . liftSem . backendFederatesWith $ rTeam) $
+    throwE ConnectTeamFederationError

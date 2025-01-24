@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,139 +17,54 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Galley.Cassandra.TeamFeatures (interpretTeamFeatureStoreToCassandra) where
+module Galley.Cassandra.TeamFeatures
+  ( interpretTeamFeatureStoreToCassandra,
+    getAllTeamFeaturesForServer,
+  )
+where
 
 import Cassandra
 import Data.Id
-import Data.Proxy
+import Galley.API.Teams.Features.Get
+import Galley.Cassandra.FeatureTH
+import Galley.Cassandra.GetAllTeamFeatures
 import Galley.Cassandra.Instances ()
+import Galley.Cassandra.MakeFeature
 import Galley.Cassandra.Store
-import Galley.Data.TeamFeatures
-import Galley.Effects.TeamFeatureStore (TeamFeatureStore (..))
+import Galley.Cassandra.Util
+import Galley.Effects.TeamFeatureStore qualified as TFS
 import Imports
 import Polysemy
 import Polysemy.Input
+import Polysemy.TinyLog
 import Wire.API.Team.Feature
 
-getFeatureStatusNoConfig ::
-  forall (a :: TeamFeatureName) m.
-  ( MonadClient m,
-    FeatureHasNoConfig a,
-    HasStatusCol a
-  ) =>
-  Proxy a ->
-  TeamId ->
-  m (Maybe (TeamFeatureStatus a))
-getFeatureStatusNoConfig _ tid = do
-  let q = query1 select (params LocalQuorum (Identity tid))
-  mStatusValue <- (>>= runIdentity) <$> retry x1 q
-  pure $ TeamFeatureStatusNoConfig <$> mStatusValue
-  where
-    select :: PrepQuery R (Identity TeamId) (Identity (Maybe TeamFeatureStatusValue))
-    select = fromString $ "select " <> statusCol @a <> " from team_features where team_id = ?"
-
-setFeatureStatusNoConfig ::
-  forall (a :: TeamFeatureName) m.
-  ( MonadClient m,
-    FeatureHasNoConfig a,
-    HasStatusCol a
-  ) =>
-  Proxy a ->
-  TeamId ->
-  TeamFeatureStatus a ->
-  m (TeamFeatureStatus a)
-setFeatureStatusNoConfig _ tid status = do
-  let flag = tfwoStatus status
-  retry x5 $ write insert (params LocalQuorum (tid, flag))
-  pure status
-  where
-    insert :: PrepQuery W (TeamId, TeamFeatureStatusValue) ()
-    insert = fromString $ "insert into team_features (team_id, " <> statusCol @a <> ") values (?, ?)"
-
-getApplockFeatureStatus ::
-  forall m.
-  (MonadClient m) =>
-  TeamId ->
-  m (Maybe (TeamFeatureStatus 'TeamFeatureAppLock))
-getApplockFeatureStatus tid = do
-  let q = query1 select (params LocalQuorum (Identity tid))
-  mTuple <- retry x1 q
-  pure $
-    mTuple >>= \(mbStatusValue, mbEnforce, mbTimeout) ->
-      TeamFeatureStatusWithConfig <$> mbStatusValue <*> (TeamFeatureAppLockConfig <$> mbEnforce <*> mbTimeout)
-  where
-    select :: PrepQuery R (Identity TeamId) (Maybe TeamFeatureStatusValue, Maybe EnforceAppLock, Maybe Int32)
-    select =
-      fromString $
-        "select " <> statusCol @'TeamFeatureAppLock <> ", app_lock_enforce, app_lock_inactivity_timeout_secs "
-          <> "from team_features where team_id = ?"
-
-setApplockFeatureStatus ::
-  (MonadClient m) =>
-  TeamId ->
-  TeamFeatureStatus 'TeamFeatureAppLock ->
-  m (TeamFeatureStatus 'TeamFeatureAppLock)
-setApplockFeatureStatus tid status = do
-  let statusValue = tfwcStatus status
-      enforce = applockEnforceAppLock . tfwcConfig $ status
-      timeout = applockInactivityTimeoutSecs . tfwcConfig $ status
-  retry x5 $ write insert (params LocalQuorum (tid, statusValue, enforce, timeout))
-  pure status
-  where
-    insert :: PrepQuery W (TeamId, TeamFeatureStatusValue, EnforceAppLock, Int32) ()
-    insert =
-      fromString $
-        "insert into team_features (team_id, "
-          <> statusCol @'TeamFeatureAppLock
-          <> ", app_lock_enforce, app_lock_inactivity_timeout_secs) values (?, ?, ?, ?)"
-
-getSelfDeletingMessagesStatus ::
-  forall m.
-  (MonadClient m) =>
-  TeamId ->
-  m (Maybe (TeamFeatureStatus 'TeamFeatureSelfDeletingMessages))
-getSelfDeletingMessagesStatus tid = do
-  let q = query1 select (params LocalQuorum (Identity tid))
-  mTuple <- retry x1 q
-  pure $
-    mTuple >>= \(mbStatusValue, mbTimeout) ->
-      TeamFeatureStatusWithConfig <$> mbStatusValue <*> (TeamFeatureSelfDeletingMessagesConfig <$> mbTimeout)
-  where
-    select :: PrepQuery R (Identity TeamId) (Maybe TeamFeatureStatusValue, Maybe Int32)
-    select =
-      fromString $
-        "select "
-          <> statusCol @'TeamFeatureSelfDeletingMessages
-          <> ", self_deleting_messages_ttl "
-          <> "from team_features where team_id = ?"
-
-setSelfDeletingMessagesStatus ::
-  (MonadClient m) =>
-  TeamId ->
-  TeamFeatureStatus 'TeamFeatureSelfDeletingMessages ->
-  m (TeamFeatureStatus 'TeamFeatureSelfDeletingMessages)
-setSelfDeletingMessagesStatus tid status = do
-  let statusValue = tfwcStatus status
-      timeout = sdmEnforcedTimeoutSeconds . tfwcConfig $ status
-  retry x5 $ write insert (params LocalQuorum (tid, statusValue, timeout))
-  pure status
-  where
-    insert :: PrepQuery W (TeamId, TeamFeatureStatusValue, Int32) ()
-    insert =
-      fromString $
-        "insert into team_features (team_id, "
-          <> statusCol @'TeamFeatureSelfDeletingMessages
-          <> ", self_deleting_messages_ttl) "
-          <> "values (?, ?, ?)"
-
 interpretTeamFeatureStoreToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
-  Sem (TeamFeatureStore ': r) a ->
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
+  Sem (TFS.TeamFeatureStore ': r) a ->
   Sem r a
 interpretTeamFeatureStoreToCassandra = interpret $ \case
-  GetFeatureStatusNoConfig' p tid -> embedClient $ getFeatureStatusNoConfig p tid
-  SetFeatureStatusNoConfig' p tid value -> embedClient $ setFeatureStatusNoConfig p tid value
-  GetApplockFeatureStatus tid -> embedClient $ getApplockFeatureStatus tid
-  SetApplockFeatureStatus tid value -> embedClient $ setApplockFeatureStatus tid value
-  GetSelfDeletingMessagesStatus tid -> embedClient $ getSelfDeletingMessagesStatus tid
-  SetSelfDeletingMessagesStatus tid value -> embedClient $ setSelfDeletingMessagesStatus tid value
+  TFS.GetDbFeature sing tid -> do
+    logEffect "TeamFeatureStore.GetFeatureConfig"
+    embedClient $ getDbFeature sing tid
+  TFS.SetDbFeature sing tid feat -> do
+    logEffect "TeamFeatureStore.SetFeatureConfig"
+    embedClient $ setDbFeature sing tid feat
+  TFS.SetFeatureLockStatus sing tid lock -> do
+    logEffect "TeamFeatureStore.SetFeatureLockStatus"
+    embedClient $ setFeatureLockStatus sing tid (Tagged lock)
+  TFS.GetAllDbFeatures tid -> do
+    logEffect "TeamFeatureStore.GetAllTeamFeatures"
+    embedClient $ getAllDbFeatures tid
+
+getDbFeature :: (MonadClient m) => FeatureSingleton cfg -> TeamId -> m (DbFeature cfg)
+getDbFeature = $(featureCases [|fetchFeature|])
+
+setDbFeature :: (MonadClient m) => FeatureSingleton cfg -> TeamId -> LockableFeature cfg -> m ()
+setDbFeature = $(featureCases [|storeFeature|])
+
+setFeatureLockStatus :: (MonadClient m) => FeatureSingleton cfg -> TeamId -> Tagged cfg LockStatus -> m ()
+setFeatureLockStatus = $(featureCases [|storeFeatureLockStatus|])

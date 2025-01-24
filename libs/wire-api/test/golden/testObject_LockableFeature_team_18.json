@@ -1,0 +1,10 @@
+{
+    "config": {
+        "crlProxy": "https://example.com",
+        "useProxyOnMobile": false,
+        "verificationExpiration": 86400
+    },
+    "lockStatus": "locked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

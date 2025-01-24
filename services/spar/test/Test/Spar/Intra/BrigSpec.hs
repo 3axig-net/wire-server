@@ -1,9 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,18 +20,19 @@
 module Test.Spar.Intra.BrigSpec where
 
 import Arbitrary ()
-import Brig.Types.User (UserSSOId (UserSSOId))
-import Control.Lens ((^.))
-import Data.String.Conversions (ST, cs)
+import Data.String.Conversions
+import Data.These
+import Data.These.Combinators
 import Imports
 import SAML2.WebSSO as SAML
 import Spar.Intra.BrigApp
 import Test.Hspec
 import Test.QuickCheck
 import URI.ByteString (URI, laxURIParserOptions, parseURI)
+import Wire.API.User.Identity (UserSSOId (UserSSOId))
 import Wire.API.User.Scim
 
-mkuri :: ST -> URI
+mkuri :: Text -> URI
 mkuri = either (error . show) id . parseURI laxURIParserOptions . cs
 
 spec :: Spec
@@ -43,41 +43,33 @@ spec = do
     -- remove them.
 
     it "example" $ do
-      let have =
-            UrefOnly $
+      let veid =
+            ValidScimId "V" . That $
               UserRef
                 (Issuer $ mkuri "http://wire.com/")
                 ( either (error . show) id $
                     mkNameID (mkUNameIDTransient "V") (Just "kati") (Just "rolli") (Just "jaan")
                 )
-          want = UserSSOId (SAML.UserRef iss nam)
+          ssoId = UserSSOId (SAML.UserRef iss nam)
           iss :: SAML.Issuer = fromRight undefined $ SAML.decodeElem "<Issuer xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:samla=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlm=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\">http://wire.com/</Issuer>"
           nam :: SAML.NameID = fromRight undefined $ SAML.decodeElem "<NameID xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:samla=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlm=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:transient\" NameQualifier=\"kati\" SPNameQualifier=\"rolli\" SPProvidedID=\"jaan\" xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\">V</NameID>"
-      veidToUserSSOId have `shouldBe` want
-      veidFromUserSSOId want `shouldBe` Right have
+      veidToUserSSOId veid `shouldBe` ssoId
+      veidFromUserSSOId ssoId Nothing `shouldBe` Right veid
+
     it "another example" $ do
-      let have =
-            UrefOnly $
+      let veid =
+            ValidScimId "PWkS" . That $
               UserRef
                 (Issuer $ mkuri "http://wire.com/")
                 ( either (error . show) id $
                     mkNameID (mkUNameIDPersistent "PWkS") (Just "hendrik") Nothing (Just "marye")
                 )
-          want = UserSSOId (SAML.UserRef iss nam)
+          ssoId = UserSSOId (SAML.UserRef iss nam)
           iss :: SAML.Issuer = fromRight undefined $ SAML.decodeElem "<Issuer xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:samla=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlm=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\">http://wire.com/</Issuer>"
           nam :: SAML.NameID = fromRight undefined $ SAML.decodeElem "<NameID xmlns:samlp=\"urn:oasis:names:tc:SAML:2.0:protocol\" xmlns:samla=\"urn:oasis:names:tc:SAML:2.0:assertion\" xmlns:samlm=\"urn:oasis:names:tc:SAML:2.0:metadata\" xmlns:ds=\"http://www.w3.org/2000/09/xmldsig#\" Format=\"urn:oasis:names:tc:SAML:2.0:nameid-format:persistent\" NameQualifier=\"hendrik\" SPProvidedID=\"marye\" xmlns=\"urn:oasis:names:tc:SAML:2.0:assertion\">PWkS</NameID>"
-
-      veidToUserSSOId have `shouldBe` want
-      veidFromUserSSOId want `shouldBe` Right have
+      veidToUserSSOId veid `shouldBe` ssoId
+      veidFromUserSSOId ssoId Nothing `shouldBe` Right veid
 
     it "roundtrips" . property $
-      \(x :: ValidExternalId) -> (veidFromUserSSOId @(Either String) . veidToUserSSOId) x === Right x
-
-instance Arbitrary ValidExternalId where
-  arbitrary = do
-    muref <- arbitrary
-    case muref of
-      Just uref -> case emailFromSAMLNameID $ uref ^. SAML.uidSubject of
-        Just email -> pure $ EmailAndUref email uref
-        Nothing -> pure $ UrefOnly uref
-      Nothing -> EmailOnly <$> arbitrary
+      \(ValidScimIdNoNameIDQualifiers x) ->
+        veidFromUserSSOId @(Either String) (veidToUserSSOId x) (justHere x.validScimIdAuthInfo) === Right x

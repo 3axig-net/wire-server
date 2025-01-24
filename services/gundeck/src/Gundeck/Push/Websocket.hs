@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -28,50 +28,50 @@ import Bilge.Retry (rpcHandlers)
 import Control.Arrow ((&&&))
 import Control.Exception (ErrorCall (ErrorCall))
 import Control.Lens (view, (%~), (^.), _2)
-import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow, catch, throwM, try)
+import Control.Monad.Catch (MonadMask, MonadThrow, catch, throwM, try)
 import Control.Retry
 import Data.Aeson (eitherDecode, encode)
 import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy as L
+import Data.ByteString.Lazy qualified as L
 import Data.Id
 import Data.List1
-import qualified Data.Map as Map
-import qualified Data.Metrics as Metrics
+import Data.Map qualified as Map
 import Data.Misc (Milliseconds (..))
-import qualified Data.Set as Set
+import Data.Set qualified as Set
 import Data.Time.Clock.POSIX
 import Gundeck.Monad
-import qualified Gundeck.Presence.Data as Presence
-import Gundeck.Types.BulkPush
-import Gundeck.Types.Notification
-import Gundeck.Types.Presence
+import Gundeck.Presence.Data qualified as Presence
 import Gundeck.Util
 import Imports
 import Network.HTTP.Client (HttpExceptionContent (..))
-import qualified Network.HTTP.Client.Internal as Http
+import Network.HTTP.Client.Internal qualified as Http
 import Network.HTTP.Types (StdMethod (POST), status200, status410)
-import qualified Network.URI as URI
+import Network.URI qualified as URI
+import Prometheus qualified as Prom
 import System.Logger.Class (val, (+++), (~~))
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 import UnliftIO (handleAny, mapConcurrently)
+import Wire.API.Internal.BulkPush
+import Wire.API.Internal.Notification
+import Wire.API.Presence
 
 class (Monad m, MonadThrow m, Log.MonadLogger m) => MonadBulkPush m where
   mbpBulkSend :: URI -> BulkPushRequest -> m (URI, Either SomeException BulkPushResponse)
   mbpDeleteAllPresences :: [Presence] -> m ()
   mbpPosixTime :: m Milliseconds
-  mbpMapConcurrently :: Traversable t => (a -> m b) -> t a -> m (t b)
+  mbpMapConcurrently :: (Traversable t) => (a -> m b) -> t a -> m (t b)
   mbpMonitorBadCannons :: (URI, (SomeException, [Presence])) -> m ()
 
 instance MonadBulkPush Gundeck where
   mbpBulkSend = bulkSend
-  mbpDeleteAllPresences = Presence.deleteAll
+  mbpDeleteAllPresences = runWithAdditionalRedis . Presence.deleteAll
   mbpPosixTime = posixTime
   mbpMapConcurrently = mapConcurrently
   mbpMonitorBadCannons = monitorBadCannons
 
 -- | Send a 'Notification's to associated 'Presence's.  Send at most one request to each Cannon.
 -- Return the lists of 'Presence's successfully reached for each resp. 'Notification'.
-bulkPush :: forall m. MonadBulkPush m => [(Notification, [Presence])] -> m [(NotificationId, [Presence])]
+bulkPush :: forall m. (MonadBulkPush m) => [(Notification, [Presence])] -> m [(NotificationId, [Presence])]
 -- REFACTOR: make presences lists (and notification list) non-empty where applicable?  are there
 -- better types to express more of our semantics / invariants?  (what about duplicates in presence
 -- lists?)
@@ -101,16 +101,23 @@ bulkPush notifs = do
 
 -- | log all cannons with response status @/= 200@.
 monitorBadCannons ::
-  (MonadIO m, MonadReader Env m) =>
+  (Prom.MonadMonitor m) =>
   (uri, (error, [Presence])) ->
   m ()
-monitorBadCannons (_uri, (_err, prcs)) = do
-  view monitor
-    >>= Metrics.counterAdd
-      (fromIntegral $ length prcs)
-      (Metrics.path "push.ws.unreachable")
+monitorBadCannons (_uri, (_err, prcs)) =
+  void $ Prom.addCounter pushWsUnreachableCounter (fromIntegral $ length prcs)
 
-logBadCannons :: Log.MonadLogger m => (URI, (SomeException, [Presence])) -> m ()
+{-# NOINLINE pushWsUnreachableCounter #-}
+pushWsUnreachableCounter :: Prom.Counter
+pushWsUnreachableCounter =
+  Prom.unsafeRegister $
+    Prom.counter
+      Prom.Info
+        { Prom.metricName = "push_ws_unreachable",
+          Prom.metricHelp = "Number of times websocket pushes were not pushed due cannon being unreachable"
+        }
+
+logBadCannons :: (Log.MonadLogger m) => (URI, (SomeException, [Presence])) -> m ()
 logBadCannons (uri, (err, prcs)) = do
   forM_ prcs $ \prc ->
     Log.warn $
@@ -121,10 +128,10 @@ logBadCannons (uri, (err, prcs)) = do
         ~~ Log.field "http_exception" (intercalate " | " . lines . show $ err)
         ~~ Log.msg (val "WebSocket presence unreachable: ")
 
-logPrcsGone :: Log.MonadLogger m => Presence -> m ()
+logPrcsGone :: (Log.MonadLogger m) => Presence -> m ()
 logPrcsGone prc = Log.debug $ logPresence prc ~~ Log.msg (val "WebSocket presence gone")
 
-logSuccesses :: Log.MonadLogger m => (a, Presence) -> m ()
+logSuccesses :: (Log.MonadLogger m) => (a, Presence) -> m ()
 logSuccesses (_, prc) = Log.debug $ logPresence prc ~~ Log.msg (val "WebSocket push success")
 
 fanOut :: [(Notification, [Presence])] -> [(URI, BulkPushRequest)]
@@ -145,13 +152,11 @@ fanOut =
 
 bulkSend ::
   forall m.
-  ( MonadIO m,
-    MonadThrow m,
-    MonadCatch m,
-    MonadMask m,
+  ( MonadMask m,
     HasRequestId m,
     MonadHttp m,
-    MonadUnliftIO m
+    MonadUnliftIO m,
+    Log.MonadLogger m
   ) =>
   URI ->
   BulkPushRequest ->
@@ -160,25 +165,30 @@ bulkSend uri req = (uri,) <$> ((Right <$> bulkSend' uri req) `catch` (pure . Lef
 
 bulkSend' ::
   forall m.
-  ( MonadIO m,
-    MonadThrow m,
-    MonadCatch m,
+  ( MonadUnliftIO m,
     MonadMask m,
     HasRequestId m,
     MonadHttp m,
-    MonadUnliftIO m
+    Log.MonadLogger m
   ) =>
   URI ->
   BulkPushRequest ->
   m BulkPushResponse
-bulkSend' uri (encode -> jsbody) = do
+bulkSend' uri bulkPushRequest = do
+  forM_ (fromBulkPushRequest bulkPushRequest) $ \(notification, targets) ->
+    Log.debug $
+      Log.msg ("Bulk sending notification to Cannon." :: Text)
+        . Log.field "ntf_id" (show (ntfId notification))
+        . Log.field "user_ids" (show (map ptUserId targets))
+        . Log.field "conn_ids" (show (map ptConnId targets))
+
+  let jsbody = encode bulkPushRequest
   req <-
-    ( check
-        . method POST
-        . contentJson
-        . lbytes jsbody
-        . timeout 3000 -- ms
-      )
+    check
+      . method POST
+      . contentJson
+      . lbytes jsbody
+      . timeout 3000 -- ms
       <$> Http.setUri empty (fromURI uri)
   try (submit req) >>= \case
     Left e -> throwM (e :: SomeException)
@@ -192,7 +202,7 @@ bulkSend' uri (encode -> jsbody) = do
               let ex = StatusCodeException (rs {responseBody = ()}) mempty
                in throwM $ HttpExceptionRequest rq ex
         }
-    decodeBulkResp :: MonadThrow m => Maybe L.ByteString -> m BulkPushResponse
+    decodeBulkResp :: Maybe L.ByteString -> m BulkPushResponse
     decodeBulkResp Nothing = throwM $ ErrorCall "missing response body from cannon"
     decodeBulkResp (Just lbs) = either err pure $ eitherDecode lbs
       where
@@ -246,7 +256,7 @@ flowBack rawresps = FlowBack broken gone delivered
     lefts' ((_, Right _) : xs) = lefts' xs
 
 {-# INLINE mkPresencesByCannon #-}
-mkPresencesByCannon :: MonadThrow m => [Presence] -> URI -> m [Presence]
+mkPresencesByCannon :: (MonadThrow m) => [Presence] -> URI -> m [Presence]
 mkPresencesByCannon prcs uri = maybe (throwM err) pure $ Map.lookup uri mp
   where
     err = ErrorCall "internal error in Gundeck: invalid URL in bulkpush result"
@@ -259,7 +269,7 @@ mkPresencesByCannon prcs uri = maybe (throwM err) pure $ Map.lookup uri mp
     go prc (Just prcs') = Just $ prc : prcs'
 
 {-# INLINE mkPresenceByPushTarget #-}
-mkPresenceByPushTarget :: MonadThrow m => [Presence] -> PushTarget -> m Presence
+mkPresenceByPushTarget :: (MonadThrow m) => [Presence] -> PushTarget -> m Presence
 mkPresenceByPushTarget prcs ptarget = maybe (throwM err) pure $ Map.lookup ptarget mp
   where
     err = ErrorCall "internal error in Cannon: invalid PushTarget in bulkpush response"
@@ -273,7 +283,7 @@ bulkresource = URI . (\x -> x {URI.uriPath = "/i/bulkpush"}) . fromURI . resourc
 -- TODO: a Map-based implementation would be faster for sufficiently large inputs.  do we want to
 -- take the time and benchmark the difference?  move it to types-common?
 {-# INLINE groupAssoc #-}
-groupAssoc :: (Eq a, Ord a) => [(a, b)] -> [(a, [b])]
+groupAssoc :: (Ord a) => [(a, b)] -> [(a, [b])]
 groupAssoc = groupAssoc' compare
 
 -- TODO: Also should we give 'Notification' an 'Ord' instance?
@@ -305,8 +315,8 @@ push ::
 push notif (toList -> tgts) originUser originConn conns = do
   pp <- handleAny noPresences listPresences
   (ok, gone) <- foldM onResult ([], []) =<< send notif pp
-  Presence.deleteAll gone
-  return ok
+  runWithAdditionalRedis $ Presence.deleteAll gone
+  pure ok
   where
     listPresences =
       excludeOrigin
@@ -314,12 +324,12 @@ push notif (toList -> tgts) originUser originConn conns = do
         . concat
         . filterByClient
         . zip tgts
-        <$> Presence.listAll (view targetUser <$> tgts)
+        <$> runWithDefaultRedis (Presence.listAll (view targetUser <$> tgts))
     noPresences exn = do
       Log.err $
         Log.field "error" (show exn)
           ~~ Log.msg (val "Failed to get presences.")
-      return []
+      pure []
     filterByClient = map $ \(tgt, ps) ->
       let cs = tgt ^. targetClients
        in if null cs
@@ -335,20 +345,20 @@ push notif (toList -> tgts) originUser originConn conns = do
        in filter (\p -> neqUser p || neqConn p)
     onResult (ok, gone) (PushSuccess p) = do
       Log.debug $ logPresence p ~~ Log.msg (val "WebSocket push success")
-      return (p : ok, gone)
+      pure (p : ok, gone)
     onResult (ok, gone) (PushGone p) = do
       Log.debug $ logPresence p ~~ Log.msg (val "WebSocket presence gone")
-      return (ok, p : gone)
+      pure (ok, p : gone)
     onResult (ok, gone) (PushFailure p _) = do
-      view monitor >>= Metrics.counterIncr (Metrics.path "push.ws.unreachable")
+      Prom.incCounter pushWsUnreachableCounter
       Log.info $
         logPresence p
           ~~ Log.field "created_at" (ms $ createdAt p)
           ~~ Log.msg (val "WebSocket presence unreachable: " +++ toByteString (resource p))
       now <- posixTime
       if now - createdAt p > 10 * posixDay
-        then return (ok, p : gone)
-        else return (ok, gone)
+        then pure (ok, p : gone)
+        else pure (ok, gone)
     posixDay = Ms (round (1000 * posixDayLength))
 
 -----------------------------------------------------------------------------
@@ -378,7 +388,7 @@ send n pp =
     check r =
       r
         { Http.checkResponse = \rq rs ->
-            when (responseStatus rs `notElem` [status200, status410]) $
+            unless (responseStatus rs `elem` [status200, status410]) $
               let ex = StatusCodeException (rs {responseBody = ()}) mempty
                in throwM $ HttpExceptionRequest rq ex
         }
@@ -388,5 +398,5 @@ send n pp =
 
 logPresence :: Presence -> Log.Msg -> Log.Msg
 logPresence p =
-  Log.field "user" (toByteString (userId p))
-    ~~ Log.field "zconn" (toByteString (connId p))
+  Log.field "user_id" (toByteString (userId p))
+    ~~ Log.field "conn_id" (toByteString (connId p))

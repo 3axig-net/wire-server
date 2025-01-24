@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,62 +17,112 @@
 
 module Cannon.Run
   ( run,
+    CombinedAPI,
   )
 where
 
 import Bilge (ManagerSettings (..), defaultManagerSettings, newManager)
-import Cannon.API (sitemap)
+import Cannon.API.Internal
+import Cannon.API.Public
 import Cannon.App (maxPingInterval)
-import qualified Cannon.Dict as D
+import Cannon.Dict qualified as D
 import Cannon.Options
-import Cannon.Types (Cannon, applog, clients, mkEnv, monitor, runCannon, runCannon')
-import Cannon.WS hiding (env)
-import qualified Control.Concurrent.Async as Async
+import Cannon.RabbitMq
+import Cannon.Types hiding (Env)
+import Cannon.WS hiding (drainOpts, env)
+import Cassandra.Util (defInitCassandra)
+import Control.Concurrent
+import Control.Concurrent.Async qualified as Async
+import Control.Exception qualified as E
 import Control.Exception.Safe (catchAny)
 import Control.Lens ((^.))
-import Control.Monad.Catch (MonadCatch, finally)
-import Data.Metrics.Middleware (gaugeSet, path)
-import qualified Data.Metrics.Middleware as Middleware
-import Data.Metrics.Middleware.Prometheus (waiPrometheusMiddleware)
+import Control.Monad.Catch (MonadCatch)
+import Control.Monad.Codensity
+import Data.Metrics.Servant
+import Data.Proxy
 import Data.Text (pack, strip)
 import Data.Text.Encoding (encodeUtf8)
-import Imports hiding (head)
-import qualified Network.Wai as Wai
+import Data.Typeable
+import Imports hiding (head, threadDelay)
+import Network.Wai qualified as Wai
 import Network.Wai.Handler.Warp hiding (run)
-import qualified Network.Wai.Middleware.Gzip as Gzip
+import Network.Wai.Middleware.Gzip qualified as Gzip
 import Network.Wai.Utilities.Server
-import qualified System.IO.Strict as Strict
-import qualified System.Logger.Class as LC
-import qualified System.Logger.Extended as L
+import OpenTelemetry.Instrumentation.Wai
+import OpenTelemetry.Trace hiding (Server)
+import OpenTelemetry.Trace qualified as Otel
+import Prometheus qualified as Prom
+import Servant
+import System.IO.Strict qualified as Strict
+import System.Logger.Class qualified as LC
+import System.Logger.Extended qualified as L
+import System.Posix.Signals
+import System.Posix.Signals qualified as Signals
 import System.Random.MWC (createSystemRandom)
+import Wire.API.Routes.Internal.Cannon qualified as Internal
+import Wire.API.Routes.Public.Cannon
+import Wire.API.Routes.Version
+import Wire.API.Routes.Version.Wai
+import Wire.OpenTelemetry (withTracer)
+
+type CombinedAPI = CannonAPI :<|> Internal.API
 
 run :: Opts -> IO ()
-run o = do
-  ext <- loadExternal
-  m <- Middleware.metrics
-  g <- L.mkLogger (o ^. logLevel) (o ^. logNetStrings) (o ^. logFormat)
-  e <-
-    mkEnv <$> pure m
-      <*> pure ext
-      <*> pure o
-      <*> pure g
-      <*> D.empty 128
-      <*> newManager defaultManagerSettings {managerConnCount = 128}
-      <*> createSystemRandom
-      <*> mkClock
-  refreshMetricsThread <- Async.async $ runCannon' e refreshMetrics
-  s <- newSettings $ Server (o ^. cannon . host) (o ^. cannon . port) (applog e) m (Just idleTimeout)
-  let rtree = compile sitemap
-      app r k = runCannon e (route rtree r k) r
-      middleware :: Wai.Middleware
+run o = lowerCodensity $ do
+  lift $ validateOpts o
+  tracer <- Codensity withTracer
+  when (o ^. drainOpts . millisecondsBetweenBatches == 0) $
+    error "drainOpts.millisecondsBetweenBatches must not be set to 0."
+  when (o ^. drainOpts . gracePeriodSeconds == 0) $
+    error "drainOpts.gracePeriodSeconds must not be set to 0."
+  ext <- lift loadExternal
+  g <-
+    Codensity $
+      E.bracket
+        (L.mkLogger (o ^. logLevel) (o ^. logNetStrings) (o ^. logFormat))
+        L.close
+  cassandra <- lift $ defInitCassandra (o ^. cassandraOpts) g
+
+  e <- do
+    d1 <- D.empty numDictSlices
+    d2 <- D.empty numDictSlices
+    man <- lift $ newManager defaultManagerSettings {managerConnCount = 128}
+    rnd <- lift createSystemRandom
+    clk <- lift mkClock
+    mkEnv ext o cassandra g d1 d2 man rnd clk (o ^. Cannon.Options.rabbitmq)
+
+  void $ Codensity $ Async.withAsync $ runCannon e refreshMetrics
+  s <- newSettings $ Server (o ^. cannon . host) (o ^. cannon . port) (applog e) (Just idleTimeout)
+
+  otelMiddleWare <- lift newOpenTelemetryWaiMiddleware
+  let middleware :: Wai.Middleware
       middleware =
-        waiPrometheusMiddleware sitemap
+        versionMiddleware (foldMap expandVersionExp (o ^. disabledAPIVersions))
+          . requestIdMiddleware g defaultRequestIdHeaderName
+          . servantPrometheusMiddleware (Proxy @CombinedAPI)
+          . otelMiddleWare
           . Gzip.gzip Gzip.def
-          . catchErrors g [Right m]
-      start = middleware app
-  runSettings s start `finally` do
-    Async.cancel refreshMetricsThread
-    L.close (applog e)
+          . catchErrors g defaultRequestIdHeaderName
+      app :: Application
+      app = middleware (serve (Proxy @CombinedAPI) server)
+      server :: Servant.Server CombinedAPI
+      server =
+        hoistServer (Proxy @CannonAPI) (runCannonToServant e) publicAPIServer
+          :<|> hoistServer (Proxy @Internal.API) (runCannonToServant e) internalServer
+  tid <- lift myThreadId
+
+  Codensity $ \k ->
+    inSpan tracer "cannon" defaultSpanArguments {kind = Otel.Server} (k ())
+  lift $
+    E.handle uncaughtExceptionHandler $ do
+      let handler = signalHandler (env e) (o ^. drainOpts) tid
+      void $ installHandler sigTERM handler Nothing
+      void $ installHandler sigINT handler Nothing
+      -- FUTUREWORK(@akshaymankar, @fisx): we may want to call `runSettingsWithShutdown` here,
+      -- but it's a sensitive change, and it looks like this is closing all the websockets at
+      -- the same time and then calling the drain script. I suspect this might be due to some
+      -- cleanup in wai.  this needs to be tested very carefully when touched.
+      runSettings s app
   where
     idleTimeout = fromIntegral $ maxPingInterval + 3
     -- Each cannon instance advertises its own location (ip or dns name) to gundeck.
@@ -80,22 +130,50 @@ run o = do
     loadExternal :: IO ByteString
     loadExternal = do
       let extFile = fromMaybe (error "One of externalHost or externalHostFile must be defined") (o ^. cannon . externalHostFile)
-      fromMaybe (readExternal extFile) (return . encodeUtf8 <$> o ^. cannon . externalHost)
+      maybe (readExternal extFile) (pure . encodeUtf8) (o ^. cannon . externalHost)
     readExternal :: FilePath -> IO ByteString
     readExternal f = encodeUtf8 . strip . pack <$> Strict.readFile f
 
+signalHandler :: Env -> DrainOpts -> ThreadId -> Signals.Handler
+signalHandler e opts mainThread = CatchOnce $ do
+  runWS e drain
+  drainRabbitMqPool e.pool opts
+  throwTo mainThread SignalledToExit
+
+-- | This is called when the main thread receives the exception generated by
+-- SIGTERM or SIGINT. When that happens, we can simply exit without doing
+-- anything. If we leave this exception uncaught, the default runtime behaviour
+-- is to print it to stdout, which contaminates the test output.
+uncaughtExceptionHandler :: SignalledToExit -> IO ()
+uncaughtExceptionHandler _ = pure ()
+
+data SignalledToExit = SignalledToExit
+  deriving (Typeable, Show)
+
+instance Exception SignalledToExit
+
 refreshMetrics :: Cannon ()
 refreshMetrics = do
-  m <- monitor
   c <- clients
   safeForever $ do
     s <- D.size c
-    gaugeSet (fromIntegral s) (path "net.websocket.clients") m
-    threadDelay 1000000
+    Prom.setGauge websocketClientsGauge (fromIntegral s)
+    -- gaugeSet (fromIntegral s) (path "") m
+    liftIO $ threadDelay 1000000
   where
     safeForever :: (MonadIO m, LC.MonadLogger m, MonadCatch m) => m () -> m ()
     safeForever action =
       forever $
         action `catchAny` \exc -> do
           LC.err $ "error" LC..= show exc LC.~~ LC.msg (LC.val "refreshMetrics failed")
-          threadDelay 60000000 -- pause to keep worst-case noise in logs manageable
+          liftIO $ threadDelay 60000000 -- pause to keep worst-case noise in logs manageable
+
+{-# NOINLINE websocketClientsGauge #-}
+websocketClientsGauge :: Prom.Gauge
+websocketClientsGauge =
+  Prom.unsafeRegister $
+    Prom.gauge
+      Prom.Info
+        { Prom.metricName = "net_websocket_clients",
+          Prom.metricHelp = "Number of connected websocket clients"
+        }

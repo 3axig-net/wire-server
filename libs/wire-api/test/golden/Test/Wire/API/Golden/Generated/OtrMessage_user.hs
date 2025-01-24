@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,17 +14,18 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.OtrMessage_user where
 
-import Data.Id (ClientId (ClientId, client))
+import Data.Id
 import Imports (Maybe (Just, Nothing))
 import Wire.API.Event.Conversation (OtrMessage (..))
 
 testObject_OtrMessage_user_1 :: OtrMessage
 testObject_OtrMessage_user_1 =
   OtrMessage
-    { otrSender = ClientId {client = "4"},
-      otrRecipient = ClientId {client = "0"},
+    { otrSender = ClientId 4,
+      otrRecipient = ClientId 0,
       otrCiphertext = "\1051967\1047896\1101213|",
       otrData = Nothing
     }
@@ -32,8 +33,8 @@ testObject_OtrMessage_user_1 =
 testObject_OtrMessage_user_2 :: OtrMessage
 testObject_OtrMessage_user_2 =
   OtrMessage
-    { otrSender = ClientId {client = "18"},
-      otrRecipient = ClientId {client = "a"},
+    { otrSender = ClientId 0x18,
+      otrRecipient = ClientId 0xa,
       otrCiphertext = "\11788t",
       otrData = Just "\ESC\NAKJj"
     }

@@ -1,0 +1,8 @@
+{
+    "config": {
+        "domains": []
+    },
+    "lockStatus": "locked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

@@ -8,7 +8,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,43 +26,34 @@
 -- | Given a servant API type, this module gives you a 'Paths' for 'withPathTemplate'.
 module Data.Metrics.Servant where
 
-import Data.Metrics.Middleware.Prometheus (normalizeWaiRequestRoute)
+import Data.ByteString.UTF8 qualified as UTF8
+import Data.Id
 import Data.Metrics.Types
-import qualified Data.Metrics.Types as Metrics
-import Data.Metrics.WaiRoute (treeToPaths)
+import Data.Metrics.Types qualified as Metrics
 import Data.Proxy
-import Data.String.Conversions
+import Data.Text.Encoding
+import Data.Text.Encoding.Error
 import Data.Tree
 import GHC.TypeLits
 import Imports
-import qualified Network.Wai as Wai
+import Network.Wai qualified as Wai
 import Network.Wai.Middleware.Prometheus
-import qualified Network.Wai.Middleware.Prometheus as Promth
-import Network.Wai.Routing (Routes, prepare)
+import Network.Wai.Middleware.Prometheus qualified as Promth
 import Servant.API
 import Servant.Multipart
 
 -- | This does not catch errors, so it must be called outside of 'WU.catchErrors'.
 servantPrometheusMiddleware :: forall proxy api. (RoutesToPaths api) => proxy api -> Wai.Middleware
-servantPrometheusMiddleware _ = Promth.prometheus conf . Promth.instrumentHandlerValue promthNormalize
+servantPrometheusMiddleware _ = Promth.prometheus conf . instrument promthNormalize
   where
     promthNormalize :: Wai.Request -> Text
     promthNormalize req = pathInfo
       where
-        mPathInfo = Metrics.treeLookup (routesToPaths @api) $ cs <$> Wai.pathInfo req
-        pathInfo = cs $ fromMaybe "N/A" mPathInfo
+        mPathInfo = Metrics.treeLookup (routesToPaths @api) $ encodeUtf8 <$> Wai.pathInfo req
+        pathInfo = decodeUtf8With lenientDecode $ fromMaybe defRequestId mPathInfo
 
-servantPlusWAIPrometheusMiddleware :: forall proxy api a m b. (RoutesToPaths api, Monad m) => Routes a m b -> proxy api -> Wai.Middleware
-servantPlusWAIPrometheusMiddleware routes _ = do
-  Promth.prometheus conf . instrument (normalizeWaiRequestRoute paths)
-  where
     -- See Note [Raw Response]
     instrument = Promth.instrumentHandlerValueWithFilter Promth.ignoreRawResponses
-
-    paths =
-      let Paths servantPaths = routesToPaths @api
-          Paths waiPaths = treeToPaths (prepare routes)
-       in Paths (meltTree (servantPaths <> waiPaths))
 
 conf :: PrometheusSettings
 conf =
@@ -72,7 +63,7 @@ conf =
       Promth.prometheusInstrumentApp = False
     }
 
-routesToPaths :: forall routes. RoutesToPaths routes => Paths
+routesToPaths :: forall routes. (RoutesToPaths routes) => Paths
 routesToPaths = Paths (meltTree (getRoutes @routes))
 
 class RoutesToPaths routes where
@@ -83,14 +74,14 @@ instance
   (KnownSymbol seg, RoutesToPaths segs) =>
   RoutesToPaths (seg :> segs)
   where
-  getRoutes = [Node (Right . cs $ symbolVal (Proxy @seg)) (getRoutes @segs)]
+  getRoutes = [Node (Right . UTF8.fromString $ symbolVal (Proxy @seg)) (getRoutes @segs)]
 
 -- <capture> :> routes
 instance
   (KnownSymbol capture, RoutesToPaths segs) =>
   RoutesToPaths (Capture' mods capture a :> segs)
   where
-  getRoutes = [Node (Left (cs (":" <> symbolVal (Proxy @capture)))) (getRoutes @segs)]
+  getRoutes = [Node (Left (UTF8.fromString (":" <> symbolVal (Proxy @capture)))) (getRoutes @segs)]
 
 instance
   (RoutesToPaths rest) =>
@@ -106,21 +97,30 @@ instance
 
 instance
   (RoutesToPaths rest) =>
+  RoutesToPaths (StreamBody' opts framing ct a :> rest)
+  where
+  getRoutes = getRoutes @rest
+
+instance
+  (RoutesToPaths rest) =>
   RoutesToPaths (Summary summary :> rest)
   where
   getRoutes = getRoutes @rest
 
 instance
-  RoutesToPaths rest =>
+  (RoutesToPaths rest) =>
   RoutesToPaths (QueryParam' mods name a :> rest)
   where
   getRoutes = getRoutes @rest
 
-instance RoutesToPaths rest => RoutesToPaths (MultipartForm tag a :> rest) where
+instance (RoutesToPaths rest) => RoutesToPaths (MultipartForm tag a :> rest) where
   getRoutes = getRoutes @rest
 
+instance (RoutesToPaths api) => RoutesToPaths (QueryFlag a :> api) where
+  getRoutes = getRoutes @api
+
 instance
-  RoutesToPaths rest =>
+  (RoutesToPaths rest) =>
   RoutesToPaths (Description desc :> rest)
   where
   getRoutes = getRoutes @rest
@@ -131,6 +131,9 @@ instance RoutesToPaths (Verb method status cts a) where
 instance RoutesToPaths (NoContentVerb method) where
   getRoutes = []
 
+instance RoutesToPaths (Stream method status framing ct a) where
+  getRoutes = []
+
 -- route :<|> routes
 instance
   ( RoutesToPaths route,
@@ -139,6 +142,9 @@ instance
   RoutesToPaths (route :<|> routes)
   where
   getRoutes = getRoutes @route <> getRoutes @routes
+
+instance RoutesToPaths EmptyAPI where
+  getRoutes = mempty
 
 instance RoutesToPaths Raw where
   getRoutes = []

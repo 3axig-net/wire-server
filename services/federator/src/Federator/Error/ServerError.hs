@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,11 +17,11 @@
 
 module Federator.Error.ServerError where
 
-import qualified Data.Text.Lazy as LText
+import Data.Text.Lazy qualified as LText
 import Federator.Error
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai.Utilities.Error qualified as Wai
 import Wire.API.Federation.Domain
 
 data ServerError
@@ -34,12 +34,13 @@ instance Exception ServerError
 
 instance AsWai ServerError where
   toWai e@InvalidRoute =
-    Wai.mkError HTTP.status403 "invalid-endpoint" (LText.fromStrict (waiErrorDescription e))
+    Wai.mkError HTTP.status403 "invalid-endpoint" (LText.fromStrict (serverErrorDescription e))
   toWai e@(UnknownComponent _) =
-    Wai.mkError HTTP.status403 "unknown-component" (LText.fromStrict (waiErrorDescription e))
+    Wai.mkError HTTP.status403 "unknown-component" (LText.fromStrict (serverErrorDescription e))
   toWai e@NoOriginDomain =
-    Wai.mkError HTTP.status403 "no-origin-domain" (LText.fromStrict (waiErrorDescription e))
+    Wai.mkError HTTP.status403 "no-origin-domain" (LText.fromStrict (serverErrorDescription e))
 
-  waiErrorDescription InvalidRoute = "The requested endpoint does not exist"
-  waiErrorDescription (UnknownComponent name) = "No such component: " <> name
-  waiErrorDescription NoOriginDomain = "No " <> originDomainHeaderName <> " header"
+serverErrorDescription :: ServerError -> Text
+serverErrorDescription InvalidRoute = "The requested endpoint does not exist"
+serverErrorDescription (UnknownComponent name) = "No such component: " <> name
+serverErrorDescription NoOriginDomain = "No " <> originDomainHeaderName <> " header"

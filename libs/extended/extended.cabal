@@ -1,54 +1,181 @@
 cabal-version: 1.12
+name:          extended
+version:       0.1.0
+synopsis:      Extended versions of common modules
+description:
+  .Extended versions of various libraries from Hackage. See
+  <https://jaspervdj.be/posts/2015-01-20-haskell-design-patterns-extended-modules.html>
+  for a description of this design pattern.
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 040115252374cb428a08ab286b9a4eb9492a407e9197009e7944f163dc1bfdcc
-
-name:           extended
-version:        0.1.0
-synopsis:       Extended versions of common modules
-description:    .Extended versions of various libraries from Hackage. See
-                https://jaspervdj.be/posts/2015-01-20-haskell-design-patterns-extended-modules.html
-                for a description of this design pattern.
-category:       Utilities
-stability:      experimental
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2018 Wire Swiss GmbH
-license:        AGPL-3
-license-file:   LICENSE
-build-type:     Simple
+category:      Utilities
+stability:     experimental
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2018 Wire Swiss GmbH
+license:       AGPL-3
+license-file:  LICENSE
+build-type:    Simple
 
 library
+  -- cabal-fmt: expand src
   exposed-modules:
-      Options.Applicative.Extended
-      Servant.API.Extended
-      System.Logger.Extended
-  other-modules:
-      Paths_extended
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    Data.Time.Clock.DiffTime
+    Network.AMQP.Extended
+    Network.RabbitMqAdmin
+    Servant.API.Extended
+    Servant.API.Extended.Endpath
+    Servant.API.Extended.RawM
+    System.Logger.Extended
+
+  other-modules:      Paths_extended
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    NumericUnderscores
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
       aeson
+    , amqp
     , base
     , bytestring
     , cassandra-util
     , containers
+    , crypton-connection
+    , crypton-x509-store
+    , data-default
     , errors
     , exceptions
-    , extra
+    , http-client
+    , http-client-tls
     , http-types
     , imports
     , metrics-wai
-    , optparse-applicative
+    , monad-control
+    , resourcet
+    , retry
     , servant
+    , servant-client
+    , servant-client-core
+    , servant-openapi3
     , servant-server
-    , servant-swagger
-    , string-conversions
+    , text
+    , time
     , tinylog
+    , tls
+    , transformers
+    , unliftio
     , wai
-  default-language: Haskell2010
+
+  default-language:   GHC2021
+
+test-suite extended-tests
+  type:               exitcode-stdio-1.0
+  main-is:            Spec.hs
+  other-modules:
+    Paths_extended
+    Test.System.Logger.ExtendedSpec
+
+  hs-source-dirs:     test
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -with-rtsopts=-N -Wredundant-constraints
+    -Wunused-packages
+
+  build-tool-depends: hspec-discover:hspec-discover
+  build-depends:
+      aeson
+    , base
+    , extended
+    , hspec
+    , imports
+    , string-conversions
+    , temporary
+
+  default-language:   GHC2021

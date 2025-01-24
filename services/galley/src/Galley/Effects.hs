@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,7 +23,6 @@ module Galley.Effects
     BotAccess,
     BrigAccess,
     FederatorAccess,
-    GundeckAccess,
     SparAccess,
 
     -- * External services
@@ -39,8 +38,11 @@ module Galley.Effects
     CustomBackendStore,
     LegalHoldStore,
     MemberStore,
+    ProposalStore,
     SearchVisibilityStore,
     ServiceStore,
+    SubConversationStore,
+    Random,
     TeamFeatureStore,
     TeamMemberStore,
     TeamNotificationStore,
@@ -51,19 +53,20 @@ module Galley.Effects
 
     -- * Other effects
     Queue,
-    WaiRoutes,
 
     -- * Polysemy re-exports
     Member,
     Members,
+
+    -- * Queueing effects
+    BackendNotificationQueueAccess,
   )
 where
 
 import Data.Id
 import Data.Qualified
 import Data.Time.Clock
-import Galley.API.Error
-import Galley.Cassandra.Paging
+import Galley.Effects.BackendNotificationQueueAccess
 import Galley.Effects.BotAccess
 import Galley.Effects.BrigAccess
 import Galley.Effects.ClientStore
@@ -73,63 +76,74 @@ import Galley.Effects.CustomBackendStore
 import Galley.Effects.ExternalAccess
 import Galley.Effects.FederatorAccess
 import Galley.Effects.FireAndForget
-import Galley.Effects.GundeckAccess
 import Galley.Effects.LegalHoldStore
 import Galley.Effects.ListItems
 import Galley.Effects.MemberStore
+import Galley.Effects.ProposalStore
 import Galley.Effects.Queue
 import Galley.Effects.SearchVisibilityStore
 import Galley.Effects.ServiceStore
 import Galley.Effects.SparAccess
+import Galley.Effects.SubConversationStore
 import Galley.Effects.TeamFeatureStore
 import Galley.Effects.TeamMemberStore
 import Galley.Effects.TeamNotificationStore
 import Galley.Effects.TeamStore
-import Galley.Effects.WaiRoutes
 import Galley.Env
 import Galley.Options
-import qualified Network.Wai.Utilities as Wai
+import Galley.Types.Teams
+import Imports
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
-import Polysemy.Internal
 import Polysemy.TinyLog
+import Wire.API.Error
+import Wire.API.Team.Feature
+import Wire.GundeckAPIAccess
+import Wire.NotificationSubsystem
+import Wire.Rpc
+import Wire.Sem.Paging.Cassandra
+import Wire.Sem.Random
 
-type NonErrorGalleyEffects1 =
+-- All the possible high-level effects.
+type GalleyEffects1 =
   '[ BrigAccess,
      SparAccess,
-     GundeckAccess,
+     NotificationSubsystem,
+     GundeckAPIAccess,
+     Rpc,
      ExternalAccess,
      FederatorAccess,
+     BackendNotificationQueueAccess,
      BotAccess,
      FireAndForget,
      ClientStore,
      CodeStore,
+     ProposalStore,
      ConversationStore,
+     SubConversationStore,
+     Random,
      CustomBackendStore,
+     TeamFeatureStore,
      LegalHoldStore,
      MemberStore,
      SearchVisibilityStore,
      ServiceStore,
-     TeamFeatureStore,
      TeamNotificationStore,
      TeamStore,
      TeamMemberStore InternalPaging,
+     TeamMemberStore CassandraPaging,
      ListItems CassandraPaging ConvId,
      ListItems CassandraPaging (Remote ConvId),
      ListItems LegacyPaging ConvId,
      ListItems LegacyPaging TeamId,
      ListItems InternalPaging TeamId,
+     Input AllTeamFeatures,
+     Input (Maybe [TeamId], FeatureDefaults LegalholdConfig),
      Input (Local ()),
      Input Opts,
-     WaiRoutes,
      Input UTCTime,
      Queue DeleteItem,
-     TinyLog
+     TinyLog,
+     Error DynError
    ]
-
--- All the possible high-level effects.
-type GalleyEffects1 =
-  Append
-    NonErrorGalleyEffects1
-    (Append AllErrorEffects '[Error Wai.Error])

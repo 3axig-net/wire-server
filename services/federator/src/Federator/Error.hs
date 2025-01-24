@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,19 +17,10 @@
 
 module Federator.Error
   ( AsWai (..),
-    errorResponse,
   )
 where
 
-import qualified Data.Aeson as A
-import Imports
-import Network.HTTP.Types.Header
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.Wai.Utilities.Error qualified as Wai
 
 class AsWai e where
   toWai :: e -> Wai.Error
-  waiErrorDescription :: e -> Text
-
-errorResponse :: [Header] -> Wai.Error -> Wai.Response
-errorResponse hdrs e = Wai.responseLBS (Wai.code e) hdrs (A.encode e)

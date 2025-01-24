@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,42 +16,32 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Gundeck.Presence
-  ( list,
-    listAll,
-    add,
-    remove,
+  ( listH,
+    listAllH,
+    addH,
+    removeH,
   )
 where
 
-import Data.ByteString.Conversion
+import Data.CommaSeparatedList
 import Data.Id
-import Data.Predicate
 import Gundeck.Monad
-import qualified Gundeck.Presence.Data as Data
-import Gundeck.Types
-import Gundeck.Util
+import Gundeck.Presence.Data qualified as Data
 import Imports
-import Network.HTTP.Types
-import Network.Wai (Request, Response)
-import Network.Wai.Utilities
+import Servant.API hiding (URI)
+import Wire.API.CannonId
+import Wire.API.Presence
 
-list :: UserId ::: JSON -> Gundeck Response
-list (uid ::: _) = setStatus status200 . json <$> Data.list uid
+listH :: UserId -> Gundeck [Presence]
+listH = runWithDefaultRedis . Data.list
 
-listAll :: List UserId ::: JSON -> Gundeck Response
-listAll (uids ::: _) =
-  setStatus status200 . json . concat
-    <$> Data.listAll (fromList uids)
+listAllH :: CommaSeparatedList UserId -> Gundeck [Presence]
+listAllH uids = concat <$> runWithDefaultRedis (Data.listAll (fromCommaSeparatedList uids))
 
-add :: Request ::: JSON -> Gundeck Response
-add (req ::: _) = do
-  p <- fromJsonBody (JsonRequest req)
+addH :: Presence -> Gundeck (Headers '[Header "Location" URI] NoContent)
+addH p = do
   Data.add p
-  return $
-    ( setStatus status201
-        . addHeader hLocation (toByteString' (resource p))
-    )
-      empty
+  pure (addHeader (resource p) NoContent)
 
-remove :: UserId ::: ConnId ::: CannonId -> Gundeck Response
-remove _ = return (empty & setStatus status204)
+removeH :: UserId -> ConnId -> CannonId -> Gundeck NoContent
+removeH _ _ _ = pure NoContent

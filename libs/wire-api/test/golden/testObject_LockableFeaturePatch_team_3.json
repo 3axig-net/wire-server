@@ -1,0 +1,9 @@
+{
+    "config": {
+        "enforceAppLock": true,
+        "inactivityTimeoutSecs": 111
+    },
+    "lockStatus": "locked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

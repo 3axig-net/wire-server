@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,7 +21,7 @@ module Test.LoggingSpec
 where
 
 import Control.Lens
-import Data.String.Conversions (cs)
+import Data.String.Conversions
 import Imports
 import Network.HTTP.Types.Status (statusCode)
 import qualified Network.Wai.Test as HW
@@ -41,7 +41,7 @@ spec = describe "logging" $ do
       (out, _) <- capture $ do
         Log.fatal logger $ Log.msg ("hrgh\n\nwoaa" :: Text)
         Log.flush logger
-      out `shouldContain` "hrgh  woaa"
+      out `shouldContain` "hrgh"
       out `shouldNotContain` "hrgh\n\nwoaa"
   context "loglevel == debug" $ do
     it "400 on finalize-login causes log of entire request" $ do

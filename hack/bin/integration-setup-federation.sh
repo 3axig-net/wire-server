@@ -5,11 +5,14 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOP_LEVEL="$DIR/../.."
 export NAMESPACE=${NAMESPACE:-test-integration}
+# Available $HELMFILE_ENV profiles: default, default-ssl, kind, kind-ssl
 HELMFILE_ENV=${HELMFILE_ENV:-default}
 CHARTS_DIR="${TOP_LEVEL}/.local/charts"
+HELM_PARALLELISM=${HELM_PARALLELISM:-1}
 
+# shellcheck disable=SC1091
 . "$DIR/helm_overrides.sh"
-${DIR}/integration-cleanup.sh
+"${DIR}"/integration-cleanup.sh
 
 # FUTUREWORK explore: have helmfile do the interpolation (and skip the "make charts" step) https://wearezeta.atlassian.net/browse/SQPIT-722
 #
@@ -19,27 +22,52 @@ ${DIR}/integration-cleanup.sh
 # script beforehand on all relevant charts to download the nested dependencies
 # (e.g. cassandra from underneath databases-ephemeral)
 echo "updating recursive dependencies ..."
-charts=(fake-aws databases-ephemeral wire-server nginx-ingress-controller nginx-ingress-services)
-for chart in "${charts[@]}"; do
-    "$DIR/update.sh" "$CHARTS_DIR/$chart"
-done
+charts=(fake-aws databases-ephemeral redis-cluster rabbitmq wire-server ingress-nginx-controller nginx-ingress-controller nginx-ingress-services)
+mkdir -p ~/.parallel && touch ~/.parallel/will-cite
+printf '%s\n' "${charts[@]}" | parallel -P "${HELM_PARALLELISM}" "$DIR/update.sh" "$CHARTS_DIR/{}"
 
-# FUTUREWORK: use helm functions instead, see https://wearezeta.atlassian.net/browse/SQPIT-723
-echo "Generating self-signed certificates..."
-
+KUBERNETES_VERSION_MAJOR="$(kubectl version -o json | jq -r .serverVersion.major)"
+KUBERNETES_VERSION_MINOR="$(kubectl version -o json | jq -r .serverVersion.minor)"
+KUBERNETES_VERSION_MINOR="${KUBERNETES_VERSION_MINOR//[!0-9]/}" # some clusters report minor versions as a string like '27+'. Strip any non-digit characters.
+export KUBERNETES_VERSION="$KUBERNETES_VERSION_MAJOR.$KUBERNETES_VERSION_MINOR"
+if (( KUBERNETES_VERSION_MAJOR > 1 || KUBERNETES_VERSION_MAJOR == 1 && KUBERNETES_VERSION_MINOR >= 23 )); then
+    export INGRESS_CHART="ingress-nginx-controller"
+else
+    export INGRESS_CHART="nginx-ingress-controller"
+fi
+echo "kubeVersion: $KUBERNETES_VERSION and ingress controller=$INGRESS_CHART"
 export NAMESPACE_1="$NAMESPACE"
-export FEDERATION_DOMAIN_BASE="$NAMESPACE_1.svc.cluster.local"
-export FEDERATION_DOMAIN_1="federation-test-helper.$FEDERATION_DOMAIN_BASE"
-"$DIR/selfsigned-kubernetes.sh" namespace1
+export FEDERATION_DOMAIN_BASE_1="$NAMESPACE_1.svc.cluster.local"
+export FEDERATION_DOMAIN_1="federation-test-helper.$FEDERATION_DOMAIN_BASE_1"
 
 export NAMESPACE_2="$NAMESPACE-fed2"
-export FEDERATION_DOMAIN_BASE="$NAMESPACE_2.svc.cluster.local"
-export FEDERATION_DOMAIN_2="federation-test-helper.$FEDERATION_DOMAIN_BASE"
-"$DIR/selfsigned-kubernetes.sh" namespace2
+export FEDERATION_DOMAIN_BASE_2="$NAMESPACE_2.svc.cluster.local"
+export FEDERATION_DOMAIN_2="federation-test-helper.$FEDERATION_DOMAIN_BASE_2"
+
+echo "Fetch federation-ca secret from cert-manager namespace"
+FEDERATION_CA_CERTIFICATE=$(kubectl -n cert-manager get secrets federation-ca -o json -o jsonpath="{.data['tls\.crt']}" | base64 -d)
+export FEDERATION_CA_CERTIFICATE
 
 echo "Installing charts..."
 
-helmfile --environment "$HELMFILE_ENV" --file "${TOP_LEVEL}/hack/helmfile.yaml" sync
+set +e
+# This exists because we need to run `helmfile` with `--skip-deps`, without that it doesn't work.
+helm repo add bedag https://bedag.github.io/helm-charts/
+helm repo add obeone https://charts.obeone.cloud
+
+helmfile --environment "$HELMFILE_ENV" --file "${TOP_LEVEL}/hack/helmfile.yaml" sync --skip-deps --concurrency 0
+EXIT_CODE=$?
+
+if (( EXIT_CODE > 0)); then
+    echo "!! Helm install failed. Attempting to get some more information ..."
+
+    kubectl -n "$NAMESPACE_1" get events | grep -v "Normal "
+    kubectl -n "$NAMESPACE_2" get events | grep -v "Normal "
+    "${DIR}/kubectl-get-debug-info.sh" "$NAMESPACE_1"
+    "${DIR}/kubectl-get-debug-info.sh" "$NAMESPACE_2"
+    exit $EXIT_CODE
+fi
+set -e
 
 # wait for fakeSNS to create resources. TODO, cleaner: make initiate-fake-aws-sns a post hook. See cassandra-migrations chart for an example.
 resourcesReady() {

@@ -1,0 +1,9 @@
+{
+    "config": {
+        "domains": [
+            "test.foobar"
+        ]
+    },
+    "status": "enabled",
+    "ttl": "unlimited"
+}

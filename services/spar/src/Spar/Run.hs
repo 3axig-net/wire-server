@@ -1,9 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,61 +28,47 @@ module Spar.Run
   )
 where
 
-import Bilge
+import qualified Bilge
 import Cassandra as Cas
-import qualified Cassandra.Schema as Cas
-import qualified Cassandra.Settings as Cas
-import Control.Lens
-import Data.Default (def)
-import Data.List.NonEmpty as NE
+import Cassandra.Util (initCassandraForService)
+import Control.Lens (to, (^.))
+import Data.Id
 import Data.Metrics.Servant (servantPrometheusMiddleware)
 import Data.Proxy (Proxy (Proxy))
-import Data.String.Conversions
+import Data.Text.Encoding
 import Imports
 import Network.Wai (Application)
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Handler.Warp as Warp
-import Network.Wai.Utilities.Request (lookupRequestId)
+import qualified Network.Wai.Middleware.Gunzip as GZip
+import Network.Wai.Utilities.Server
 import qualified Network.Wai.Utilities.Server as WU
 import qualified SAML2.WebSSO as SAML
-import Spar.API (API, app)
+import Spar.API (SparAPI, app)
 import Spar.App
 import qualified Spar.Data as Data
 import Spar.Data.Instances ()
+import Spar.Options as Opt
 import Spar.Orphans ()
-import Spar.Sem.Logger.TinyLog (toLevel)
-import System.Logger.Class (Logger)
+import System.Logger (Logger)
+import qualified System.Logger as Log
 import qualified System.Logger.Extended as Log
-import Util.Options (casEndpoint, casFilterNodesByDatacentre, casKeyspace, epHost, epPort)
-import Wire.API.User.Saml as Types
+import Util.Options
+import Wire.API.Routes.Version (expandVersionExp)
+import Wire.API.Routes.Version.Wai
+import Wire.Sem.Logger.TinyLog
 
 ----------------------------------------------------------------------
 -- cassandra
 
 initCassandra :: Opts -> Logger -> IO ClientState
-initCassandra opts lgr = do
-  let cassOpts = Types.cassandra opts
-  connectString <-
-    maybe
-      (Cas.initialContactsPlain (cassOpts ^. casEndpoint . epHost))
-      (Cas.initialContactsDisco "cassandra_spar")
-      (cs <$> Types.discoUrl opts)
-  cas <-
-    Cas.init $
-      Cas.defSettings
-        & Cas.setLogger (Cas.mkLogger (Log.clone (Just "cassandra.spar") lgr))
-        & Cas.setContacts (NE.head connectString) (NE.tail connectString)
-        & Cas.setPortNumber (fromIntegral $ cassOpts ^. casEndpoint . epPort)
-        & Cas.setKeyspace (Keyspace $ cassOpts ^. casKeyspace)
-        & Cas.setMaxConnections 4
-        & Cas.setMaxStreams 128
-        & Cas.setPoolStripes 4
-        & Cas.setSendTimeout 3
-        & Cas.setResponseTimeout 10
-        & Cas.setProtocolVersion V4
-        & Cas.setPolicy (Cas.dcFilterPolicyIfConfigured lgr (cassOpts ^. casFilterNodesByDatacentre))
-  runClient cas $ Cas.versionCheck Data.schemaVersion
-  pure cas
+initCassandra opts lgr =
+  initCassandraForService
+    (Opt.cassandra opts)
+    "spar"
+    (Opt.discoUrl opts)
+    (Just Data.schemaVersion)
+    lgr
 
 ----------------------------------------------------------------------
 -- servant / wai / warp
@@ -98,42 +83,40 @@ runServer sparCtxOpts = do
   (wrappedApp, ctxOpts) <- mkApp sparCtxOpts
   let logger = sparCtxLogger ctxOpts
   Log.info logger . Log.msg $ "Listening on " <> shost <> ":" <> show sport
-  WU.runSettingsWithShutdown settings wrappedApp 5
+  WU.runSettingsWithShutdown settings wrappedApp Nothing
 
 mkApp :: Opts -> IO (Application, Env)
 mkApp sparCtxOpts = do
-  let logLevel = toLevel $ saml sparCtxOpts ^. SAML.cfgLogLevel
+  let logLevel = samlToLevel $ saml sparCtxOpts ^. SAML.cfgLogLevel
   sparCtxLogger <- Log.mkLogger logLevel (logNetStrings sparCtxOpts) (logFormat sparCtxOpts)
   sparCtxCas <- initCassandra sparCtxOpts sparCtxLogger
-  sparCtxHttpManager <- newManager defaultManagerSettings
+  sparCtxHttpManager <- Bilge.newManager Bilge.defaultManagerSettings
   let sparCtxHttpBrig =
-        Bilge.host (sparCtxOpts ^. to brig . epHost . to cs)
-          . Bilge.port (sparCtxOpts ^. to brig . epPort)
+        Bilge.host (sparCtxOpts ^. to brig . to host . to encodeUtf8)
+          . Bilge.port (sparCtxOpts ^. to brig . to port)
           $ Bilge.empty
   let sparCtxHttpGalley =
-        Bilge.host (sparCtxOpts ^. to galley . epHost . to cs)
-          . Bilge.port (sparCtxOpts ^. to galley . epPort)
+        Bilge.host (sparCtxOpts ^. to galley . to host . to encodeUtf8)
+          . Bilge.port (sparCtxOpts ^. to galley . to port)
           $ Bilge.empty
-  let wrappedApp =
-        WU.heavyDebugLogging heavyLogOnly logLevel sparCtxLogger
-          . servantPrometheusMiddleware (Proxy @API)
-          . WU.catchErrors sparCtxLogger []
+  let sparCtxRequestId = RequestId defRequestId
+  let ctx0 = Env {..}
+  let heavyLogOnly :: (Wai.Request, LByteString) -> Maybe (Wai.Request, LByteString)
+      heavyLogOnly out@(req, _) =
+        if Wai.requestMethod req == "POST" && Wai.pathInfo req == ["sso", "finalize-login"]
+          then Just out
+          else Nothing
+  let middleware =
+        versionMiddleware (foldMap expandVersionExp (disabledAPIVersions sparCtxOpts))
+          . requestIdMiddleware (ctx0.sparCtxLogger) defaultRequestIdHeaderName
+          . WU.heavyDebugLogging heavyLogOnly logLevel sparCtxLogger defaultRequestIdHeaderName
+          . servantPrometheusMiddleware (Proxy @SparAPI)
+          . GZip.gunzip
+          . WU.catchErrors sparCtxLogger defaultRequestIdHeaderName
           -- Error 'Response's are usually not thrown as exceptions, but logged in
           -- 'renderSparErrorWithLogging' before the 'Application' can construct a 'Response'
           -- value, when there is still all the type information around.  'WU.catchErrors' is
           -- still here for errors outside the power of the 'Application', like network
           -- outages.
           . SAML.setHttpCachePolicy
-          . lookupRequestIdMiddleware
-          $ \sparCtxRequestId -> app Env {..}
-      heavyLogOnly :: (Wai.Request, LByteString) -> Maybe (Wai.Request, LByteString)
-      heavyLogOnly out@(req, _) =
-        if Wai.requestMethod req == "POST" && Wai.pathInfo req == ["sso", "finalize-login"]
-          then Just out
-          else Nothing
-  pure (wrappedApp, let sparCtxRequestId = RequestId "N/A" in Env {..})
-
-lookupRequestIdMiddleware :: (RequestId -> Application) -> Application
-lookupRequestIdMiddleware mkapp req cont = do
-  let reqid = maybe def RequestId $ lookupRequestId req
-  mkapp reqid req cont
+  pure (middleware $ app ctx0, ctx0)

@@ -1,34 +1,179 @@
 cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 27700378ec8705a58122804d0ac5c5da8f428b037271401e27abab3cce46ab9f
-
-name:           polysemy-wire-zoo
-version:        0.1.0
-synopsis:       Polysemy interface for various libraries
-description:    Polysemy interface for various libraries
-category:       Logging
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2020 Wire Swiss GmbH
-license:        AGPL-3
-build-type:     Simple
+name:          polysemy-wire-zoo
+version:       0.1.0
+synopsis:      Polysemy interface for various libraries
+description:   Polysemy interface for various libraries
+category:      Effects
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2020 Wire Swiss GmbH
+license:       AGPL-3
+build-type:    Simple
 
 library
+  -- cabal-fmt: expand src
   exposed-modules:
-      Polysemy.TinyLog
-  other-modules:
-      Paths_polysemy_wire_zoo
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    Polysemy.Testing
+    Polysemy.TinyLog
+    Wire.Sem.Concurrency
+    Wire.Sem.Concurrency.IO
+    Wire.Sem.Concurrency.Sequential
+    Wire.Sem.Delay
+    Wire.Sem.FromUTC
+    Wire.Sem.Jwk
+    Wire.Sem.Logger
+    Wire.Sem.Logger.Level
+    Wire.Sem.Logger.TinyLog
+    Wire.Sem.Metrics
+    Wire.Sem.Metrics.IO
+    Wire.Sem.Now
+    Wire.Sem.Now.Input
+    Wire.Sem.Now.IO
+    Wire.Sem.Now.Spec
+    Wire.Sem.Paging
+    Wire.Sem.Paging.Cassandra
+    Wire.Sem.Random
+    Wire.Sem.Random.IO
+
+  other-modules:      Paths_polysemy_wire_zoo
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      base >=4.6 && <5.0
+      aeson
+    , base               >=4.6 && <5.0
+    , bytestring
+    , cassandra-util
+    , crypton
+    , HsOpenSSL
+    , hspec
+    , imports
+    , jose
+    , polysemy
+    , polysemy-check
+    , polysemy-plugin
+    , prometheus-client
+    , QuickCheck
+    , saml2-web-sso
+    , time
+    , tinylog
+    , types-common
+    , unliftio
+    , uuid
+    , wire-api
+
+  default-language:   Haskell2010
+
+test-suite spec
+  type:               exitcode-stdio-1.0
+  main-is:            Spec.hs
+  other-modules:
+    Paths_polysemy_wire_zoo
+    Test.IntersperseSpec
+
+  hs-source-dirs:     test
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -j
+    -Wno-redundant-constraints -Werror -threaded -rtsopts
+    -with-rtsopts=-N -Wredundant-constraints -Wunused-packages
+
+  build-tool-depends: hspec-discover:hspec-discover
+  build-depends:
+      base
+    , containers
+    , hspec
     , imports
     , polysemy
-    , tinylog
-  default-language: Haskell2010
+    , polysemy-plugin
+    , polysemy-wire-zoo
+    , unliftio
+
+  default-language:   Haskell2010

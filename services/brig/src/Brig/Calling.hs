@@ -1,8 +1,9 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,49 +19,68 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Brig.Calling
-  ( getRandomSFTServers,
+  ( getRandomElements,
     mkSFTDomain,
     SFTServers, -- See NOTE SFTServers
+    unSFTServers,
     mkSFTServers,
     SFTEnv (..),
+    SFTTokenEnv (..),
     Discovery (..),
-    Env (..),
+    TurnEnv,
+    TurnServers (..),
     mkSFTEnv,
-    newEnv,
+    mkTurnEnv,
+    srvDiscoveryLoop,
     sftDiscoveryLoop,
-    discoverSFTServers,
+    discoverSRVRecords,
     discoveryToMaybe,
     randomize,
     startSFTServiceDiscovery,
+    startTurnDiscovery,
     turnServers,
+    turnServersV1,
+    turnServersV2,
     turnTokenTTL,
     turnConfigTTL,
     turnSecret,
     turnSHA512,
-    turnPrng,
   )
 where
 
-import Brig.Options (SFTOptions (..), defSftDiscoveryIntervalSeconds, defSftListLength, defSftServiceName)
-import qualified Brig.Options as Opts
-import Brig.Types (TurnURI)
+import Brig.Options (SFTOptions (..), defSftListLength, defSftServiceName, defSrvDiscoveryIntervalSeconds)
+import Brig.Options qualified as Opts
+import Control.Exception.Enclosed (handleAny)
 import Control.Lens
 import Control.Monad.Random.Class (MonadRandom)
+import Data.ByteString qualified as BS
+import Data.ByteString.Conversion (fromByteString)
+import Data.IP qualified as IP
 import Data.List.NonEmpty (NonEmpty (..))
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.List1
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Misc
 import Data.Range
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Data.Text.Encoding.Error
+import Data.Text.IO qualified as Text
 import Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
 import Imports
-import qualified Network.DNS as DNS
+import Network.DNS qualified as DNS
 import OpenSSL.EVP.Digest (Digest)
 import Polysemy
 import Polysemy.TinyLog
-import qualified System.Logger as Log
-import System.Random.MWC (GenIO, createSystemRandom)
+import System.FSNotify qualified as FS
+import System.FilePath qualified as Path
+import System.Logger qualified as Log
 import System.Random.Shuffle
+import UnliftIO (Async)
+import UnliftIO.Async qualified as Async
+import Wire.API.Call.Config
 import Wire.Network.DNS.Effect
 import Wire.Network.DNS.SRV
+import Wire.Sem.Delay
+import Wire.Sem.Logger.TinyLog
 
 -- | NOTE SFTServers:
 -- Retrieving SFTServers should give a 1) randomized and 2) limited list of servers.
@@ -68,7 +88,7 @@ import Wire.Network.DNS.SRV
 -- And limited since client currently try contacting all servers returned
 -- (and we don't want them to open 100 parallel connections unnecessarily)
 -- Therefore, we hide the constructor from the module export.
-newtype SFTServers = SFTServers (NonEmpty SrvEntry)
+newtype SFTServers = SFTServers {unSFTServers :: NonEmpty SrvEntry}
   deriving (Eq, Show)
 
 mkSFTServers :: NonEmpty SrvEntry -> SFTServers
@@ -85,10 +105,14 @@ type MaximumSFTServers = 100
 -- Currently (Sept 2020) the client initiating an SFT call will try all
 -- servers in this list. Limit this list to a smaller subset in case many
 -- SFT servers are advertised in a given environment.
-getRandomSFTServers :: MonadRandom m => Range 1 MaximumSFTServers Int -> SFTServers -> m (NonEmpty SrvEntry)
-getRandomSFTServers limit (SFTServers list) = subsetSft limit <$> randomize list
+getRandomElements ::
+  (MonadRandom f) =>
+  Range 1 MaximumSFTServers Int ->
+  NonEmpty a ->
+  f (NonEmpty a)
+getRandomElements limit list = subsetSft limit <$> randomize list
 
-subsetSft :: Range 1 100 Int -> NonEmpty a -> NonEmpty a
+subsetSft :: Range 1 MaximumSFTServers Int -> NonEmpty a -> NonEmpty a
 subsetSft l entries = do
   let entry1 = NonEmpty.head entries
   let entryTail = take (fromRange l - 1) (NonEmpty.tail entries)
@@ -109,7 +133,9 @@ data SFTEnv = SFTEnv
     sftDiscoveryInterval :: Int,
     -- | maximum amount of servers to give out,
     -- even if more are in the SRV record
-    sftListLength :: Range 1 100 Int
+    sftListLength :: Range 1 100 Int,
+    -- | token parameters
+    sftToken :: Maybe SFTTokenEnv
   }
 
 data Discovery a
@@ -117,46 +143,80 @@ data Discovery a
   | Discovered a
   deriving (Show, Eq)
 
+instance (Semigroup a) => Semigroup (Discovery a) where
+  NotDiscoveredYet <> other = other
+  other <> NotDiscoveredYet = other
+  Discovered x <> Discovered y = Discovered (x <> y)
+
+instance (Semigroup a) => Monoid (Discovery a) where
+  mempty = NotDiscoveredYet
+
 discoveryToMaybe :: Discovery a -> Maybe a
 discoveryToMaybe = \case
   NotDiscoveredYet -> Nothing
   Discovered x -> Just x
 
-discoverSFTServers :: Members [DNSLookup, TinyLog] r => DNS.Domain -> Sem r (Maybe (NonEmpty SrvEntry))
-discoverSFTServers domain =
+discoverSRVRecords :: (Members [DNSLookup, TinyLog] r) => DNS.Domain -> Sem r (Maybe (NonEmpty SrvEntry))
+discoverSRVRecords domain =
   lookupSRV domain >>= \case
     SrvAvailable es -> pure $ Just es
     SrvNotAvailable -> do
-      warn (Log.msg ("No SFT servers available" :: ByteString))
+      warn $
+        Log.msg (Log.val "SRV Records not available")
+          . Log.field "domain" domain
+      pure Nothing
+    -- It is not an error if the record doesn't exist
+    SrvResponseError DNS.NameError -> do
+      warn $
+        Log.msg (Log.val "SRV Records not available")
+          . Log.field "domain" domain
       pure Nothing
     SrvResponseError e -> do
-      err (Log.msg ("DNS Lookup failed for SFT Discovery" :: ByteString) . Log.field "Error" (show e))
+      err $
+        Log.msg (Log.val "SRV Lookup failed")
+          . Log.field "Error" (show e)
+          . Log.field "domain" domain
       pure Nothing
+
+srvDiscoveryLoop :: (Members [DNSLookup, TinyLog, Delay] r) => DNS.Domain -> Int -> (NonEmpty SrvEntry -> Sem r ()) -> Sem r ()
+srvDiscoveryLoop domain discoveryInterval saveAction = forever $ do
+  servers <- discoverSRVRecords domain
+  forM_ servers saveAction
+  delay discoveryInterval
+
+data SFTTokenEnv = SFTTokenEnv
+  { sftTokenTTL :: Word32,
+    sftTokenSecret :: ByteString,
+    sftTokenSHA :: Digest
+  }
 
 mkSFTDomain :: SFTOptions -> DNS.Domain
 mkSFTDomain SFTOptions {..} = DNS.normalize $ maybe defSftServiceName ("_" <>) sftSRVServiceName <> "._tcp." <> sftBaseDomain
 
--- FUTUREWORK: Remove Embed IO from here and put threadDelay into another
--- effect. This will also make tests for this faster and deterministic
-sftDiscoveryLoop :: Members [DNSLookup, TinyLog, Embed IO] r => SFTEnv -> Sem r ()
-sftDiscoveryLoop SFTEnv {..} = forever $ do
-  servers <- discoverSFTServers sftDomain
-  case servers of
-    Nothing -> pure ()
-    Just es -> atomicWriteIORef sftServers (Discovered (SFTServers es))
-  threadDelay sftDiscoveryInterval
+sftDiscoveryLoop :: (Members [DNSLookup, TinyLog, Delay, Embed IO] r) => SFTEnv -> Sem r ()
+sftDiscoveryLoop SFTEnv {..} =
+  srvDiscoveryLoop sftDomain sftDiscoveryInterval $
+    atomicWriteIORef sftServers . Discovered . SFTServers
 
-mkSFTEnv :: SFTOptions -> IO SFTEnv
-mkSFTEnv opts =
+mkSFTEnv :: Digest -> SFTOptions -> IO SFTEnv
+mkSFTEnv digest opts =
   SFTEnv
     <$> newIORef NotDiscoveredYet
     <*> pure (mkSFTDomain opts)
-    <*> pure (diffTimeToMicroseconds (fromMaybe defSftDiscoveryIntervalSeconds (Opts.sftDiscoveryIntervalSeconds opts)))
+    <*> pure (diffTimeToMicroseconds (fromMaybe defSrvDiscoveryIntervalSeconds (Opts.sftDiscoveryIntervalSeconds opts)))
     <*> pure (fromMaybe defSftListLength (Opts.sftListLength opts))
+    <*> forM (Opts.sftTokenOptions opts) (mkSFTTokenEnv digest)
 
+mkSFTTokenEnv :: Digest -> Opts.SFTTokenOptions -> IO SFTTokenEnv
+mkSFTTokenEnv digest opts =
+  SFTTokenEnv (Opts.sttTTL opts)
+    <$> BS.readFile (Opts.sttSecret opts)
+    <*> pure digest
+
+-- | Start SFT service discovery synchronously
 startSFTServiceDiscovery :: Log.Logger -> SFTEnv -> IO ()
 startSFTServiceDiscovery logger =
-  runM . runTinyLog logger . runDNSLookupDefault . sftDiscoveryLoop
+  runM . loggerToTinyLog logger . runDNSLookupDefault . runDelay . sftDiscoveryLoop
 
 -- | >>> diffTimeToMicroseconds 1
 -- 1000000
@@ -165,16 +225,177 @@ diffTimeToMicroseconds = fromIntegral . (`quot` 1000000) . diffTimeToPicoseconds
 
 -- TURN specific
 
-data Env = Env
-  { _turnServers :: List1 TurnURI,
+type TurnServersRef = IORef (Discovery (NonEmpty TurnURI))
+
+data TurnServers
+  = TurnServersFromFiles Opts.TurnServersFiles TurnServersRef TurnServersRef
+  | TurnServersFromDNS Opts.TurnDnsOpts TurnServersRef TurnServersRef TurnServersRef TurnServersRef
+
+data TurnEnv = TurnEnv
+  { _turnServers :: TurnServers,
     _turnTokenTTL :: Word32,
     _turnConfigTTL :: Word32,
     _turnSecret :: ByteString,
-    _turnSHA512 :: Digest,
-    _turnPrng :: GenIO
+    _turnSHA512 :: Digest
   }
 
-makeLenses ''Env
+makeLenses ''TurnEnv
 
-newEnv :: Digest -> List1 TurnURI -> Word32 -> Word32 -> ByteString -> IO Env
-newEnv sha512 srvs tTTL cTTL secret = Env srvs tTTL cTTL secret sha512 <$> createSystemRandom
+mkTurnEnv :: Opts.TurnServersSource -> Word32 -> Word32 -> ByteString -> Digest -> IO TurnEnv
+mkTurnEnv serversSource _turnTokenTTL _turnConfigTTL _turnSecret _turnSHA512 = do
+  _turnServers <- case serversSource of
+    Opts.TurnSourceDNS opts ->
+      do
+        TurnServersFromDNS opts
+        <$> newIORef NotDiscoveredYet
+        <*> newIORef NotDiscoveredYet
+        <*> newIORef NotDiscoveredYet
+        <*> newIORef NotDiscoveredYet
+    Opts.TurnSourceFiles files -> do
+      TurnServersFromFiles files
+        <$> newIORef NotDiscoveredYet
+        <*> newIORef NotDiscoveredYet
+  pure $ TurnEnv {..}
+
+turnServersV1 :: (MonadIO m) => TurnServers -> m (Discovery (NonEmpty TurnURI))
+turnServersV1 =
+  readIORef . \case
+    TurnServersFromFiles _opts v1Ref _v2Ref ->
+      v1Ref
+    TurnServersFromDNS _opts v1UdpRef _v2UdpRef _tcpRef _tlsRef ->
+      v1UdpRef
+
+turnServersV2 :: (MonadIO m) => TurnServers -> m (Discovery (NonEmpty TurnURI))
+turnServersV2 = \case
+  TurnServersFromFiles _opts _v1Udref v2Ref ->
+    readIORef v2Ref
+  TurnServersFromDNS _opts _v1UdpRef v2UdpRef tcpRef tlsRef ->
+    mconcat <$> mapM readIORef [v2UdpRef, tcpRef, tlsRef]
+
+-- | Start TURN service discovery asychronously.
+startTurnDiscovery :: Log.Logger -> FS.WatchManager -> TurnEnv -> IO [Async ()]
+startTurnDiscovery l w env = do
+  case env ^. turnServers of
+    TurnServersFromFiles files v1Ref v2Ref -> do
+      startFileBasedTurnDiscovery l w files v1Ref v2Ref
+      -- File based discovery runs in background using fsnotify, so we don't
+      -- need to watch any async processes.
+      pure []
+    TurnServersFromDNS dnsOpts deprecatedUdpRef udpRef tcpRef tlsRef ->
+      startDNSBasedTurnDiscovery l dnsOpts deprecatedUdpRef udpRef tcpRef tlsRef
+
+startDNSBasedTurnDiscovery :: Log.Logger -> Opts.TurnDnsOpts -> TurnServersRef -> TurnServersRef -> TurnServersRef -> TurnServersRef -> IO [Async ()]
+startDNSBasedTurnDiscovery logger opts deprecatedUdpRef udpRef tcpRef tlsRef = do
+  let udpDomain = DNS.normalize $ "_turn._udp." <> Opts.tdoBaseDomain opts
+      tcpDomain = DNS.normalize $ "_turn._tcp." <> Opts.tdoBaseDomain opts
+      tlsDomain = DNS.normalize $ "_turns._tcp." <> Opts.tdoBaseDomain opts
+      interval = diffTimeToMicroseconds (fromMaybe defSrvDiscoveryIntervalSeconds (Opts.tdoDiscoveryIntervalSeconds opts))
+      runLoopAsync domain =
+        Async.async
+          . runM
+          . loggerToTinyLog logger
+          . runDNSLookupDefault
+          . runDelay
+          . srvDiscoveryLoop domain interval
+          . withNonZeroWeightRecords
+  udpLoop <- runLoopAsync udpDomain $
+    \records -> do
+      ipsAndPorts <- fetchIpsAndPorts records
+      case ipsAndPorts of
+        [] -> pure ()
+        (x : xs) ->
+          atomicWriteIORef deprecatedUdpRef . Discovered $ uncurry turnURIFromIpAndPort <$> (x :| xs)
+      atomicWriteIORef udpRef . Discovered $ turnURIFromSRV SchemeTurn (Just TransportUDP) <$> records
+
+  tcpLoop <-
+    runLoopAsync tcpDomain $
+      atomicWriteIORef tcpRef . Discovered . fmap (turnURIFromSRV SchemeTurn (Just TransportTCP))
+
+  tlsLoop <-
+    runLoopAsync tlsDomain $
+      atomicWriteIORef tlsRef . Discovered . fmap (turnURIFromSRV SchemeTurns (Just TransportTCP))
+  pure [udpLoop, tcpLoop, tlsLoop]
+  where
+    withNonZeroWeightRecords :: (Monad m) => (NonEmpty SrvEntry -> m ()) -> NonEmpty SrvEntry -> m ()
+    withNonZeroWeightRecords action records =
+      case NonEmpty.filter (\e -> srvWeight e /= 0) records of
+        [] -> pure ()
+        (r : rs) -> action (r :| rs)
+
+    fetchIpsAndPorts :: (Member DNSLookup r) => NonEmpty SrvEntry -> Sem r [(IP.IPv4, Word16)]
+    fetchIpsAndPorts =
+      fmap catMaybes
+        . mapM
+          ( \r -> do
+              eitherIPs <- lookupA . srvTargetDomain $ srvTarget r
+              case eitherIPs of
+                Left _err -> pure Nothing
+                Right [] -> pure Nothing
+                Right (first : _) -> do
+                  pure $ Just (first, srvTargetPort $ srvTarget r)
+          )
+        . NonEmpty.toList
+
+turnURIFromSRV :: Scheme -> Maybe Transport -> SrvEntry -> TurnURI
+turnURIFromSRV sch mtr SrvEntry {..} =
+  turnURI
+    sch
+    ( TurnHostName
+        . Text.decodeUtf8With lenientDecode
+        . stripDot
+        $ srvTargetDomain srvTarget
+    )
+    (Port $ srvTargetPort srvTarget)
+    mtr
+  where
+    stripDot h
+      | "." `BS.isSuffixOf` h = BS.take (BS.length h - 1) h
+      | otherwise = h
+
+turnURIFromIpAndPort :: IP.IPv4 -> Word16 -> TurnURI
+turnURIFromIpAndPort ip port =
+  turnURI SchemeTurn (TurnHostIp . IpAddr $ IP.IPv4 ip) (Port port) Nothing
+
+startFileBasedTurnDiscovery :: Log.Logger -> FS.WatchManager -> Opts.TurnServersFiles -> TurnServersRef -> TurnServersRef -> IO ()
+startFileBasedTurnDiscovery l w files v1ServersRef v2ServersRef = do
+  v1FileCanonicalPath <- canonicalizePath (Opts.tsfServers files)
+  v2FileCanonicalPath <- canonicalizePath (Opts.tsfServersV2 files)
+  atomicWriteIORef v1ServersRef
+    . maybe NotDiscoveredYet Discovered
+    =<< readTurnList v1FileCanonicalPath
+  atomicWriteIORef v2ServersRef
+    . maybe NotDiscoveredYet Discovered
+    =<< readTurnList v2FileCanonicalPath
+  Log.info l $
+    Log.msg (Log.val "Waiting for TURN files")
+      . Log.field "v1File" v1FileCanonicalPath
+      . Log.field "v2File" v2FileCanonicalPath
+  startWatching w v1FileCanonicalPath (replaceTurnServers l v1ServersRef)
+  startWatching w v2FileCanonicalPath (replaceTurnServers l v2ServersRef)
+
+replaceTurnServers :: Log.Logger -> IORef (Discovery (NonEmpty TurnURI)) -> FS.Event -> IO ()
+replaceTurnServers g ref e = do
+  let logErr x = Log.err g (Log.msg $ Log.val "Error loading turn servers: " Log.+++ show x)
+  handleAny logErr $
+    readTurnList (FS.eventPath e) >>= \case
+      Just servers -> do
+        atomicWriteIORef ref (Discovered servers)
+        Log.info g (Log.msg $ Log.val "New turn servers loaded.")
+      Nothing -> Log.warn g (Log.msg $ Log.val "Empty or malformed turn servers list, ignoring!")
+
+startWatching :: FS.WatchManager -> FilePath -> FS.Action -> IO ()
+startWatching w p = void . FS.watchDir w (Path.dropFileName p) predicate
+  where
+    predicate (FS.Added f _ _) = Path.equalFilePath f p
+    predicate (FS.Modified f _ _) = Path.equalFilePath f p
+    predicate FS.Removed {} = False
+    predicate FS.Unknown {} = False
+    predicate FS.ModifiedAttributes {} = False
+    predicate FS.WatchedDirectoryRemoved {} = False
+    predicate FS.CloseWrite {} = False
+
+readTurnList :: FilePath -> IO (Maybe (NonEmpty TurnURI))
+readTurnList = Text.readFile >=> pure . fn . mapMaybe (fromByteString . Text.encodeUtf8) . Text.lines
+  where
+    fn [] = Nothing
+    fn (x : xs) = Just (x :| xs)

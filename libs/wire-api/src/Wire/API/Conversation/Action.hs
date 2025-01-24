@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,74 +14,195 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TemplateHaskell #-}
+-- Ignore unused `genSingletons` Template Haskell results
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Wire.API.Conversation.Action
-  ( ConversationAction (..),
+  ( ConversationAction,
+    ConversationActionTag (..),
+    SConversationActionTag (..),
+    SomeConversationAction (..),
     conversationActionToEvent,
-    conversationActionTag,
+    conversationActionPermission,
+    ConversationActionPermission,
+    sConversationActionPermission,
   )
 where
 
+import Control.Lens hiding ((%~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
+import Data.Aeson qualified as A
+import Data.Aeson.KeyMap qualified as A
 import Data.Id
-import Data.List.NonEmpty (NonEmpty)
-import Data.Qualified
+import Data.Kind
+import Data.OpenApi qualified as S
+import Data.Qualified (Qualified)
+import Data.Schema hiding (tag)
+import Data.Singletons.TH
 import Data.Time.Clock
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
 import Wire.API.Conversation
+import Wire.API.Conversation.Action.Tag
+import Wire.API.Conversation.Protocol (ProtocolTag)
 import Wire.API.Conversation.Role
 import Wire.API.Event.Conversation
-import Wire.API.Util.Aeson (CustomEncoded (..))
+import Wire.API.Event.LeaveReason
+import Wire.API.MLS.SubConversation
+import Wire.Arbitrary (Arbitrary (..))
 
--- | A sum type consisting of all possible conversation actions.
-data ConversationAction
-  = ConversationActionAddMembers (NonEmpty (Qualified UserId)) RoleName
-  | ConversationActionRemoveMembers (NonEmpty (Qualified UserId))
-  | ConversationActionRename ConversationRename
-  | ConversationActionMessageTimerUpdate ConversationMessageTimerUpdate
-  | ConversationActionReceiptModeUpdate ConversationReceiptModeUpdate
-  | ConversationActionMemberUpdate (Qualified UserId) OtherMemberUpdate
-  | ConversationActionAccessUpdate ConversationAccessData
-  | ConversationActionDelete
-  deriving stock (Eq, Show, Generic)
-  deriving (Arbitrary) via (GenericUniform ConversationAction)
-  deriving (ToJSON, FromJSON) via (CustomEncoded ConversationAction)
+-- | We use this type family instead of a sum type to be able to define
+-- individual effects per conversation action. See 'HasConversationActionEffects'.
+type family ConversationAction (tag :: ConversationActionTag) :: Type where
+  ConversationAction 'ConversationJoinTag = ConversationJoin
+  ConversationAction 'ConversationLeaveTag = ()
+  ConversationAction 'ConversationMemberUpdateTag = ConversationMemberUpdate
+  ConversationAction 'ConversationDeleteTag = ()
+  ConversationAction 'ConversationRenameTag = ConversationRename
+  ConversationAction 'ConversationMessageTimerUpdateTag = ConversationMessageTimerUpdate
+  ConversationAction 'ConversationReceiptModeUpdateTag = ConversationReceiptModeUpdate
+  ConversationAction 'ConversationAccessDataTag = ConversationAccessData
+  ConversationAction 'ConversationRemoveMembersTag = ConversationRemoveMembers
+  ConversationAction 'ConversationUpdateProtocolTag = ProtocolTag
+
+data SomeConversationAction where
+  SomeConversationAction :: Sing tag -> ConversationAction tag -> SomeConversationAction
+
+instance Show SomeConversationAction where
+  show (SomeConversationAction tag action) =
+    "SomeConversationAction {tag = "
+      <> show (fromSing tag)
+      <> ", action = "
+      <> $(sCases ''ConversationActionTag [|tag|] [|show action|])
+      <> "}"
+
+instance Eq SomeConversationAction where
+  (SomeConversationAction tag1 action1) == (SomeConversationAction tag2 action2) =
+    case tag1 %~ tag2 of
+      Proved Refl -> $(sCases ''ConversationActionTag [|tag1|] [|action1 == action2|])
+      Disproved _ -> False
+
+instance ToJSON SomeConversationAction where
+  toJSON (SomeConversationAction sb action) =
+    let tag = fromSing sb
+        actionJSON = fromMaybe A.Null $ schemaOut (conversationActionSchema sb) action
+     in A.object ["tag" A..= tag, "action" A..= actionJSON]
+
+instance S.ToSchema SomeConversationAction where
+  declareNamedSchema _ = do
+    unitSchema <- S.declareSchemaRef (Proxy :: Proxy ())
+    conversationJoin <- S.declareSchemaRef (Proxy :: Proxy ConversationJoin)
+    conversationMemberUpdate <- S.declareSchemaRef (Proxy :: Proxy ConversationMemberUpdate)
+    conversationRename <- S.declareSchemaRef (Proxy :: Proxy ConversationRename)
+    conversationMessageTimerUpdate <- S.declareSchemaRef (Proxy :: Proxy ConversationMessageTimerUpdate)
+    conversationReceiptModeUpdate <- S.declareSchemaRef (Proxy :: Proxy ConversationReceiptModeUpdate)
+    conversationAccessData <- S.declareSchemaRef (Proxy :: Proxy ConversationAccessData)
+    conversationRemoveMembers <- S.declareSchemaRef (Proxy :: Proxy ConversationRemoveMembers)
+    protocolTag <- S.declareSchemaRef (Proxy :: Proxy ProtocolTag)
+    let schemas =
+          [ (toJSON ConversationJoinTag, conversationJoin),
+            (toJSON ConversationLeaveTag, unitSchema),
+            (toJSON ConversationMemberUpdateTag, conversationMemberUpdate),
+            (toJSON ConversationDeleteTag, unitSchema),
+            (toJSON ConversationRenameTag, conversationRename),
+            (toJSON ConversationMessageTimerUpdateTag, conversationMessageTimerUpdate),
+            (toJSON ConversationReceiptModeUpdateTag, conversationReceiptModeUpdate),
+            (toJSON ConversationAccessDataTag, conversationAccessData),
+            (toJSON ConversationRemoveMembersTag, conversationRemoveMembers),
+            (toJSON ConversationUpdateProtocolTag, protocolTag)
+          ]
+            <&> \(t, a) ->
+              S.Inline $
+                mempty
+                  & S.type_ ?~ S.OpenApiObject
+                  & S.properties . at "tag" ?~ S.Inline (mempty & S.type_ ?~ S.OpenApiString & S.enum_ ?~ [t])
+                  & S.properties . at "action" ?~ a
+                  & S.required .~ ["tag", "action"]
+    pure $
+      S.NamedSchema (Just "SomeConversationAction") $
+        mempty & S.oneOf ?~ schemas
+
+conversationActionSchema :: forall tag. Sing tag -> ValueSchema NamedSwaggerDoc (ConversationAction tag)
+conversationActionSchema SConversationJoinTag = schema @ConversationJoin
+conversationActionSchema SConversationLeaveTag =
+  objectWithDocModifier
+    "ConversationLeave"
+    (S.description ?~ "The action of some users leaving a conversation on their own")
+    $ pure ()
+conversationActionSchema SConversationRemoveMembersTag = schema
+conversationActionSchema SConversationMemberUpdateTag = schema @ConversationMemberUpdate
+conversationActionSchema SConversationDeleteTag =
+  objectWithDocModifier
+    "ConversationDelete"
+    (S.description ?~ "The action of deleting a conversation")
+    (pure ())
+conversationActionSchema SConversationRenameTag = schema
+conversationActionSchema SConversationMessageTimerUpdateTag = schema
+conversationActionSchema SConversationReceiptModeUpdateTag = schema
+conversationActionSchema SConversationAccessDataTag = schema
+conversationActionSchema SConversationUpdateProtocolTag = schema
+
+instance FromJSON SomeConversationAction where
+  parseJSON = A.withObject "SomeConversationAction" $ \ob -> do
+    tag <- ob A..: "tag"
+    case A.lookup "action" ob of
+      Nothing -> fail "'action' property missing"
+      Just actionValue ->
+        case toSing tag of
+          SomeSing sb -> do
+            action <- schemaIn (conversationActionSchema sb) actionValue
+            pure $ SomeConversationAction sb action
+
+instance Arbitrary SomeConversationAction where
+  arbitrary = do
+    tag <- arbitrary
+    case toSing tag of
+      SomeSing sb -> do
+        $(sCases ''ConversationActionTag [|sb|] [|SomeConversationAction sb <$> arbitrary|])
+
+$( singletons
+     [d|
+       conversationActionPermission :: ConversationActionTag -> Action
+       conversationActionPermission ConversationJoinTag = AddConversationMember
+       conversationActionPermission ConversationLeaveTag = LeaveConversation
+       conversationActionPermission ConversationRemoveMembersTag = RemoveConversationMember
+       conversationActionPermission ConversationMemberUpdateTag = ModifyOtherConversationMember
+       conversationActionPermission ConversationDeleteTag = DeleteConversation
+       conversationActionPermission ConversationRenameTag = ModifyConversationName
+       conversationActionPermission ConversationMessageTimerUpdateTag = ModifyConversationMessageTimer
+       conversationActionPermission ConversationReceiptModeUpdateTag = ModifyConversationReceiptMode
+       conversationActionPermission ConversationAccessDataTag = ModifyConversationAccess
+       conversationActionPermission ConversationUpdateProtocolTag = LeaveConversation
+       |]
+ )
 
 conversationActionToEvent ::
+  forall tag.
+  Sing tag ->
   UTCTime ->
   Qualified UserId ->
   Qualified ConvId ->
-  ConversationAction ->
+  Maybe SubConvId ->
+  ConversationAction tag ->
   Event
-conversationActionToEvent now quid qcnv (ConversationActionAddMembers newMembers role) =
-  Event MemberJoin qcnv quid now $
-    EdMembersJoin $ SimpleMembers (map (`SimpleMember` role) (toList newMembers))
-conversationActionToEvent now quid qcnv (ConversationActionRemoveMembers removedMembers) =
-  Event MemberLeave qcnv quid now $
-    EdMembersLeave (QualifiedUserIdList (toList removedMembers))
-conversationActionToEvent now quid qcnv (ConversationActionRename rename) =
-  Event ConvRename qcnv quid now (EdConvRename rename)
-conversationActionToEvent now quid qcnv (ConversationActionMessageTimerUpdate update) =
-  Event ConvMessageTimerUpdate qcnv quid now (EdConvMessageTimerUpdate update)
-conversationActionToEvent now quid qcnv (ConversationActionReceiptModeUpdate update) =
-  Event ConvReceiptModeUpdate qcnv quid now (EdConvReceiptModeUpdate update)
-conversationActionToEvent now quid qcnv (ConversationActionMemberUpdate target (OtherMemberUpdate role)) =
-  let update = MemberUpdateData target Nothing Nothing Nothing Nothing Nothing Nothing role
-   in Event MemberStateUpdate qcnv quid now (EdMemberUpdate update)
-conversationActionToEvent now quid qcnv (ConversationActionAccessUpdate update) =
-  Event ConvAccessUpdate qcnv quid now (EdConvAccessUpdate update)
-conversationActionToEvent now quid qcnv ConversationActionDelete =
-  Event ConvDelete qcnv quid now EdConvDelete
-
-conversationActionTag :: Qualified UserId -> ConversationAction -> Action
-conversationActionTag _ (ConversationActionAddMembers _ _) = AddConversationMember
-conversationActionTag qusr (ConversationActionRemoveMembers victims)
-  | pure qusr == victims = LeaveConversation
-  | otherwise = RemoveConversationMember
-conversationActionTag _ (ConversationActionRename _) = ModifyConversationName
-conversationActionTag _ (ConversationActionMessageTimerUpdate _) = ModifyConversationMessageTimer
-conversationActionTag _ (ConversationActionReceiptModeUpdate _) = ModifyConversationReceiptMode
-conversationActionTag _ (ConversationActionMemberUpdate _ _) = ModifyOtherConversationMember
-conversationActionTag _ (ConversationActionAccessUpdate _) = ModifyConversationAccess
-conversationActionTag _ ConversationActionDelete = DeleteConversation
+conversationActionToEvent tag now quid qcnv subconv action =
+  let edata = case tag of
+        SConversationJoinTag ->
+          let ConversationJoin newMembers role = action
+           in EdMembersJoin $ SimpleMembers (map (`SimpleMember` role) (toList newMembers))
+        SConversationLeaveTag ->
+          EdMembersLeave EdReasonLeft (QualifiedUserIdList [quid])
+        SConversationRemoveMembersTag ->
+          EdMembersLeave (crmReason action) (QualifiedUserIdList . toList . crmTargets $ action)
+        SConversationMemberUpdateTag ->
+          let ConversationMemberUpdate target (OtherMemberUpdate role) = action
+              update = MemberUpdateData target Nothing Nothing Nothing Nothing Nothing Nothing role
+           in EdMemberUpdate update
+        SConversationDeleteTag -> EdConvDelete
+        SConversationRenameTag -> EdConvRename action
+        SConversationMessageTimerUpdateTag -> EdConvMessageTimerUpdate action
+        SConversationReceiptModeUpdateTag -> EdConvReceiptModeUpdate action
+        SConversationAccessDataTag -> EdConvAccessUpdate action
+        SConversationUpdateProtocolTag -> EdProtocolUpdate action
+   in Event qcnv subconv quid now edata

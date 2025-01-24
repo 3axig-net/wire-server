@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -53,23 +53,27 @@ spec = describe "accessVerdict" $ do
         pending
     context "denied" $ do
       it "responds with status 200 and a valid html page with constant expected title." $ do
-        (_, _, idp) <- registerTestIdP
+        env <- ask
+        (owner, _teamId) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+        idp <- registerTestIdP owner
         (Nothing, outcome, _, _) <- requestAccessVerdict idp False mkAuthnReqWeb
         liftIO $ do
           Servant.errHTTPCode outcome `shouldBe` 200
           Servant.errReasonPhrase outcome `shouldBe` "forbidden"
-          ('1', cs @LBS @String (Servant.errBody outcome))
+          ('1', cs @LByteString @String (Servant.errBody outcome))
             `shouldSatisfy` (("<title>wire:sso:error:forbidden</title>" `List.isInfixOf`) . snd)
           ('2', XML.parseLBS XML.def $ Servant.errBody outcome)
             `shouldSatisfy` (isRight . snd)
     context "granted" $ do
       it "responds with status 200 and a valid html page with constant expected title." $ do
-        (_, _, idp) <- registerTestIdP
+        env <- ask
+        (owner, _teamId) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+        idp <- registerTestIdP owner
         (Just _, outcome, _, _) <- requestAccessVerdict idp True mkAuthnReqWeb
         liftIO $ do
           Servant.errHTTPCode outcome `shouldBe` 200
           Servant.errReasonPhrase outcome `shouldBe` "success"
-          ('1', cs @LBS @String (Servant.errBody outcome))
+          ('1', cs @LByteString @String (Servant.errBody outcome))
             `shouldSatisfy` (("<title>wire:sso:success</title>" `List.isInfixOf`) . snd)
           ('2', XML.parseLBS XML.def (Servant.errBody outcome))
             `shouldSatisfy` (isRight . snd)
@@ -81,32 +85,36 @@ spec = describe "accessVerdict" $ do
         pending
     context "denied" $ do
       it "responds with status 303 with appropriate details." $ do
-        (_, _, idp) <- registerTestIdP
+        env <- ask
+        (owner, _teamId) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+        idp <- registerTestIdP owner
         (Nothing, outcome, loc, qry) <- requestAccessVerdict idp False mkAuthnReqMobile
         liftIO $ do
           Servant.errHTTPCode outcome `shouldBe` 303
           Servant.errReasonPhrase outcome `shouldBe` "forbidden"
           Servant.errBody outcome `shouldBe` "[\"No Bearer SubjectConfirmation\",\"no AuthnStatement\"]"
-          uriScheme loc `shouldBe` (URI.Scheme "wire")
+          uriScheme loc `shouldBe` URI.Scheme "wire"
           List.lookup "userid" qry `shouldBe` Nothing
           List.lookup "cookie" qry `shouldBe` Nothing
           List.lookup "label" qry `shouldBe` Just "forbidden"
     context "granted" $ do
       it "responds with status 303 with appropriate details." $ do
-        (_, _, idp) <- registerTestIdP
+        env <- ask
+        (owner, _teamId) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+        idp <- registerTestIdP owner
         (Just uid, outcome, loc, qry) <- requestAccessVerdict idp True mkAuthnReqMobile
         liftIO $ do
           Servant.errHTTPCode outcome `shouldBe` 303
           Servant.errReasonPhrase outcome `shouldBe` "success"
           Servant.errBody outcome `shouldBe` mempty
-          uriScheme loc `shouldBe` (URI.Scheme "wire")
+          uriScheme loc `shouldBe` URI.Scheme "wire"
           List.lookup "label" qry `shouldBe` Nothing
           List.lookup "userid" qry `shouldBe` (Just . cs . show $ uid)
           List.lookup "cookie" qry `shouldNotBe` Nothing
           List.lookup "cookie" qry `shouldNotBe` Just "$cookie"
           -- cookie variable should be substituted with value.  see
           -- 'mkVerdictGrantedFormatMobile', 'mkVerdictDeniedFormatMobile'
-          let Just (ckies :: SBS) = List.lookup "cookie" qry
+          let Just (ckies :: ByteString) = List.lookup "cookie" qry
               cky :: SetCookie = parseSetCookie ckies
           setCookieName cky `shouldBe` "zuid"
           ('s', setCookieSecure cky) `shouldBe` ('s', False) -- we're in integration test mode, no https here!
@@ -133,7 +141,7 @@ mkAuthnReqMobile idpid = do
 -- fresh, iff the verdict is "granted" the user will be created during the call to
 -- 'Spar.verdictHandler'.
 requestAccessVerdict ::
-  HasCallStack =>
+  (HasCallStack) =>
   IdP ->
   -- | is the verdict granted?
   Bool ->
@@ -143,7 +151,7 @@ requestAccessVerdict ::
     ( Maybe UserId,
       SAML.ResponseVerdict,
       URI, -- location header
-      [(SBS, SBS)] -- query params
+      [(ByteString, ByteString)] -- query params
     )
 requestAccessVerdict idp isGranted mkAuthnReq = do
   subject <- nextSubject
@@ -153,7 +161,7 @@ requestAccessVerdict idp isGranted mkAuthnReq = do
     raw <- mkAuthnReq (idp ^. SAML.idpId)
     bdy <- maybe (error "authreq") pure $ responseBody raw
     either (error . show) pure $ Servant.mimeUnrender (Servant.Proxy @SAML.HTML) bdy
-  spmeta <- getTestSPMetadata (idp ^. idpExtraInfo . User.wiTeam)
+  spmeta <- getTestSPMetadata (idp ^. idpExtraInfo . User.team)
   (privKey, _, _) <- DSig.mkSignCredsWithCert Nothing 96
   authnresp :: SAML.AuthnResponse <- do
     case authnreq of
@@ -167,18 +175,14 @@ requestAccessVerdict idp isGranted mkAuthnReq = do
           then SAML.AccessGranted uref
           else SAML.AccessDenied [DeniedNoBearerConfSubj, DeniedNoAuthnStatement]
   outcome :: ResponseVerdict <- do
-    mbteam <-
-      asks (^. teWireIdPAPIVersion) <&> \case
-        User.WireIdPAPIV1 -> Nothing
-        User.WireIdPAPIV2 -> Just (idp ^. SAML.idpExtraInfo . User.wiTeam)
-    runSpar $ Spar.verdictHandler Nothing mbteam authnresp verdict
+    runSpar $ Spar.verdictHandler authnresp verdict idp
   let loc :: URI.URI
       loc =
         maybe (error "no location") (either error id . SAML.parseURI' . cs)
           . List.lookup "Location"
           . Servant.errHeaders
           $ outcome
-      qry :: [(SBS, SBS)]
+      qry :: [(ByteString, ByteString)]
       qry = queryPairs $ uriQuery loc
   muid <- runSpar $ SAMLUserStore.get uref
   pure (muid, outcome, loc, qry)

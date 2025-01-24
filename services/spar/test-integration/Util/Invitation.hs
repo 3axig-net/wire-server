@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,12 +20,12 @@ module Util.Invitation
     getInvitation,
     getInvitationCode,
     registerInvitation,
+    acceptWithName,
   )
 where
 
 import Bilge
 import Bilge.Assert ((!!!), (<!!), (===))
-import Brig.Types.User as Brig
 import Control.Lens
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Lens (key, _String)
@@ -35,17 +35,20 @@ import Data.Text.Encoding (encodeUtf8)
 import Imports
 import Util
 import Wire.API.Team.Invitation (Invitation (..))
+import Wire.API.User
 
-headInvitation404 :: HasCallStack => BrigReq -> Email -> Http ()
+headInvitation404 :: (HasCallStack) => BrigReq -> EmailAddress -> Http ()
 headInvitation404 brig email = do
   Bilge.head (brig . path "/teams/invitations/by-email" . contentJson . queryItem "email" (toByteString' email))
     !!! const 404 === statusCode
 
-getInvitation :: HasCallStack => BrigReq -> Email -> Http Invitation
+getInvitation :: (HasCallStack) => BrigReq -> EmailAddress -> Http Invitation
 getInvitation brig email =
   responseJsonUnsafe
     <$> Bilge.get
-      ( brig . path "/i/teams/invitations/by-email" . contentJson
+      ( brig
+          . path "/i/teams/invitations/by-email"
+          . contentJson
           . queryItem "email" (toByteString' email)
           . expect2xx
       )
@@ -65,22 +68,23 @@ getInvitationCode brig t ref = do
           . queryItem "invitation_id" (toByteString' ref)
       )
   let lbs = fromMaybe "" $ responseBody r
-  return $ fromByteString . fromMaybe (error "No code?") $ encodeUtf8 <$> (lbs ^? key "code" . _String)
+  pure $ fromByteString (maybe (error "No code?") encodeUtf8 (lbs ^? key "code" . _String))
 
-registerInvitation :: HasCallStack => Email -> Name -> InvitationCode -> Bool -> TestSpar ()
+registerInvitation :: (HasCallStack) => EmailAddress -> Name -> InvitationCode -> Bool -> TestSpar ()
 registerInvitation email name inviteeCode shouldSucceed = do
   env <- ask
   let brig = env ^. teBrig
   call $
     void $
       post
-        ( brig . path "/register"
+        ( brig
+            . path "/register"
             . contentJson
             . json (acceptWithName name email inviteeCode)
         )
         <!! const (if shouldSucceed then 201 else 400) === statusCode
 
-acceptWithName :: Name -> Email -> InvitationCode -> Aeson.Value
+acceptWithName :: Name -> EmailAddress -> InvitationCode -> Aeson.Value
 acceptWithName name email code =
   Aeson.object
     [ "name" Aeson..= fromName name,

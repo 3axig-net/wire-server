@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,8 +18,8 @@
 module Galley.Cassandra.Conversation.Members
   ( addMembers,
     members,
-    memberLists,
-    remoteMemberLists,
+    allMembers,
+    toMember,
     lookupRemoteMembers,
     removeMembersFromLocalConv,
     toMemberStatus,
@@ -30,24 +30,30 @@ where
 import Cassandra
 import Data.Domain
 import Data.Id
-import qualified Data.List.Extra as List
-import qualified Data.Map as Map
+import Data.List.Extra qualified as List
 import Data.Monoid
 import Data.Qualified
+import Data.Set qualified as Set
+import Galley.Cassandra.Conversation.MLS
 import Galley.Cassandra.Instances ()
-import qualified Galley.Cassandra.Queries as Cql
+import Galley.Cassandra.Queries qualified as Cql
 import Galley.Cassandra.Services
 import Galley.Cassandra.Store
-import Galley.Effects.MemberStore
+import Galley.Cassandra.Util
+import Galley.Effects.MemberStore (MemberStore (..))
 import Galley.Types.Conversations.Members
 import Galley.Types.ToUserRole
 import Galley.Types.UserList
-import Imports
+import Imports hiding (Set)
 import Polysemy
 import Polysemy.Input
-import qualified UnliftIO
+import Polysemy.TinyLog
+import UnliftIO qualified
 import Wire.API.Conversation.Member hiding (Member)
 import Wire.API.Conversation.Role
+import Wire.API.MLS.Credential
+import Wire.API.MLS.Group
+import Wire.API.MLS.LeafNode (LeafIndex)
 import Wire.API.Provider.Service
 
 -- | Add members to a local conversation.
@@ -55,7 +61,7 @@ import Wire.API.Provider.Service
 -- When the role is not specified, it defaults to admin.
 -- Please make sure the conversation doesn't exceed the maximum size!
 addMembers ::
-  ToUserRole a =>
+  (ToUserRole a) =>
   ConvId ->
   UserList a ->
   Client ([LocalMember], [RemoteMember])
@@ -82,7 +88,7 @@ addMembers conv (fmap toUserRole -> UserList lusers rusers) = do
     retry x5 . batch $ do
       setType BatchLogged
       setConsistency LocalQuorum
-      for_ chunk $ \(qUntagged -> Qualified (uid, role) domain) -> do
+      for_ chunk $ \(tUntagged -> Qualified (uid, role) domain) -> do
         -- User is remote, so we only add it to the member_remote_user
         -- table, but the reverse mapping has to be done on the remote
         -- backend; so we assume an additional call to their backend has
@@ -113,24 +119,18 @@ removeRemoteMembersFromLocalConv cnv victims = do
   retry x5 . batch $ do
     setType BatchLogged
     setConsistency LocalQuorum
-    for_ victims $ \(qUntagged -> Qualified uid domain) ->
+    for_ victims $ \(tUntagged -> Qualified uid domain) ->
       addPrepQuery Cql.removeRemoteMember (cnv, domain, uid)
 
-memberLists :: [ConvId] -> Client [[LocalMember]]
-memberLists convs = do
-  mems <- retry x1 $ query Cql.selectMembers (params LocalQuorum (Identity convs))
-  let convMembers = foldr (\m acc -> insert (mkMem m) acc) mempty mems
-  return $ map (\c -> fromMaybe [] (Map.lookup c convMembers)) convs
-  where
-    insert (_, Nothing) acc = acc
-    insert (conv, Just mem) acc =
-      let f = (Just . maybe [mem] (mem :))
-       in Map.alter f conv acc
-    mkMem (cnv, usr, srv, prv, st, omus, omur, oar, oarr, hid, hidr, crn) =
-      (cnv, toMember (usr, srv, prv, st, omus, omur, oar, oarr, hid, hidr, crn))
-
 members :: ConvId -> Client [LocalMember]
-members = fmap concat . memberLists . pure
+members conv =
+  fmap (mapMaybe toMember) . retry x1 $
+    query Cql.selectMembers (params LocalQuorum (Identity conv))
+
+allMembers :: Client [LocalMember]
+allMembers =
+  fmap (mapMaybe toMember) . retry x1 $
+    query Cql.selectAllMembers (params LocalQuorum ())
 
 toMemberStatus ::
   ( -- otr muted
@@ -182,29 +182,42 @@ toMember (usr, srv, prv, Just 0, omus, omur, oar, oarr, hid, hidr, crn) =
       }
 toMember _ = Nothing
 
-toRemoteMember :: UserId -> Domain -> RoleName -> RemoteMember
-toRemoteMember u d = RemoteMember (toRemoteUnsafe d u)
-
 newRemoteMemberWithRole :: Remote (UserId, RoleName) -> RemoteMember
-newRemoteMemberWithRole ur@(qUntagged -> (Qualified (u, r) _)) =
+newRemoteMemberWithRole ur@(tUntagged -> (Qualified (u, r) _)) =
   RemoteMember
     { rmId = qualifyAs ur u,
       rmConvRoleName = r
     }
 
-remoteMemberLists :: [ConvId] -> Client [[RemoteMember]]
-remoteMemberLists convs = do
-  mems <- retry x1 $ query Cql.selectRemoteMembers (params LocalQuorum (Identity convs))
-  let convMembers = foldr (insert . mkMem) Map.empty mems
-  return $ map (\c -> fromMaybe [] (Map.lookup c convMembers)) convs
+lookupRemoteMember :: ConvId -> Domain -> UserId -> Client (Maybe RemoteMember)
+lookupRemoteMember conv domain usr = do
+  mkMem <$$> retry x1 (query1 Cql.selectRemoteMember (params LocalQuorum (conv, domain, usr)))
   where
-    insert (conv, mem) acc =
-      let f = (Just . maybe [mem] (mem :))
-       in Map.alter f conv acc
-    mkMem (cnv, domain, usr, role) = (cnv, toRemoteMember usr domain role)
+    mkMem (Identity role) =
+      RemoteMember
+        { rmId = toRemoteUnsafe domain usr,
+          rmConvRoleName = role
+        }
 
 lookupRemoteMembers :: ConvId -> Client [RemoteMember]
-lookupRemoteMembers conv = join <$> remoteMemberLists [conv]
+lookupRemoteMembers conv = do
+  fmap (map mkMem) . retry x1 $ query Cql.selectRemoteMembers (params LocalQuorum (Identity conv))
+  where
+    mkMem (domain, usr, role) =
+      RemoteMember
+        { rmId = toRemoteUnsafe domain usr,
+          rmConvRoleName = role
+        }
+
+lookupRemoteMembersByDomain :: Domain -> Client [(ConvId, RemoteMember)]
+lookupRemoteMembersByDomain dom = do
+  fmap (fmap mkConvMem) . retry x1 $ query Cql.selectRemoteMembersByDomain (params LocalQuorum (Identity dom))
+  where
+    mkConvMem (convId, usr, role) = (convId, RemoteMember (toRemoteUnsafe dom usr) role)
+
+lookupLocalMembersByDomain :: Domain -> Client [(ConvId, UserId)]
+lookupLocalMembersByDomain dom = do
+  retry x1 $ query Cql.selectLocalMembersByDomain (params LocalQuorum (Identity dom))
 
 member ::
   ConvId ->
@@ -270,7 +283,7 @@ updateSelfMemberRemoteConv ::
   Local UserId ->
   MemberUpdate ->
   Client ()
-updateSelfMemberRemoteConv (qUntagged -> Qualified cid domain) luid mup = do
+updateSelfMemberRemoteConv (tUntagged -> Qualified cid domain) luid mup = do
   retry x5 . batch $ do
     setType BatchUnLogged
     setConsistency LocalQuorum
@@ -296,13 +309,13 @@ updateOtherMemberLocalConv lcid quid omu =
   do
     let addQuery r
           | tDomain lcid == qDomain quid =
-            addPrepQuery
-              Cql.updateMemberConvRoleName
-              (r, tUnqualified lcid, qUnqualified quid)
+              addPrepQuery
+                Cql.updateMemberConvRoleName
+                (r, tUnqualified lcid, qUnqualified quid)
           | otherwise =
-            addPrepQuery
-              Cql.updateRemoteMemberConvRoleName
-              (r, tUnqualified lcid, qDomain quid, qUnqualified quid)
+              addPrepQuery
+                Cql.updateRemoteMemberConvRoleName
+                (r, tUnqualified lcid, qDomain quid, qUnqualified quid)
     retry x5 . batch $ do
       setType BatchUnLogged
       setConsistency LocalQuorum
@@ -315,7 +328,7 @@ filterRemoteConvMembers ::
   [UserId] ->
   Remote ConvId ->
   Client ([UserId], Bool)
-filterRemoteConvMembers users (qUntagged -> Qualified conv dom) =
+filterRemoteConvMembers users (tUntagged -> Qualified conv dom) =
   fmap Data.Monoid.getAll
     . foldMap (\muser -> (muser, Data.Monoid.All (not (null muser))))
     <$> UnliftIO.pooledMapConcurrentlyN 8 filterMember users
@@ -326,6 +339,16 @@ filterRemoteConvMembers users (qUntagged -> Qualified conv dom) =
         . retry x1
         $ query Cql.selectRemoteConvMembers (params LocalQuorum (user, dom, conv))
 
+lookupLocalMemberRemoteConv ::
+  UserId ->
+  Remote ConvId ->
+  Client (Maybe UserId)
+lookupLocalMemberRemoteConv userId (tUntagged -> Qualified conv dom) =
+  runIdentity
+    <$$> retry
+      x5
+      (query1 Cql.selectRemoteConvMembers (params LocalQuorum (userId, dom, conv)))
+
 removeLocalMembersFromRemoteConv ::
   -- | The conversation to remove members from
   Remote ConvId ->
@@ -333,29 +356,112 @@ removeLocalMembersFromRemoteConv ::
   [UserId] ->
   Client ()
 removeLocalMembersFromRemoteConv _ [] = pure ()
-removeLocalMembersFromRemoteConv (qUntagged -> Qualified conv convDomain) victims =
+removeLocalMembersFromRemoteConv (tUntagged -> Qualified conv convDomain) victims =
   retry x5 . batch $ do
     setType BatchLogged
     setConsistency LocalQuorum
     for_ victims $ \u -> addPrepQuery Cql.deleteUserRemoteConv (u, convDomain, conv)
 
+addMLSClients :: GroupId -> Qualified UserId -> Set.Set (ClientId, LeafIndex) -> Client ()
+addMLSClients groupId (Qualified usr domain) cs = retry x5 . batch $ do
+  setType BatchLogged
+  setConsistency LocalQuorum
+  for_ cs $ \(c, idx) ->
+    addPrepQuery Cql.addMLSClient (groupId, domain, usr, c, fromIntegral idx)
+
+planMLSClientRemoval :: (Foldable f) => GroupId -> f ClientIdentity -> Client ()
+planMLSClientRemoval groupId cids =
+  retry x5 . batch $ do
+    setType BatchLogged
+    setConsistency LocalQuorum
+    for_ cids $ \cid -> do
+      addPrepQuery
+        Cql.planMLSClientRemoval
+        (groupId, ciDomain cid, ciUser cid, ciClient cid)
+
+removeMLSClients :: GroupId -> Qualified UserId -> Set.Set ClientId -> Client ()
+removeMLSClients groupId (Qualified usr domain) cs = retry x5 . batch $ do
+  setType BatchLogged
+  setConsistency LocalQuorum
+  for_ cs $ \c ->
+    addPrepQuery Cql.removeMLSClient (groupId, domain, usr, c)
+
+removeAllMLSClients :: GroupId -> Client ()
+removeAllMLSClients groupId = do
+  retry x5 $ write Cql.removeAllMLSClients (params LocalQuorum (Identity groupId))
+
 interpretMemberStoreToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (MemberStore ': r) a ->
   Sem r a
 interpretMemberStoreToCassandra = interpret $ \case
-  CreateMembers cid ul -> embedClient $ addMembers cid ul
-  CreateMembersInRemoteConversation rcid uids ->
+  CreateMembers cid ul -> do
+    logEffect "MemberStore.CreateMembers"
+    embedClient $ addMembers cid ul
+  CreateMembersInRemoteConversation rcid uids -> do
+    logEffect "MemberStore.CreateMembersInRemoteConversation"
     embedClient $ addLocalMembersToRemoteConv rcid uids
-  CreateBotMember sr bid cid -> embedClient $ addBotMember sr bid cid
-  GetLocalMember cid uid -> embedClient $ member cid uid
-  GetLocalMembers cid -> embedClient $ members cid
-  GetRemoteMembers rcid -> embedClient $ lookupRemoteMembers rcid
-  SelectRemoteMembers uids rcnv -> embedClient $ filterRemoteConvMembers uids rcnv
-  SetSelfMember qcid luid upd -> embedClient $ updateSelfMember qcid luid upd
-  SetOtherMember lcid quid upd ->
+  CreateBotMember sr bid cid -> do
+    logEffect "MemberStore.CreateBotMember"
+    embedClient $ addBotMember sr bid cid
+  GetLocalMember cid uid -> do
+    logEffect "MemberStore.GetLocalMember"
+    embedClient $ member cid uid
+  GetLocalMembers cid -> do
+    logEffect "MemberStore.GetLocalMembers"
+    embedClient $ members cid
+  GetAllLocalMembers -> do
+    logEffect "MemberStore.GetAllLocalMembers"
+    embedClient allMembers
+  GetRemoteMember cid uid -> do
+    logEffect "MemberStore.GetRemoteMember"
+    embedClient $ lookupRemoteMember cid (tDomain uid) (tUnqualified uid)
+  GetRemoteMembers rcid -> do
+    logEffect "MemberStore.GetRemoteMembers"
+    embedClient $ lookupRemoteMembers rcid
+  CheckLocalMemberRemoteConv uid rcnv -> do
+    logEffect "MemberStore.CheckLocalMemberRemoteConv"
+    fmap (not . null) $ embedClient $ lookupLocalMemberRemoteConv uid rcnv
+  SelectRemoteMembers uids rcnv -> do
+    logEffect "MemberStore.SelectRemoteMembers"
+    embedClient $ filterRemoteConvMembers uids rcnv
+  SetSelfMember qcid luid upd -> do
+    logEffect "MemberStore.SetSelfMember"
+    embedClient $ updateSelfMember qcid luid upd
+  SetOtherMember lcid quid upd -> do
+    logEffect "MemberStore.SetOtherMember"
     embedClient $ updateOtherMemberLocalConv lcid quid upd
-  DeleteMembers cnv ul -> embedClient $ removeMembersFromLocalConv cnv ul
-  DeleteMembersInRemoteConversation rcnv uids ->
+  DeleteMembers cnv ul -> do
+    logEffect "MemberStore.DeleteMembers"
+    embedClient $ removeMembersFromLocalConv cnv ul
+  DeleteMembersInRemoteConversation rcnv uids -> do
+    logEffect "MemberStore.DeleteMembersInRemoteConversation"
     embedClient $
       removeLocalMembersFromRemoteConv rcnv uids
+  AddMLSClients lcnv quid cs -> do
+    logEffect "MemberStore.AddMLSClients"
+    embedClient $ addMLSClients lcnv quid cs
+  PlanClientRemoval lcnv cids -> do
+    logEffect "MemberStore.PlanClientRemoval"
+    embedClient $ planMLSClientRemoval lcnv cids
+  RemoveMLSClients lcnv quid cs -> do
+    logEffect "MemberStore.RemoveMLSClients"
+    embedClient $ removeMLSClients lcnv quid cs
+  RemoveAllMLSClients gid -> do
+    logEffect "MemberStore.RemoveAllMLSClients"
+    embedClient $ removeAllMLSClients gid
+  LookupMLSClients lcnv -> do
+    logEffect "MemberStore.LookupMLSClients"
+    embedClient $ lookupMLSClients lcnv
+  LookupMLSClientLeafIndices lcnv -> do
+    logEffect "MemberStore.LookupMLSClientLeafIndices"
+    embedClient $ lookupMLSClientLeafIndices lcnv
+  GetRemoteMembersByDomain dom -> do
+    logEffect "MemberStore.GetRemoteMembersByDomain"
+    embedClient $ lookupRemoteMembersByDomain dom
+  GetLocalMembersByDomain dom -> do
+    logEffect "MemberStore.GetLocalMembersByDomain"
+    embedClient $ lookupLocalMembersByDomain dom

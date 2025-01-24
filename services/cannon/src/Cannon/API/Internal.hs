@@ -1,6 +1,9 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingVia #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,72 +18,43 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Cannon.API.Internal
-  ( sitemap,
-  )
-where
+module Cannon.API.Internal (internalServer) where
 
 import Cannon.App
-import qualified Cannon.Dict as D
+import Cannon.Dict qualified as D
 import Cannon.Types
 import Cannon.WS
 import Control.Monad.Catch
 import Data.Aeson (encode)
-import qualified Data.ByteString.Lazy as L
-import Data.Id (ConnId, UserId)
-import Data.Swagger.Build.Api hiding (Response)
-import Gundeck.Types
-import Gundeck.Types.BulkPush
-import Imports hiding (head)
-import Network.HTTP.Types
-import Network.Wai
-import Network.Wai.Predicate
-import Network.Wai.Routing
-import Network.Wai.Utilities
+import Data.Id
+import Imports
+import Network.WebSockets
+import Servant
+import Servant.Conduit ()
 import System.Logger.Class (msg, val)
-import qualified System.Logger.Class as LC
+import System.Logger.Class qualified as LC
+import Wire.API.Internal.BulkPush
+import Wire.API.Internal.Notification
+import Wire.API.RawJson
+import Wire.API.Routes.Internal.Cannon qualified as Internal
+import Wire.API.Routes.Named
 
-sitemap :: Routes ApiBuilder Cannon ()
-sitemap = do
-  get "/i/status" (continue (const $ return empty)) true
-  head "/i/status" (continue (const $ return empty)) true
+internalServer :: ServerT Internal.API Cannon
+internalServer =
+  Named @"get-status" (pure ())
+    :<|> Named @"push-notification" pushHandler
+    :<|> Named @"bulk-push-notifications" bulkPushHandler
+    :<|> Named @"check-presence" checkPresenceHandler
 
-  post "/i/push/:user/:conn" (continue pushH) $
-    capture "user" .&. capture "conn" .&. request
+pushHandler :: UserId -> ConnId -> RawJson -> Cannon (Maybe ())
+pushHandler user conn body =
+  singlePush (rawJsonBytes body) (PushTarget user conn) >>= \case
+    PushStatusOk -> pure $ Just ()
+    PushStatusGone -> pure Nothing
 
-  post "/i/bulkpush" (continue bulkpushH) $
-    request
-
-  head "/i/presences/:uid/:conn" (continue checkPresenceH) $
-    param "uid" .&. param "conn"
-
-pushH :: UserId ::: ConnId ::: Request -> Cannon Response
-pushH (user ::: conn ::: req) =
-  singlePush (readBody req) (PushTarget user conn) >>= \case
-    PushStatusOk -> return empty
-    PushStatusGone -> return $ errorRs status410 "general" "client gone"
-
--- | Parse the entire list of notifcations and targets, then call 'singlePush' on the each of them
--- in order.
-bulkpushH :: Request -> Cannon Response
-bulkpushH req = json <$> (parseBody' (JsonRequest req) >>= bulkpush)
-
--- | The typed part of 'bulkpush'.
-bulkpush :: BulkPushRequest -> Cannon BulkPushResponse
-bulkpush (BulkPushRequest notifs) =
-  BulkPushResponse . mconcat . zipWith compileResp notifs <$> (uncurry doNotif `mapM` notifs)
-  where
-    doNotif :: Notification -> [PushTarget] -> Cannon [PushStatus]
-    doNotif (pure . encode -> notif) = mapConcurrentlyCannon (singlePush notif)
-    compileResp ::
-      (Notification, [PushTarget]) ->
-      [PushStatus] ->
-      [(NotificationId, PushTarget, PushStatus)]
-    compileResp (notif, prcs) pss = zip3 (repeat (ntfId notif)) prcs pss
-
--- | Take a serialized 'Notification' string and send it to the 'PushTarget'.
-singlePush :: Cannon L.ByteString -> PushTarget -> Cannon PushStatus
-singlePush notification (PushTarget usrid conid) = do
+-- | Take notification @n@ and send it to the 'PushTarget'.
+singlePush :: (WebSocketsData a) => a -> PushTarget -> Cannon PushStatus
+singlePush n (PushTarget usrid conid) = do
   let k = mkKey usrid conid
   d <- clients
   LC.debug $ client (key2bytes k) . msg (val "push")
@@ -88,18 +62,31 @@ singlePush notification (PushTarget usrid conid) = do
   case c of
     Nothing -> do
       LC.debug $ client (key2bytes k) . msg (val "push: client gone")
-      return PushStatusGone
+      pure PushStatusGone
     Just x -> do
       e <- wsenv
-      b <- notification
-      runWS e $
-        (sendMsg b k x >> return PushStatusOk)
-          `catchAll` const (terminate k x >> return PushStatusGone)
+      runWS e $ do
+        catchAll
+          (runWS e (sendMsg n k x) >> pure PushStatusOk)
+          (const (terminate k x >> pure PushStatusGone))
 
-checkPresenceH :: UserId ::: ConnId -> Cannon Response
-checkPresenceH (u ::: c) = do
+bulkPushHandler :: BulkPushRequest -> Cannon BulkPushResponse
+bulkPushHandler (BulkPushRequest ns) =
+  BulkPushResponse . mconcat . zipWith compileResp ns <$> (uncurry doNotify `Imports.mapM` ns)
+  where
+    doNotify :: Notification -> [PushTarget] -> Cannon [PushStatus]
+    doNotify (encode -> notification) =
+      mapConcurrentlyCannon (singlePush notification)
+    compileResp ::
+      (Notification, [PushTarget]) ->
+      [PushStatus] ->
+      [(NotificationId, PushTarget, PushStatus)]
+    compileResp (notif, prcs) pss = zip3 (repeat (ntfId notif)) prcs pss
+
+checkPresenceHandler :: UserId -> ConnId -> Cannon (Maybe ())
+checkPresenceHandler u c = do
   e <- wsenv
   registered <- runWS e $ isRemoteRegistered u c
   if registered
-    then return empty
-    else return $ errorRs status404 "not-found" "presence not registered"
+    then pure $ Just ()
+    else pure Nothing

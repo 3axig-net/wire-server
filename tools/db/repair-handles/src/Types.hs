@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,12 +19,11 @@
 
 module Types where
 
-import Brig.Data.Instances ()
 import Cassandra hiding (Set)
 import Control.Lens
 import Data.Id
 import Imports
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 
 data Env = Env
   { envBrig :: ClientState,

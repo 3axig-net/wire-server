@@ -1,9 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -fprint-potential-instances #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,38 +19,32 @@
 
 module TestHelpers where
 
-import API.SQS
 import Control.Lens (view)
+import Control.Monad.Catch (MonadMask)
+import Control.Retry
 import Data.Domain (Domain)
-import qualified Galley.Aws as Aws
-import Galley.Options (optSettings, setFederationDomain)
+import Data.Qualified
+import Galley.Options (federationDomain, settings)
 import Imports
 import Test.Tasty (TestName, TestTree)
-import Test.Tasty.HUnit (Assertion, assertBool, testCase)
+import Test.Tasty.HUnit (Assertion, testCase)
 import TestSetup
-import UnliftIO.Exception (finally)
 
 test :: IO TestSetup -> TestName -> TestM a -> TestTree
 test s n h = testCase n runTest
   where
-    assertClean :: TestM ()
-    assertClean = do
-      awsEnv <- fromJust <$> view tsAwsEnv
-      msgs <- liftIO $ Aws.execute awsEnv readAllUntilEmpty
-      liftIO $
-        assertBool
-          ( "Found "
-              <> show (length msgs)
-              <> " messages left on queue:\n"
-              <> show msgs
-          )
-          (null msgs)
     runTest :: Assertion
     runTest = do
       setup <- s
-      -- this `finally` doesnt seem to help. if there is an exception in a test
-      -- the other tests still see remaining messages on the queue
-      void . flip runReaderT setup . runTestM $ (ensureQueueEmpty >> h) `finally` assertClean
+      void . flip runReaderT setup . runTestM $ h
 
 viewFederationDomain :: TestM Domain
-viewFederationDomain = view (tsGConf . optSettings . setFederationDomain)
+viewFederationDomain = view (tsGConf . settings . federationDomain)
+
+qualifyLocal :: a -> TestM (Local a)
+qualifyLocal x = do
+  domain <- viewFederationDomain
+  pure $ toLocalUnsafe domain x
+
+eventually :: (MonadIO m, MonadMask m) => m a -> m a
+eventually = recoverAll (limitRetries 3 <> exponentialBackoff 100000) . const

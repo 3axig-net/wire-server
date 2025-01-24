@@ -1,24 +1,8 @@
--- This file is part of the Wire Server implementation.
---
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
---
--- This program is free software: you can redistribute it and/or modify it under
--- the terms of the GNU Affero General Public License as published by the Free
--- Software Foundation, either version 3 of the License, or (at your option) any
--- later version.
---
--- This program is distributed in the hope that it will be useful, but WITHOUT
--- ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
--- FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
--- details.
---
--- You should have received a copy of the GNU Affero General Public License along
--- with this program. If not, see <https://www.gnu.org/licenses/>.
 {-# LANGUAGE RecordWildCards #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -35,23 +19,21 @@
 
 module Work where
 
-import Brig.Data.Instances ()
 import Cassandra hiding (Set)
-import qualified Cassandra as Cas
-import qualified Cassandra.Settings as Cas
+import Cassandra qualified as Cas
+import Cassandra.Settings qualified as Cas
 import Conduit
 import Control.Lens
 import Control.Monad.Except
-import qualified Data.Conduit.Combinators as C
+import Data.Conduit.Combinators qualified as C
 import Data.Handle (Handle)
 import Data.Id
-import qualified Data.Map.Strict as Map
-import Data.String.Conversions (cs)
-import qualified Data.Text as T
+import Data.Map.Strict qualified as Map
+import Data.Text qualified as T
 import Imports
 import Options
 import Options.Applicative hiding (action)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 import Types
 
 -- | The table user_handle grouped by user
@@ -60,7 +42,7 @@ type HandleMap = Map UserId [Handle]
 readHandleMap :: Env -> IO HandleMap
 readHandleMap Env {..} =
   runConduit $
-    (transPipe (runClient envBrig) $ paginateC selectUserHandle (paramsP LocalQuorum () envPageSize) x1)
+    transPipe (runClient envBrig) (paginateC selectUserHandle (paramsP LocalQuorum () envPageSize) x1)
       .| (C.foldM insertAndLog (Map.empty, 0) <&> fst)
   where
     selectUserHandle :: PrepQuery R () (Maybe UserId, Maybe Handle)
@@ -69,7 +51,7 @@ readHandleMap Env {..} =
     insertAndLog :: (HandleMap, Int) -> [(Maybe UserId, Maybe Handle)] -> IO (HandleMap, Int)
     insertAndLog (hmap, nTotal) pairs = do
       let n = length pairs
-      Log.info envLogger $ Log.msg @Text $ "handles loaded: " <> (cs . show $ nTotal + n)
+      Log.info envLogger $ Log.msg @Text $ "handles loaded: " <> (T.pack . show $ nTotal + n)
       pure (foldl' insert hmap pairs, nTotal + n)
 
     insert :: HandleMap -> (Maybe UserId, Maybe Handle) -> HandleMap
@@ -120,10 +102,11 @@ decideAction uid (Just currentHandle) handles =
 
 sourceActions :: Env -> HandleMap -> ConduitM () ActionResult IO ()
 sourceActions Env {..} hmap =
-  ( transPipe (runClient envGalley) $
-      paginateC selectTeam (paramsP LocalQuorum (pure envTeam) envPageSize) x5
+  transPipe
+    (runClient envGalley)
+    ( paginateC selectTeam (paramsP LocalQuorum (pure envTeam) envPageSize) x5
         .| C.map (fmap runIdentity)
-  )
+    )
     .| C.mapM readUsersPage
     .| C.concat
     .| C.map
@@ -154,15 +137,17 @@ executeAction env = \case
     setUserHandle :: Env -> UserId -> Handle -> IO ()
     setUserHandle Env {..} uid handle =
       runClient envBrig $
-        Cas.write updateHandle $ params LocalQuorum (handle, uid)
+        Cas.write updateHandle $
+          params LocalQuorum (handle, uid)
       where
         updateHandle :: PrepQuery W (Handle, UserId) ()
-        updateHandle = "UPDATE user SET handle = ? WHERE id = ?"
+        updateHandle = {- `IF EXISTS`, but that requires benchmarking -} "UPDATE user SET handle = ? WHERE id = ?"
 
     removeHandle :: Env -> Handle -> IO ()
     removeHandle Env {..} handle =
       runClient envBrig $
-        Cas.write deleteHandle $ params LocalQuorum (pure handle)
+        Cas.write deleteHandle $
+          params LocalQuorum (pure handle)
       where
         deleteHandle :: PrepQuery W (Identity Handle) ()
         deleteHandle = "DELETE FROM user_handle WHERE handle = ?"
@@ -182,7 +167,7 @@ runCommand env@Env {..} = do
     handleAction :: Env -> ActionResult -> IO ()
     handleAction _env (Left err) = Log.err envLogger (Log.msg . show $ err)
     handleAction _env (Right action) = do
-      Log.debug envLogger $ Log.msg @Text (cs . show $ action)
+      Log.debug envLogger $ Log.msg (show $ action)
       unless (envSettings ^. setDryRun) $
         executeAction env action
 
@@ -204,7 +189,7 @@ runCommand env@Env {..} = do
       where
         mark :: Text -> Int -> Maybe Text
         mark msg n
-          | n > 0 = Just $ msg <> ": " <> cs (show n)
+          | n > 0 = Just $ msg <> ": " <> T.pack (show n)
           | otherwise = Nothing
 
         tally :: (Int, Int, Int, Int) -> ActionResult -> (Int, Int, Int, Int)
@@ -213,7 +198,7 @@ runCommand env@Env {..} = do
         tally (nErrs, nReset, nSet, nNoOp) (Right NoActionRequired {}) = (nErrs, nReset, nSet, nNoOp + 1)
         tally (nErrs, nReset, nSet, nNoOp) (Left _) = (nErrs + 1, nReset, nSet, nNoOp)
 
-    chunkify :: Monad m => Int -> ConduitT i [i] m ()
+    chunkify :: (Monad m) => Int -> ConduitT i [i] m ()
     chunkify n = void (C.map (: [])) .| C.chunksOfE n
 
 main :: IO ()

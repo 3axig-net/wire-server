@@ -1,161 +1,146 @@
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
+-- This file is part of the Wire Server implementation.
+--
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
+--
+-- This program is free software: you can redistribute it and/or modify it under
+-- the terms of the GNU Affero General Public License as published by the Free
+-- Software Foundation, either version 3 of the License, or (at your option) any
+-- later version.
+--
+-- This program is distributed in the hope that it will be useful, but WITHOUT
+-- ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+-- FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+-- details.
+--
+-- You should have received a copy of the GNU Affero General Public License along
+-- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module API.Internal
   ( tests,
   )
 where
 
-import API.Internal.Util
+import API.MLS.Util
 import Bilge
-import Brig.Data.User (lookupFeatureConferenceCalling)
-import qualified Brig.Options as Opt
-import Brig.Types.User (userId)
-import qualified Cassandra as Cass
-import Control.Exception (ErrorCall (ErrorCall), throwIO)
-import Control.Lens ((^.), (^?!))
-import qualified Data.Aeson.Lens as Aeson
-import qualified Data.Aeson.Types as Aeson
+import Bilge.Assert
+import Brig.Data.User
+import Brig.Options qualified as Opt
+import Cassandra qualified as C
+import Cassandra qualified as Cass
+import Cassandra.Util
+import Control.Monad.Catch
 import Data.ByteString.Conversion (toByteString')
+import Data.Default
 import Data.Id
-import qualified Data.Set as Set
+import Data.Qualified
 import Imports
+import System.IO.Temp
 import Test.Tasty
 import Test.Tasty.HUnit
 import Util
 import Util.Options (Endpoint)
-import qualified Wire.API.Connection as Conn
-import Wire.API.Routes.Internal.Brig.EJPD as EJPD
-import qualified Wire.API.Team.Feature as ApiFt
-import qualified Wire.API.Team.Member as Team
+import Wire.API.User
+import Wire.API.User.Client
+
+type TestConstraints m = (MonadFail m, MonadCatch m, MonadIO m, MonadHttp m)
 
 tests :: Opt.Opts -> Manager -> Cass.ClientState -> Brig -> Endpoint -> Gundeck -> Galley -> IO TestTree
-tests opts mgr db brig brigep gundeck galley = do
-  return $
+tests opts mgr db brig brigep _gundeck galley = do
+  pure $
     testGroup "api/internal" $
-      [ test mgr "ejpd requests" $ testEJPDRequest mgr brig brigep gundeck,
-        test mgr "account features: conferenceCalling" $ testFeatureConferenceCallingByAccount opts mgr db brig brigep galley
+      [ test mgr "suspend and unsuspend user" $ testSuspendUser db brig,
+        test mgr "suspend non existing user and verify no db entry" $
+          testSuspendNonExistingUser db brig,
+        test mgr "mls/clients" $ testGetMlsClients brig,
+        test mgr "writetimeToInt64" $ testWritetimeRepresentation opts mgr db brig brigep galley
       ]
 
-testEJPDRequest :: TestConstraints m => Manager -> Brig -> Endpoint -> Gundeck -> m ()
-testEJPDRequest mgr brig brigep gundeck = do
-  (handle1, mkUsr1, handle2, mkUsr2, mkUsr3) <- scaffolding brig gundeck
+testSuspendUser :: forall m. (TestConstraints m) => Cass.ClientState -> Brig -> m ()
+testSuspendUser db brig = do
+  user <- randomUser brig
+  let checkAccountStatus s = do
+        mbStatus <- Cass.runClient db (lookupStatus (userId user))
+        liftIO $ mbStatus @?= Just s
 
-  do
-    let req = EJPDRequestBody [handle1]
-        want =
-          EJPDResponseBody
-            [ mkUsr1 Nothing Nothing
-            ]
-    have <- ejpdRequestClient brigep mgr Nothing req
-    liftIO $ assertEqual "" want have
+  setAccountStatus brig (userId user) Suspended !!! const 200 === statusCode
+  checkAccountStatus Suspended
+  setAccountStatus brig (userId user) Active !!! const 200 === statusCode
+  checkAccountStatus Active
 
-  do
-    let req = EJPDRequestBody [handle1, handle2]
-        want =
-          EJPDResponseBody
-            [ mkUsr1 Nothing Nothing,
-              mkUsr2 Nothing Nothing
-            ]
-    have <- ejpdRequestClient brigep mgr Nothing req
-    liftIO $ assertEqual "" want have
+testSuspendNonExistingUser :: forall m. (TestConstraints m) => Cass.ClientState -> Brig -> m ()
+testSuspendNonExistingUser db brig = do
+  nonExistingUserId <- randomId
+  setAccountStatus brig nonExistingUserId Suspended !!! const 404 === statusCode
+  isUserCreated <- Cass.runClient db (userExists nonExistingUserId)
+  liftIO $ isUserCreated @?= False
 
-  do
-    let req = EJPDRequestBody [handle2]
-        want =
-          EJPDResponseBody
-            [ mkUsr2
-                (Just (Set.fromList [(Conn.Accepted, mkUsr1 Nothing Nothing)]))
-                Nothing
-            ]
-    have <- ejpdRequestClient brigep mgr (Just True) req
-    liftIO $ assertEqual "" want have
+setAccountStatus :: (MonadHttp m, HasCallStack) => Brig -> UserId -> AccountStatus -> m ResponseLBS
+setAccountStatus brig u s =
+  put
+    ( brig
+        . paths ["i", "users", toByteString' u, "status"]
+        . contentJson
+        . json (AccountStatusUpdate s)
+    )
 
-  do
-    let req = EJPDRequestBody [handle1, handle2]
-        want =
-          EJPDResponseBody
-            [ mkUsr1
-                (Just (Set.fromList [(Conn.Accepted, mkUsr2 Nothing Nothing)]))
-                (Just (Set.fromList [mkUsr3 Nothing Nothing], Team.NewListComplete)),
-              mkUsr2
-                (Just (Set.fromList [(Conn.Accepted, mkUsr1 Nothing Nothing)]))
-                Nothing
-            ]
-    have <- ejpdRequestClient brigep mgr (Just True) req
-    liftIO $ assertEqual "" want have
+testGetMlsClients :: Brig -> Http ()
+testGetMlsClients brig = do
+  qusr <- userQualifiedId <$> randomUser brig
+  c <- createClient brig qusr 0
 
-testFeatureConferenceCallingByAccount :: forall m. TestConstraints m => Opt.Opts -> Manager -> Cass.ClientState -> Brig -> Endpoint -> Galley -> m ()
-testFeatureConferenceCallingByAccount (Opt.optSettings -> settings) mgr db brig brigep galley = do
-  let check :: HasCallStack => ApiFt.TeamFeatureStatusNoConfig -> m ()
-      check status = do
-        uid <- userId <$> createUser "joe" brig
-        _ <-
-          aFewTimes 12 (putAccountFeatureConfigClient brigep mgr uid status) isRight
-            >>= either (liftIO . throwIO . ErrorCall . ("putAccountFeatureConfigClient: " <>) . show) pure
+  let getClients :: Http (Set ClientInfo)
+      getClients =
+        responseJsonError
+          =<< get
+            ( brig
+                . paths ["i", "mls", "clients", toByteString' (qUnqualified qusr)]
+                . queryItem "ciphersuite" "0x0001"
+            )
+            <!! const 200 === statusCode
 
-        mbStatus' <- getAccountFeatureConfigClient brigep mgr uid
-        liftIO $ assertEqual "GET /i/users/:uid/features/conferenceCalling" (Right status) mbStatus'
+  cs0 <- getClients
+  liftIO $ toList cs0 @?= [ClientInfo c False]
 
-        featureConfigs <- getAllFeatureConfigs galley uid
-        liftIO $ assertEqual "GET /feature-configs" status (readFeatureConfigs featureConfigs)
+  withSystemTempDirectory "mls" $ \tmp ->
+    uploadKeyPackages brig tmp def qusr c 2
 
-        featureConfigsConfCalling <- getFeatureConfig ApiFt.TeamFeatureConferenceCalling galley uid
-        liftIO $ assertEqual "GET /feature-configs/conferenceCalling" status (responseJsonUnsafe featureConfigsConfCalling)
+  cs1 <- getClients
+  liftIO $ toList cs1 @?= [ClientInfo c True]
 
-      check' :: m ()
-      check' = do
-        uid <- userId <$> createUser "joe" brig
-        let defaultIfNull :: ApiFt.TeamFeatureStatusNoConfig
-            defaultIfNull = settings ^. Opt.getAfcConferenceCallingDefNull
+createClient :: Brig -> Qualified UserId -> Int -> Http ClientId
+createClient brig u i =
+  fmap clientId $
+    responseJsonError
+      =<< addClient
+        brig
+        (qUnqualified u)
+        (defNewClient PermanentClientType [somePrekeys !! i] (someLastPrekeys !! i))
+        <!! const 201 === statusCode
 
-            defaultIfNewRaw :: Maybe ApiFt.TeamFeatureStatusNoConfig
-            defaultIfNewRaw =
-              -- tested manually: whether we remove `defaultForNew` from `brig.yaml` or set it
-              -- to `enabled` or `disabled`, this test always passes.
-              settings ^. Opt.getAfcConferenceCallingDefNewMaybe
+testWritetimeRepresentation :: forall m. (TestConstraints m) => Opt.Opts -> Manager -> Cass.ClientState -> Brig -> Endpoint -> Galley -> m ()
+testWritetimeRepresentation _ _mgr db brig _brigep _galley = do
+  quid <- userQualifiedId <$> randomUser brig
+  let uid = qUnqualified quid
 
-        do
-          cassandraResp :: Maybe ApiFt.TeamFeatureStatusNoConfig <-
-            aFewTimes
-              12
-              (Cass.runClient db (lookupFeatureConferenceCalling uid))
-              isJust
-          liftIO $ assertEqual mempty defaultIfNewRaw cassandraResp
+  ref <- fromJust <$> (runIdentity <$$> Cass.runClient db (C.query1 q1 (C.params C.LocalQuorum (Identity uid))))
 
-        _ <-
-          aFewTimes 12 (deleteAccountFeatureConfigClient brigep mgr uid) isRight
-            >>= either (liftIO . throwIO . ErrorCall . ("deleteAccountFeatureConfigClient: " <>) . show) pure
+  wt <- fromJust <$> (runIdentity <$$> Cass.runClient db (C.query1 q2 (C.params C.LocalQuorum (Identity uid))))
 
-        do
-          cassandraResp :: Maybe ApiFt.TeamFeatureStatusNoConfig <-
-            aFewTimes
-              12
-              (Cass.runClient db (lookupFeatureConferenceCalling uid))
-              isJust
-          liftIO $ assertEqual mempty Nothing cassandraResp
+  liftIO $ assertEqual "writetimeToInt64(<fromCql WRITETIME(status)>) does not match WRITETIME(status)" ref (writetimeToInt64 wt)
+  where
+    q1 :: C.PrepQuery C.R (Identity UserId) (Identity Int64)
+    q1 = "SELECT WRITETIME(status) from user where id = ?"
 
-        mbStatus' <- getAccountFeatureConfigClient brigep mgr uid
-        liftIO $ assertEqual "GET /i/users/:uid/features/conferenceCalling" (Right defaultIfNull) mbStatus'
+    q2 :: C.PrepQuery C.R (Identity UserId) (Identity (Writetime ()))
+    q2 = "SELECT WRITETIME(status) from user where id = ?"
 
-        featureConfigs <- getAllFeatureConfigs galley uid
-        liftIO $ assertEqual "GET /feature-configs" defaultIfNull (readFeatureConfigs featureConfigs)
-
-        featureConfigsConfCalling <- getFeatureConfig ApiFt.TeamFeatureConferenceCalling galley uid
-        liftIO $ assertEqual "GET /feature-configs/conferenceCalling" defaultIfNull (responseJsonUnsafe featureConfigsConfCalling)
-
-      readFeatureConfigs :: HasCallStack => ResponseLBS -> ApiFt.TeamFeatureStatusNoConfig
-      readFeatureConfigs =
-        either (error . show) id
-          . Aeson.parseEither Aeson.parseJSON
-          . (^?! Aeson.key "conferenceCalling")
-          . responseJsonUnsafe @Aeson.Value
-
-  check $ ApiFt.TeamFeatureStatusNoConfig ApiFt.TeamFeatureEnabled
-  check $ ApiFt.TeamFeatureStatusNoConfig ApiFt.TeamFeatureDisabled
-  check'
-
-getFeatureConfig :: (MonadIO m, MonadHttp m, HasCallStack) => ApiFt.TeamFeatureName -> (Request -> Request) -> UserId -> m ResponseLBS
-getFeatureConfig feature galley uid = do
-  get $ galley . paths ["feature-configs", toByteString' feature] . zUser uid
-
-getAllFeatureConfigs :: (MonadIO m, MonadHttp m, HasCallStack) => (Request -> Request) -> UserId -> m ResponseLBS
-getAllFeatureConfigs galley uid = do
-  get $ galley . paths ["feature-configs"] . zUser uid
+lookupStatus :: UserId -> C.Client (Maybe AccountStatus)
+lookupStatus u =
+  (runIdentity =<<)
+    <$> C.retry C.x1 (C.query1 statusSelect (C.params C.LocalQuorum (Identity u)))
+  where
+    statusSelect :: C.PrepQuery C.R (Identity UserId) (Identity (Maybe AccountStatus))
+    statusSelect = "SELECT status FROM user WHERE id = ?"

@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,29 +37,24 @@ module Wire.API.Connection
     ConnectionRequest (..),
     ConnectionUpdate (..),
     ListConnectionsRequestPaginated,
-
-    -- * Swagger
-    modelConnectionList,
-    modelConnection,
-    modelConnectionUpdate,
   )
 where
 
+import Cassandra qualified as C
 import Control.Applicative (optional)
 import Control.Lens ((?~))
-import Data.Aeson as Aeson
+import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Id
 import Data.Json.Util (UTCTimeMillis)
+import Data.OpenApi qualified as S
 import Data.Qualified (Qualified (qUnqualified), deprecatedSchema)
 import Data.Range
-import qualified Data.Schema as P
-import Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
+import Data.Schema
 import Data.Text as Text
 import Imports
 import Servant.API
-import Wire.API.Arbitrary (Arbitrary (..), GenericUniform (..))
 import Wire.API.Routes.MultiTablePaging
+import Wire.Arbitrary (Arbitrary (..), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- UserConnectionList
@@ -85,21 +80,14 @@ data UserConnectionList = UserConnectionList
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform UserConnectionList)
-  deriving (FromJSON, ToJSON, S.ToSchema) via (P.Schema UserConnectionList)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema UserConnectionList)
 
-instance P.ToSchema UserConnectionList where
+instance ToSchema UserConnectionList where
   schema =
-    P.object "UserConnectionList" $
+    object "UserConnectionList" $
       UserConnectionList
-        <$> clConnections P..= P.field "connections" (P.array P.schema)
-        <*> clHasMore P..= P.fieldWithDocModifier "has_more" (P.description ?~ "Indicator that the server has more connections than returned.") P.schema
-
-modelConnectionList :: Doc.Model
-modelConnectionList = Doc.defineModel "UserConnectionList" $ do
-  Doc.description "A list of user connections."
-  Doc.property "connections" (Doc.unique $ Doc.array (Doc.ref modelConnection)) Doc.end
-  Doc.property "has_more" Doc.bool' $
-    Doc.description "Indicator that the server has more connections than returned."
+        <$> clConnections .= field "connections" (array schema)
+        <*> clHasMore .= fieldWithDocModifier "has_more" (description ?~ "Indicator that the server has more connections than returned.") schema
 
 --------------------------------------------------------------------------------
 -- UserConnection
@@ -119,39 +107,21 @@ data UserConnection = UserConnection
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform UserConnection)
-  deriving (FromJSON, ToJSON, S.ToSchema) via (P.Schema UserConnection)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema UserConnection)
 
-instance P.ToSchema UserConnection where
+instance ToSchema UserConnection where
   schema =
-    P.object "UserConnection" $
+    object "UserConnection" $
       UserConnection
-        <$> ucFrom P..= P.field "from" P.schema
-        <*> ucTo P..= P.field "qualified_to" P.schema
+        <$> ucFrom .= field "from" schema
+        <*> ucTo .= field "qualified_to" schema
         <* (qUnqualified . ucTo)
-          P..= optional (P.field "to" (deprecatedSchema "qualified_to" P.schema))
-        <*> ucStatus P..= P.field "status" P.schema
-        <*> ucLastUpdate P..= P.field "last_update" P.schema
-        <*> ucConvId P..= P.optField "qualified_conversation" Nothing P.schema
+          .= optional (field "to" (deprecatedSchema "qualified_to" schema))
+        <*> ucStatus .= field "status" schema
+        <*> ucLastUpdate .= field "last_update" schema
+        <*> ucConvId .= maybe_ (optField "qualified_conversation" schema)
         <* (fmap qUnqualified . ucConvId)
-          P..= P.optField "conversation" Nothing (deprecatedSchema "qualified_conversation" P.schema)
-
-modelConnection :: Doc.Model
-modelConnection = Doc.defineModel "Connection" $ do
-  Doc.description "Directed connection between two users"
-  Doc.property "from" Doc.bytes' $
-    Doc.description "User ID"
-  Doc.property "to" Doc.bytes' $
-    Doc.description "User ID"
-  Doc.property "status" typeRelation $
-    Doc.description "Relation status"
-  Doc.property "last_update" Doc.dateTime' $
-    Doc.description "Timestamp of last update"
-  Doc.property "message" Doc.string' $ do
-    Doc.description "Message"
-    Doc.optional
-  Doc.property "conversation" Doc.bytes' $ do
-    Doc.description "Conversation ID"
-    Doc.optional
+          .= maybe_ (optField "conversation" (deprecatedSchema "qualified_conversation" schema))
 
 --------------------------------------------------------------------------------
 -- Relation
@@ -168,12 +138,12 @@ data Relation
   | Cancelled
   | -- | behaves like blocked, the extra constructor is just to inform why.
     MissingLegalholdConsent
-  deriving stock (Eq, Ord, Show, Generic)
+  deriving stock (Bounded, Enum, Eq, Ord, Show, Generic)
   deriving (Arbitrary) via (GenericUniform Relation)
-  deriving (FromJSON, ToJSON, S.ToSchema) via (P.Schema Relation)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema Relation)
 
 instance S.ToParamSchema Relation where
-  toParamSchema _ = mempty & S.type_ ?~ S.SwaggerString
+  toParamSchema _ = mempty & S.type_ ?~ S.OpenApiString
 
 -- | 'updateConnectionInternal', requires knowledge of the previous state (before
 -- 'MissingLegalholdConsent'), but the clients don't need that information.  To avoid having
@@ -221,41 +191,28 @@ relationDropHistory = \case
   MissingLegalholdConsentFromSent -> MissingLegalholdConsent
   MissingLegalholdConsentFromCancelled -> MissingLegalholdConsent
 
-typeRelation :: Doc.DataType
-typeRelation =
-  Doc.string $
-    Doc.enum
-      [ "accepted",
-        "blocked",
-        "pending",
-        "ignored",
-        "sent",
-        "cancelled",
-        "missing-legalhold-consent"
-      ]
-
-instance P.ToSchema Relation where
+instance ToSchema Relation where
   schema =
-    P.enum @Text "Relation" $
+    enum @Text "Relation" $
       mconcat
-        [ P.element "accepted" Accepted,
-          P.element "blocked" Blocked,
-          P.element "pending" Pending,
-          P.element "ignored" Ignored,
-          P.element "sent" Sent,
-          P.element "cancelled" Cancelled,
-          P.element "missing-legalhold-consent" MissingLegalholdConsent
+        [ element "accepted" Accepted,
+          element "blocked" Blocked,
+          element "pending" Pending,
+          element "ignored" Ignored,
+          element "sent" Sent,
+          element "cancelled" Cancelled,
+          element "missing-legalhold-consent" MissingLegalholdConsent
         ]
 
 instance FromHttpApiData Relation where
   parseQueryParam = \case
-    "accepted" -> return Accepted
-    "blocked" -> return Blocked
-    "pending" -> return Pending
-    "ignored" -> return Ignored
-    "sent" -> return Sent
-    "cancelled" -> return Cancelled
-    "missing-legalhold-consent" -> return MissingLegalholdConsent
+    "accepted" -> pure Accepted
+    "blocked" -> pure Blocked
+    "pending" -> pure Pending
+    "ignored" -> pure Ignored
+    "sent" -> pure Sent
+    "cancelled" -> pure Cancelled
+    "missing-legalhold-consent" -> pure MissingLegalholdConsent
     x -> Left $ "Invalid relation-type " <> x
 
 instance ToHttpApiData Relation where
@@ -267,6 +224,38 @@ instance ToHttpApiData Relation where
     Sent -> "sent"
     Cancelled -> "cancelled"
     MissingLegalholdConsent -> "missing-legalhold-consent"
+
+instance C.Cql RelationWithHistory where
+  ctype = C.Tagged C.IntColumn
+
+  fromCql (C.CqlInt i) = case i of
+    0 -> pure AcceptedWithHistory
+    1 -> pure BlockedWithHistory
+    2 -> pure PendingWithHistory
+    3 -> pure IgnoredWithHistory
+    4 -> pure SentWithHistory
+    5 -> pure CancelledWithHistory
+    6 -> pure MissingLegalholdConsentFromAccepted
+    7 -> pure MissingLegalholdConsentFromBlocked
+    8 -> pure MissingLegalholdConsentFromPending
+    9 -> pure MissingLegalholdConsentFromIgnored
+    10 -> pure MissingLegalholdConsentFromSent
+    11 -> pure MissingLegalholdConsentFromCancelled
+    n -> Left $ "unexpected RelationWithHistory: " ++ show n
+  fromCql _ = Left "RelationWithHistory: int expected"
+
+  toCql AcceptedWithHistory = C.CqlInt 0
+  toCql BlockedWithHistory = C.CqlInt 1
+  toCql PendingWithHistory = C.CqlInt 2
+  toCql IgnoredWithHistory = C.CqlInt 3
+  toCql SentWithHistory = C.CqlInt 4
+  toCql CancelledWithHistory = C.CqlInt 5
+  toCql MissingLegalholdConsentFromAccepted = C.CqlInt 6
+  toCql MissingLegalholdConsentFromBlocked = C.CqlInt 7
+  toCql MissingLegalholdConsentFromPending = C.CqlInt 8
+  toCql MissingLegalholdConsentFromIgnored = C.CqlInt 9
+  toCql MissingLegalholdConsentFromSent = C.CqlInt 10
+  toCql MissingLegalholdConsentFromCancelled = C.CqlInt 11
 
 ----------------
 -- Requests
@@ -285,14 +274,14 @@ data ConnectionRequest = ConnectionRequest
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ConnectionRequest)
-  deriving (FromJSON, ToJSON, S.ToSchema) via (P.Schema ConnectionRequest)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema ConnectionRequest)
 
-instance P.ToSchema ConnectionRequest where
+instance ToSchema ConnectionRequest where
   schema =
-    P.object "ConnectionRequest" $
+    object "ConnectionRequest" $
       ConnectionRequest
-        <$> crUser P..= P.fieldWithDocModifier "user" (P.description ?~ "user ID of the user to request a connection with") P.schema
-        <*> crName P..= P.fieldWithDocModifier "name" (P.description ?~ "Name of the (pending) conversation being initiated (1 - 256) characters)") P.schema
+        <$> crUser .= fieldWithDocModifier "user" (description ?~ "user ID of the user to request a connection with") schema
+        <*> crName .= fieldWithDocModifier "name" (description ?~ "Name of the (pending) conversation being initiated (1 - 256) characters)") schema
 
 -- | Payload type for "please change the status of this connection".
 newtype ConnectionUpdate = ConnectionUpdate
@@ -300,16 +289,10 @@ newtype ConnectionUpdate = ConnectionUpdate
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ConnectionUpdate)
-  deriving (FromJSON, ToJSON, S.ToSchema) via (P.Schema ConnectionUpdate)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema ConnectionUpdate)
 
-instance P.ToSchema ConnectionUpdate where
+instance ToSchema ConnectionUpdate where
   schema =
-    P.object "ConnectionUpdate" $
+    object "ConnectionUpdate" $
       ConnectionUpdate
-        <$> cuStatus P..= P.fieldWithDocModifier "status" (P.description ?~ "New relation status") P.schema
-
-modelConnectionUpdate :: Doc.Model
-modelConnectionUpdate = Doc.defineModel "ConnectionUpdate" $ do
-  Doc.description "Connection update"
-  Doc.property "status" typeRelation $
-    Doc.description "New relation status"
+        <$> cuStatus .= fieldWithDocModifier "status" (description ?~ "New relation status") schema

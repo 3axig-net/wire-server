@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,11 +25,11 @@ where
 
 import Bilge
 import Control.Lens
-import Data.String.Conversions (cs)
+import Data.String.Conversions
 import Imports
 import Util
 
-spec :: HasCallStack => SpecWith TestEnv
+spec :: (HasCallStack) => SpecWith TestEnv
 spec = describe "metrics" . it "works" $ do
   spar <- asks (^. teSpar)
   let p1 = "/sso/metadata"
@@ -37,7 +37,7 @@ spec = describe "metrics" . it "works" $ do
   _ <- call $ get (spar . path p1)
   _ <- call $ get (spar . path (p2 "316f1c18-2980-11e9-ab0b-ef604d1791b2"))
   _ <- call $ get (spar . path (p2 "60a7dda8-2980-11e9-b359-fb5b41565453"))
-  resp :: String <- call $ maybe mempty cs . responseBody <$> get (spar . path "i/metrics")
+  resp :: String <- call $ foldMap cs . responseBody <$> get (spar . path "i/metrics")
   -- FUTUREWORK: here we could parse the prometheus 'RegistrySample' and inspect it more
   -- thoroughly, but i'm not sure there is a parser.
   liftIO $ do

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,29 +23,28 @@ module Federator.Monitor
 where
 
 import Control.Exception (bracket, throw)
-import Federator.Env (TLSSettings (..))
 import Federator.Monitor.Internal
 import Federator.Options (RunSettings (..))
 import Imports
-import qualified Polysemy
-import qualified Polysemy.Error as Polysemy
+import OpenSSL.Session (SSLContext)
+import Polysemy qualified
+import Polysemy.Error qualified as Polysemy
+import Polysemy.TinyLog (logAndIgnoreErrors)
 import System.Logger (Logger)
 
-mkTLSSettingsOrThrow :: RunSettings -> IO TLSSettings
-mkTLSSettingsOrThrow =
-  Polysemy.runM
-    . (either (Polysemy.embed @IO . throw) pure =<<)
-    . Polysemy.runError @FederationSetupError
-    . mkTLSSettings
+mkTLSSettingsOrThrow :: RunSettings -> IO SSLContext
+mkTLSSettingsOrThrow = Polysemy.runM . runEither . Polysemy.runError @FederationSetupError . mkSSLContext
+  where
+    runEither = (either (Polysemy.embed @IO . throw) pure =<<)
 
-withMonitor :: Logger -> IORef TLSSettings -> RunSettings -> IO a -> IO a
-withMonitor logger tlsVar rs action =
+withMonitor :: Logger -> (SSLContext -> IO ()) -> RunSettings -> IO a -> IO a
+withMonitor logger onNewContext rs action =
   bracket
     ( runSemDefault
         logger
         ( mkMonitor
-            (runSemDefault logger . logAndIgnoreErrors)
-            tlsVar
+            (runSemDefault logger . logAndIgnoreErrors showFederationSetupError "federation setup error while updating certificates")
+            onNewContext
             rs
         )
     )

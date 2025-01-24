@@ -1,8 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,10 +28,11 @@ module Spar.Intra.Brig
     setBrigUserName,
     setBrigUserHandle,
     setBrigUserManagedBy,
-    setBrigUserVeid,
+    setBrigUserSSOId,
     setBrigUserRichInfo,
+    setBrigUserLocale,
     checkHandleAvailable,
-    deleteBrigUser,
+    deleteBrigUserInternal,
     createBrigUserSAML,
     createBrigUserNoSAML,
     updateEmail,
@@ -39,18 +41,20 @@ module Spar.Intra.Brig
     getStatus,
     getStatusMaybe,
     setStatus,
+    getDefaultUserLocale,
   )
 where
 
 import Bilge
 import Brig.Types.Intra
 import Brig.Types.User
-import Brig.Types.User.Auth (SsoLogin (..))
 import Control.Monad.Except
 import Data.ByteString.Conversion
+import Data.Code as Code
 import Data.Handle (Handle (fromHandle))
 import Data.Id (Id (Id), TeamId, UserId)
-import Data.Misc (PlainTextPassword)
+import Data.Misc (PlainTextPassword6)
+import qualified Data.Text.Lazy as Lazy
 import Imports
 import Network.HTTP.Types.Method
 import qualified Network.Wai.Utilities.Error as Wai
@@ -58,15 +62,15 @@ import qualified SAML2.WebSSO as SAML
 import Spar.Error
 import qualified System.Logger.Class as Log
 import Web.Cookie
+import Wire.API.Locale
+import Wire.API.Team.Role (Role)
 import Wire.API.User
+import Wire.API.User.Auth.ReAuth
+import Wire.API.User.Auth.Sso
 import Wire.API.User.RichInfo as RichInfo
-import Wire.API.User.Scim (ValidExternalId (..), runValidExternalId)
+import Wire.UserSubsystem (HavePendingInvitations (..))
 
 ----------------------------------------------------------------------
-
--- | FUTUREWORK: this is redundantly defined in "Spar.Intra.BrigApp".
-veidToUserSSOId :: ValidExternalId -> UserSSOId
-veidToUserSSOId = runValidExternalId UserSSOId (UserScimExternalId . fromEmail)
 
 -- | Similar to 'Network.Wire.Client.API.Auth.tokenResponse', but easier: we just need to set the
 -- cookie in the response, and the redirect will make the client negotiate a fresh auth token.
@@ -93,20 +97,28 @@ createBrigUserSAML ::
   Name ->
   -- | Who should have control over the user
   ManagedBy ->
+  Maybe Handle ->
+  Maybe RichInfo ->
+  Maybe Locale ->
+  Role ->
   m UserId
-createBrigUserSAML uref (Id buid) teamid uname managedBy = do
-  let newUser :: NewUser
-      newUser =
-        (emptyNewUser uname)
-          { newUserUUID = Just buid,
-            newUserIdentity = Just (SSOIdentity (UserSSOId uref) Nothing Nothing),
-            newUserOrigin = Just (NewUserOriginTeamUser . NewTeamMemberSSO $ teamid),
-            newUserManagedBy = Just managedBy
+createBrigUserSAML uref (Id buid) teamid name managedBy handle richInfo mLocale role = do
+  let newUser =
+        NewUserSpar
+          { newUserSparUUID = buid,
+            newUserSparDisplayName = name,
+            newUserSparSSOId = UserSSOId uref,
+            newUserSparTeamId = teamid,
+            newUserSparManagedBy = managedBy,
+            newUserSparHandle = handle,
+            newUserSparRichInfo = richInfo,
+            newUserSparLocale = mLocale,
+            newUserSparRole = role
           }
   resp :: ResponseLBS <-
     call $
       method POST
-        . path "/i/users"
+        . path "/i/users/spar"
         . json newUser
   if statusCode resp `elem` [200, 201]
     then userId . selfUser <$> parseResponse @SelfProfile "brig" resp
@@ -114,13 +126,17 @@ createBrigUserSAML uref (Id buid) teamid uname managedBy = do
 
 createBrigUserNoSAML ::
   (HasCallStack, MonadSparToBrig m) =>
-  Email ->
+  Text ->
+  EmailAddress ->
+  UserId ->
   TeamId ->
   -- | User name
   Name ->
+  Maybe Locale ->
+  Role ->
   m UserId
-createBrigUserNoSAML email teamid uname = do
-  let newUser = NewUserScimInvitation teamid Nothing uname email
+createBrigUserNoSAML extId email uid teamid uname locale role = do
+  let newUser = NewUserScimInvitation teamid uid extId locale uname email role
   resp :: ResponseLBS <-
     call $
       method POST
@@ -128,10 +144,10 @@ createBrigUserNoSAML email teamid uname = do
         . json newUser
 
   if statusCode resp `elem` [200, 201]
-    then userId . accountUser <$> parseResponse @UserAccount "brig" resp
+    then userId <$> parseResponse @User "brig" resp
     else rethrow "brig" resp
 
-updateEmail :: (HasCallStack, MonadSparToBrig m) => UserId -> Email -> m ()
+updateEmail :: (HasCallStack, MonadSparToBrig m) => UserId -> EmailAddress -> m ()
 updateEmail buid email = do
   resp <-
     call $
@@ -146,7 +162,7 @@ updateEmail buid email = do
     _ -> rethrow "brig" resp
 
 -- | Get a user; returns 'Nothing' if the user was not found or has been deleted.
-getBrigUserAccount :: (HasCallStack, MonadSparToBrig m) => HavePendingInvitations -> UserId -> m (Maybe UserAccount)
+getBrigUserAccount :: (HasCallStack, MonadSparToBrig m) => HavePendingInvitations -> UserId -> m (Maybe User)
 getBrigUserAccount havePending buid = do
   resp :: ResponseLBS <-
     call $
@@ -163,11 +179,11 @@ getBrigUserAccount havePending buid = do
           ]
 
   case statusCode resp of
-    200 -> do
-      parseResponse @[UserAccount] "brig" resp >>= \case
+    200 ->
+      parseResponse @[User] "brig" resp >>= \case
         [account] ->
           pure $
-            if userDeleted $ accountUser account
+            if userDeleted account
               then Nothing
               else Just account
         _ -> pure Nothing
@@ -178,7 +194,7 @@ getBrigUserAccount havePending buid = do
 --
 -- TODO: currently this is not used, but it might be useful later when/if
 -- @hscim@ stops doing checks during user creation.
-getBrigUserByHandle :: (HasCallStack, MonadSparToBrig m) => Handle -> m (Maybe UserAccount)
+getBrigUserByHandle :: (HasCallStack, MonadSparToBrig m) => Handle -> m (Maybe User)
 getBrigUserByHandle handle = do
   resp :: ResponseLBS <-
     call $
@@ -187,11 +203,11 @@ getBrigUserByHandle handle = do
         . queryItem "handles" (toByteString' handle)
         . queryItem "includePendingInvitations" "true"
   case statusCode resp of
-    200 -> listToMaybe <$> parseResponse @[UserAccount] "brig" resp
+    200 -> listToMaybe <$> parseResponse @[User] "brig" resp
     404 -> pure Nothing
     _ -> rethrow "brig" resp
 
-getBrigUserByEmail :: (HasCallStack, MonadSparToBrig m) => Email -> m (Maybe UserAccount)
+getBrigUserByEmail :: (HasCallStack, MonadSparToBrig m) => EmailAddress -> m (Maybe User)
 getBrigUserByEmail email = do
   resp :: ResponseLBS <-
     call $
@@ -201,8 +217,8 @@ getBrigUserByEmail email = do
         . queryItem "includePendingInvitations" "true"
   case statusCode resp of
     200 -> do
-      macc <- listToMaybe <$> parseResponse @[UserAccount] "brig" resp
-      case userEmail . accountUser =<< macc of
+      macc <- listToMaybe <$> parseResponse @[User] "brig" resp
+      case userEmail =<< macc of
         Just email' | email' == email -> pure macc
         _ -> pure Nothing
     404 -> pure Nothing
@@ -218,11 +234,9 @@ setBrigUserName buid (Name name) = do
         . paths ["/i/users", toByteString' buid, "name"]
         . json (NameUpdate name)
   let sCode = statusCode resp
-  if
-      | sCode < 300 ->
-        pure ()
-      | otherwise ->
-        rethrow "brig" resp
+  if sCode < 300
+    then pure ()
+    else rethrow "brig" resp
 
 -- | Set user's handle.  Fails with status <500 if brig fails with <500, and with 500 if brig fails
 -- with >= 500.
@@ -238,9 +252,9 @@ setBrigUserHandle buid handle = do
         . paths ["/i/users", toByteString' buid, "handle"]
         . json (HandleUpdate (fromHandle handle))
   case (statusCode resp, Wai.label <$> responseJsonMaybe @Wai.Error resp) of
-    (200, Nothing) -> do
+    (200, Nothing) ->
       pure ()
-    _ -> do
+    _ ->
       rethrow "brig" resp
 
 -- | Set user's managedBy. Fails with status <500 if brig fails with <500, and with 500 if
@@ -256,13 +270,13 @@ setBrigUserManagedBy buid managedBy = do
     rethrow "brig" resp
 
 -- | Set user's UserSSOId.
-setBrigUserVeid :: (HasCallStack, MonadSparToBrig m) => UserId -> ValidExternalId -> m ()
-setBrigUserVeid buid veid = do
+setBrigUserSSOId :: (HasCallStack, MonadSparToBrig m) => UserId -> UserSSOId -> m ()
+setBrigUserSSOId buid ssoId = do
   resp <-
     call $
       method PUT
         . paths ["i", "users", toByteString' buid, "sso-id"]
-        . json (veidToUserSSOId veid)
+        . json ssoId
   case statusCode resp of
     200 -> pure ()
     _ -> rethrow "brig" resp
@@ -278,6 +292,24 @@ setBrigUserRichInfo buid richInfo = do
         . json (RichInfoUpdate $ unRichInfo richInfo)
   unless (statusCode resp == 200) $
     rethrow "brig" resp
+
+setBrigUserLocale :: (HasCallStack, MonadSparToBrig m) => UserId -> Maybe Locale -> m ()
+setBrigUserLocale buid = \case
+  Just locale -> do
+    resp <-
+      call $
+        method PUT
+          . paths ["i", "users", toByteString' buid, "locale"]
+          . json (LocaleUpdate locale)
+    unless (statusCode resp == 200) $
+      rethrow "brig" resp
+  Nothing -> do
+    resp <-
+      call $
+        method DELETE
+          . paths ["i", "users", toByteString' buid, "locale"]
+    unless (statusCode resp == 200) $
+      rethrow "brig" resp
 
 getBrigUserRichInfo :: (HasCallStack, MonadSparToBrig m) => UserId -> m RichInfo
 getBrigUserRichInfo buid = do
@@ -297,44 +329,51 @@ checkHandleAvailable hnd = do
         . paths ["/i/users/handles", toByteString' hnd]
   let sCode = statusCode resp
   if
-      | sCode == 200 -> -- handle exists
+    | sCode == 200 -> -- handle exists
         pure False
-      | sCode == 404 -> -- handle not found
+    | sCode == 404 -> -- handle not found
         pure True
-      | otherwise ->
+    | otherwise ->
         rethrow "brig" resp
 
--- | Call brig to delete a user
-deleteBrigUser :: (HasCallStack, MonadSparToBrig m, MonadIO m) => UserId -> m ()
-deleteBrigUser buid = do
-  resp :: ResponseLBS <-
+-- | Call brig to delete a user.
+-- If the user wasn't deleted completely before, another deletion attempt will be made.
+deleteBrigUserInternal :: (HasCallStack, MonadSparToBrig m) => UserId -> m DeleteUserResult
+deleteBrigUserInternal buid = do
+  resp <-
     call $
       method DELETE
         . paths ["/i/users", toByteString' buid]
-  unless (statusCode resp == 202) $
-    rethrow "brig" resp
+  case statusCode resp of
+    200 -> pure AccountAlreadyDeleted
+    202 -> pure AccountDeleted
+    404 -> pure NoUser
+    _ -> rethrow "brig" resp
 
 -- | Verify user's password (needed for certain powerful operations).
 ensureReAuthorised ::
   (HasCallStack, MonadSparToBrig m) =>
   Maybe UserId ->
-  Maybe PlainTextPassword ->
+  Maybe PlainTextPassword6 ->
+  Maybe Code.Value ->
+  Maybe VerificationAction ->
   m ()
-ensureReAuthorised Nothing _ = throwSpar SparMissingZUsr
-ensureReAuthorised (Just uid) secret = do
+ensureReAuthorised Nothing _ _ _ = throwSpar SparMissingZUsr
+ensureReAuthorised (Just uid) secret mbCode mbAction = do
   resp <-
     call $
       method GET
         . paths ["/i/users", toByteString' uid, "reauthenticate"]
-        . json (ReAuthUser secret)
-  let sCode = statusCode resp
-  if
-      | sCode == 200 ->
-        pure ()
-      | sCode == 403 ->
-        throwSpar SparReAuthRequired
-      | otherwise ->
-        rethrow "brig" resp
+        . json (ReAuthUser secret mbCode mbAction)
+  case (statusCode resp, errorLabel resp) of
+    (200, _) -> pure ()
+    (403, Just "code-authentication-required") -> throwSpar SparReAuthCodeAuthRequired
+    (403, Just "code-authentication-failed") -> throwSpar SparReAuthCodeAuthFailed
+    (403, _) -> throwSpar SparReAuthRequired
+    (_, _) -> rethrow "brig" resp
+  where
+    errorLabel :: ResponseLBS -> Maybe Lazy.Text
+    errorLabel = fmap Wai.label . responseJsonMaybe
 
 -- | Get persistent cookie from brig and redirect user past login process.
 --
@@ -350,7 +389,7 @@ ssoLogin buid = do
         . path "/i/sso-login"
         . json (SsoLogin buid Nothing)
         . queryItem "persist" "true"
-  if (statusCode resp == 200)
+  if statusCode resp == 200
     then respToCookie resp
     else rethrow "brig" resp
 
@@ -383,4 +422,11 @@ setStatus uid status = do
         . json (AccountStatusUpdate status)
   case statusCode resp of
     200 -> pure ()
+    _ -> rethrow "brig" resp
+
+getDefaultUserLocale :: (HasCallStack, MonadSparToBrig m) => m Locale
+getDefaultUserLocale = do
+  resp <- call $ method GET . paths ["/i/users/locale"]
+  case statusCode resp of
+    200 -> luLocale <$> parseResponse @LocaleUpdate "brig" resp
     _ -> rethrow "brig" resp

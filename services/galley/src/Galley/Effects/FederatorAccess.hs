@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,7 +24,7 @@ module Galley.Effects.FederatorAccess
     runFederatedEither,
     runFederatedConcurrently,
     runFederatedConcurrentlyEither,
-    runFederatedConcurrently_,
+    runFederatedConcurrentlyBucketsEither,
     isFederationConfigured,
   )
 where
@@ -36,12 +38,12 @@ import Wire.API.Federation.Error
 
 data FederatorAccess m a where
   RunFederated ::
-    KnownComponent c =>
+    (KnownComponent c) =>
     Remote x ->
     FederatorClient c a ->
     FederatorAccess m a
   RunFederatedEither ::
-    KnownComponent c =>
+    (KnownComponent c) =>
     Remote x ->
     FederatorClient c a ->
     FederatorAccess m (Either FederationError a)
@@ -56,13 +58,15 @@ data FederatorAccess m a where
     f (Remote x) ->
     (Remote [x] -> FederatorClient c a) ->
     FederatorAccess m [Either (Remote [x], FederationError) (Remote a)]
+  -- | An action similar to 'RunFederatedConcurrentlyEither', but whose input is
+  -- already in buckets. The buckets are paired with arbitrary data that affect
+  -- the payload of the request for each remote backend.
+  RunFederatedConcurrentlyBucketsEither ::
+    forall (c :: Component) f a m x.
+    (KnownComponent c, Foldable f) =>
+    f (Remote x) ->
+    (Remote x -> FederatorClient c a) ->
+    FederatorAccess m [Either (Remote x, FederationError) (Remote a)]
   IsFederationConfigured :: FederatorAccess m Bool
 
 makeSem ''FederatorAccess
-
-runFederatedConcurrently_ ::
-  (KnownComponent c, Foldable f, Functor f, Member FederatorAccess r) =>
-  f (Remote a) ->
-  (Remote [a] -> FederatorClient c ()) ->
-  Sem r ()
-runFederatedConcurrently_ xs = void . runFederatedConcurrently xs

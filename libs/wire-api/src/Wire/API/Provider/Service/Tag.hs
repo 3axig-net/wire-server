@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -31,26 +31,33 @@ module Wire.API.Provider.Service.Tag
     -- * ServiceTag Matchers
     MatchAny (..),
     MatchAll (..),
-    (.||.),
-    (.&&.),
     matchAll,
     match1,
     match,
   )
 where
 
-import Data.Aeson (FromJSON (parseJSON), ToJSON (toJSON))
-import qualified Data.Aeson as JSON
-import qualified Data.ByteString.Builder as BB
-import qualified Data.ByteString.Char8 as C8
+import Control.Lens (Prism', prism)
+import Data.Aeson (FromJSON, ToJSON (toJSON))
+import Data.Attoparsec.ByteString (IResult (..), parse)
+import Data.ByteString (toStrict)
+import Data.ByteString.Builder qualified as BB
+import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Conversion
-import Data.Range (LTE, Range, fromRange)
-import qualified Data.Range as Range
-import qualified Data.Set as Set
-import qualified Data.Text.Encoding as Text
+import Data.OpenApi qualified as S
+import Data.Range (Range, fromRange, rangedSchema)
+import Data.Range qualified as Range
+import Data.Schema
+import Data.Set qualified as Set
+import Data.Text qualified as Text
+import Data.Text.Encoding (decodeUtf8With)
+import Data.Text.Encoding qualified as Text
+import Data.Text.Encoding.Error (lenientDecode)
+import Data.Type.Ord
 import GHC.TypeLits (KnownNat, Nat)
 import Imports
-import Wire.API.Arbitrary (Arbitrary (..), GenericUniform (..))
+import Web.HttpApiData (FromHttpApiData (parseUrlPiece))
+import Wire.Arbitrary (Arbitrary (..), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- ServiceTag
@@ -58,6 +65,13 @@ import Wire.API.Arbitrary (Arbitrary (..), GenericUniform (..))
 newtype ServiceTagList = ServiceTagList [ServiceTag]
   deriving stock (Eq, Ord, Show)
   deriving newtype (FromJSON, ToJSON, Arbitrary)
+  deriving (S.ToSchema) via (Schema ServiceTagList)
+
+_ServiceTagList :: Prism' ServiceTagList [ServiceTag]
+_ServiceTagList = prism ServiceTagList (\(ServiceTagList l) -> pure l)
+
+instance ToSchema ServiceTagList where
+  schema = named "ServiceTagList" $ tag _ServiceTagList $ array schema
 
 -- | A fixed enumeration of tags for services.
 data ServiceTag
@@ -94,6 +108,7 @@ data ServiceTag
   | WeatherTag
   deriving stock (Eq, Show, Ord, Enum, Bounded, Generic)
   deriving (Arbitrary) via (GenericUniform ServiceTag)
+  deriving (S.ToSchema, ToJSON, FromJSON) via (Schema ServiceTag)
 
 instance FromByteString ServiceTag where
   parser =
@@ -164,13 +179,15 @@ instance ToByteString ServiceTag where
   builder VideoTag = "video"
   builder WeatherTag = "weather"
 
-instance ToJSON ServiceTag where
-  toJSON = JSON.String . Text.decodeUtf8 . toByteString'
+instance ToSchema ServiceTag where
+  schema = enum @Text "ServiceTag" . mconcat $ (\a -> element (decodeUtf8With lenientDecode $ toStrict $ toByteString a) a) <$> [minBound ..]
 
-instance FromJSON ServiceTag where
-  parseJSON =
-    JSON.withText "ServiceTag" $
-      either fail pure . runParser parser . Text.encodeUtf8
+instance S.ToParamSchema ServiceTag where
+  toParamSchema _ =
+    mempty
+      { S._schemaType = Just S.OpenApiString,
+        S._schemaEnum = Just (toJSON <$> [(minBound :: ServiceTag) ..])
+      }
 
 --------------------------------------------------------------------------------
 -- Bounded ServiceTag Queries
@@ -180,10 +197,23 @@ newtype QueryAnyTags (m :: Nat) (n :: Nat) = QueryAnyTags
   {queryAnyTagsRange :: Range m n (Set (QueryAllTags m n))}
   deriving stock (Eq, Show, Ord)
 
-instance (KnownNat m, KnownNat n, LTE m n) => Arbitrary (QueryAnyTags m n) where
+instance (m <= n) => S.ToParamSchema (QueryAnyTags m n) where
+  toParamSchema _ =
+    mempty
+      { S._schemaType = Just S.OpenApiString,
+        S._schemaEnum = Just (toJSON <$> [(minBound :: ServiceTag) ..])
+      }
+
+instance (KnownNat n, KnownNat m, m <= n) => ToSchema (QueryAnyTags m n) where
+  schema =
+    let sch :: ValueSchema NamedSwaggerDoc (Range m n (Set (QueryAllTags m n)))
+        sch = fromRange .= rangedSchema (named "QueryAnyTags" $ set schema)
+     in queryAnyTagsRange .= (QueryAnyTags <$> sch)
+
+instance (KnownNat m, KnownNat n, m <= n) => Arbitrary (QueryAnyTags m n) where
   arbitrary = QueryAnyTags <$> arbitrary
 
-queryAnyTags :: LTE m n => MatchAny -> Maybe (QueryAnyTags m n)
+queryAnyTags :: (KnownNat m, KnownNat n, m <= n) => MatchAny -> Maybe (QueryAnyTags m n)
 queryAnyTags t = do
   x <- mapM queryAllTags (Set.toList (matchAnySet t))
   QueryAnyTags <$> Range.checked (Set.fromList x)
@@ -199,22 +229,42 @@ instance ToByteString (QueryAnyTags m n) where
       . queryAnyTagsRange
 
 -- | QueryAny ::= QueryAll { "," QueryAll }
-instance LTE m n => FromByteString (QueryAnyTags m n) where
+instance (KnownNat n, KnownNat m, m <= n) => FromByteString (QueryAnyTags m n) where
   parser = do
     bs <- C8.split ',' <$> parser
     ts <- mapM (either fail pure . runParser parser) bs
     rs <- either fail pure (Range.checkedEither (Set.fromList ts))
-    return $! QueryAnyTags rs
+    pure $! QueryAnyTags rs
+
+runPartial :: (IsString i) => Bool -> IResult i b -> Either Text b
+runPartial alreadyRun result = case result of
+  Fail _ _ e -> Left $ Text.pack e
+  Partial f ->
+    if alreadyRun
+      then Left "A partial parse returned another partial parse."
+      else runPartial True $ f ""
+  Done _ r -> pure r
+
+instance (KnownNat n, KnownNat m, m <= n) => FromHttpApiData (QueryAnyTags m n) where
+  parseUrlPiece t = do
+    txt <- parseUrlPiece t
+    runPartial False $ parse parser $ Text.encodeUtf8 txt
 
 -- | Bounded logical conjunction of 'm' to 'n' 'ServiceTag's to match.
 newtype QueryAllTags (m :: Nat) (n :: Nat) = QueryAllTags
   {queryAllTagsRange :: Range m n (Set ServiceTag)}
   deriving stock (Eq, Show, Ord)
 
-instance (KnownNat m, KnownNat n, LTE m n) => Arbitrary (QueryAllTags m n) where
+instance (KnownNat n, KnownNat m, m <= n) => ToSchema (QueryAllTags m n) where
+  schema =
+    let sch :: ValueSchema NamedSwaggerDoc (Range m n (Set ServiceTag))
+        sch = fromRange .= rangedSchema (named "QueryAllTags" $ set schema)
+     in queryAllTagsRange .= (QueryAllTags <$> sch)
+
+instance (KnownNat m, KnownNat n, m <= n) => Arbitrary (QueryAllTags m n) where
   arbitrary = QueryAllTags <$> arbitrary
 
-queryAllTags :: LTE m n => MatchAll -> Maybe (QueryAllTags m n)
+queryAllTags :: (KnownNat m, KnownNat n, m <= n) => MatchAll -> Maybe (QueryAllTags m n)
 queryAllTags = fmap QueryAllTags . Range.checked . matchAllSet
 
 -- | QueryAll ::= tag { "." tag }
@@ -228,12 +278,17 @@ instance ToByteString (QueryAllTags m n) where
       . queryAllTagsRange
 
 -- | QueryAll ::= tag { "." tag }
-instance LTE m n => FromByteString (QueryAllTags m n) where
+instance (KnownNat m, KnownNat n, m <= n) => FromByteString (QueryAllTags m n) where
   parser = do
     bs <- C8.split '.' <$> parser
     ts <- mapM (either fail pure . runParser parser) bs
     rs <- either fail pure (Range.checkedEither (Set.fromList ts))
-    return $! QueryAllTags rs
+    pure $! QueryAllTags rs
+
+instance (KnownNat n, KnownNat m, m <= n) => FromHttpApiData (QueryAllTags m n) where
+  parseUrlPiece t = do
+    txt <- parseUrlPiece t
+    runPartial False $ parse parser $ Text.encodeUtf8 txt
 
 --------------------------------------------------------------------------------
 -- ServiceTag Matchers
@@ -247,12 +302,6 @@ newtype MatchAny = MatchAny
 newtype MatchAll = MatchAll
   {matchAllSet :: Set ServiceTag}
   deriving stock (Eq, Show, Ord)
-
-(.||.) :: MatchAny -> MatchAny -> MatchAny
-(.||.) (MatchAny a) (MatchAny b) = MatchAny (Set.union a b)
-
-(.&&.) :: MatchAll -> MatchAll -> MatchAll
-(.&&.) (MatchAll a) (MatchAll b) = MatchAll (Set.union a b)
 
 matchAll :: MatchAll -> MatchAny
 matchAll = MatchAny . Set.singleton

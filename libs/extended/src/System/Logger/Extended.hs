@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -28,6 +28,7 @@ module System.Logger.Extended
     LoggerT (..),
     runWithLogger,
     netStringsToLogFormat,
+    structuredJSONRenderer,
   )
 where
 
@@ -35,14 +36,17 @@ import Cassandra (MonadClient)
 import Control.Monad.Catch
 import Data.Aeson as Aeson
 import Data.Aeson.Encoding (list, pair, text)
-import qualified Data.ByteString.Lazy.Builder as B
-import qualified Data.ByteString.Lazy.Char8 as L
-import qualified Data.Map.Lazy as Map
-import Data.String.Conversions (cs)
+import Data.Aeson.Key qualified as Key
+import Data.ByteString (toStrict)
+import Data.ByteString.Builder qualified as B
+import Data.ByteString.Lazy.Char8 qualified as L
+import Data.Map.Lazy qualified as Map
+import Data.Text.Encoding
+import Data.Text.Encoding.Error
 import GHC.Generics
 import Imports
 import System.Logger as Log
-import qualified System.Logger.Class as LC
+import System.Logger.Class qualified as LC
 
 deriving instance Generic LC.Level
 
@@ -64,7 +68,14 @@ elementToEncoding :: Element' -> Encoding
 elementToEncoding (Element' fields msgs) = pairs $ fields <> msgsToSeries msgs
   where
     msgsToSeries :: [Builder] -> Series
-    msgsToSeries = pair "msgs" . list (text . cs . eval)
+    msgsToSeries =
+      pair "msgs"
+        . list
+          ( text
+              . decodeUtf8With lenientDecode
+              . toStrict
+              . eval
+          )
 
 collect :: [Element] -> Element'
 collect = foldr go (Element' mempty [])
@@ -73,25 +84,32 @@ collect = foldr go (Element' mempty [])
     go (Bytes b) (Element' f m) =
       Element' f (b : m)
     go (Field k v) (Element' f m) =
-      Element' (f <> pair (cs . eval $ k) (text . cs . eval $ v)) m
+      Element'
+        ( f
+            <> pair
+              (Key.fromText . dec . toStrict . eval $ k)
+              (text . dec . toStrict . eval $ v)
+        )
+        m
+    dec = decodeUtf8With lenientDecode
 
 jsonRenderer :: Renderer
 jsonRenderer _sep _dateFormat _logLevel = fromEncoding . elementToEncoding . collect
 
-data StructuredJSONOutput = StructuredJSONOutput {msgs :: [Text], fields :: Map Text [Text]}
+data StructuredJSONOutput = StructuredJSONOutput {lvl :: Maybe Level, msgs :: [Text], fields :: Map Key [Text]}
 
 -- | Displays all the 'Bytes' segments in a list under key @msgs@ and 'Field'
 -- segments as key-value pair in a JSON
 --
--- >>> logElems = [Bytes "I", Bytes "The message", Field "field1" "val1", Field "field2" "val2", Field "field1" "val1.1"]
+-- >>> logElems = [Bytes "W", Bytes "The message", Field "field1" "val1", Field "field2" "val2", Field "field1" "val1.1"]
 -- >>> B.toLazyByteString $ structuredJSONRenderer "," iso8601UTC Info logElems
--- "{\"msgs\":[\"I\",\"The message\"],\"field1\":[\"val1\",\"val1.1\"],\"field2\":\"val2\",\"level\":\"Info\"}"
+-- "{\"msgs\":[\"The message\"],\"field1\":[\"val1\",\"val1.1\"],\"field2\":\"val2\",\"level\":\"Warn\"}"
 structuredJSONRenderer :: Renderer
-structuredJSONRenderer _sep _dateFmt lvl logElems =
+structuredJSONRenderer _sep _dateFmt _lvlThreshold logElems =
   let structuredJSON = toStructuredJSONOutput logElems
    in fromEncoding . toEncoding $
         object
-          ( [ "level" Aeson..= lvl,
+          ( [ "level" Aeson..= lvl structuredJSON,
               "msgs" Aeson..= msgs structuredJSON
             ]
               <> Map.foldMapWithKey (\k v -> [k Aeson..= renderTextList v]) (fields structuredJSON)
@@ -104,16 +122,31 @@ structuredJSONRenderer _sep _dateFmt lvl logElems =
     renderTextList xs = toJSON xs
 
     builderToText :: Builder -> Text
-    builderToText = cs . eval
+    builderToText = decodeUtf8With lenientDecode . toStrict . eval
+
+    -- We need to do this to work around https://gitlab.com/twittner/tinylog/-/issues/5
+    parseLevel :: Text -> Maybe Level
+    parseLevel = \case
+      "T" -> Just Trace
+      "D" -> Just Debug
+      "I" -> Just Info
+      "W" -> Just Warn
+      "E" -> Just Log.Error
+      "F" -> Just Fatal
+      _ -> Nothing
 
     toStructuredJSONOutput :: [Element] -> StructuredJSONOutput
     toStructuredJSONOutput =
       foldr
         ( \e o -> case e of
-            Bytes b -> o {msgs = builderToText b : msgs o}
-            Field k v -> o {fields = Map.insertWith (<>) (builderToText k) (map builderToText [v]) (fields o)}
+            Bytes b ->
+              let buildMsg = builderToText b
+               in case parseLevel buildMsg of
+                    Nothing -> o {msgs = builderToText b : msgs o}
+                    Just lvl -> o {lvl = Just lvl}
+            Field k v -> o {fields = Map.insertWith (<>) (Key.fromText $ builderToText k) ([builderToText v]) (fields o)}
         )
-        (StructuredJSONOutput mempty mempty)
+        (StructuredJSONOutput Nothing [] mempty)
 
 -- | Here for backwards-compatibility reasons
 netStringsToLogFormat :: Bool -> LogFormat
@@ -132,9 +165,10 @@ netStringsToLogFormat False = Plain
 mkLogger :: Log.Level -> Maybe (Last Bool) -> Maybe (Last LogFormat) -> IO Log.Logger
 mkLogger lvl useNetstrings logFormat = do
   mkLoggerNew lvl $
-    case (fmap netStringsToLogFormat <$> useNetstrings) <> logFormat of
-      Just x -> getLast x
-      Nothing -> Plain
+    maybe
+      Plain
+      getLast
+      ((fmap netStringsToLogFormat <$> useNetstrings) <> logFormat)
 
 -- | Version of mkLogger that doesn't support the deprecated useNetstrings option
 mkLoggerNew :: Log.Level -> LogFormat -> IO Log.Logger

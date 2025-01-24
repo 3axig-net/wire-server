@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,83 +24,90 @@ import Data.Containers.ListUtils (nubOrdOn)
 import Data.Domain
 import Data.Id
 import Data.Qualified
+import Data.Set qualified as Set
+import Galley.API.Error (InternalError)
 import Galley.API.Mapping
-import qualified Galley.Data.Conversation as Data
+import Galley.Data.Conversation qualified as Data
 import Galley.Types.Conversations.Members
 import Imports
+import Polysemy (Sem)
+import Polysemy qualified as P
+import Polysemy.Error qualified as P
+import Polysemy.TinyLog qualified as P
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Wire.API.Conversation
+import Wire.API.Conversation.Protocol
 import Wire.API.Conversation.Role
 import Wire.API.Federation.API.Galley
   ( RemoteConvMembers (..),
-    RemoteConversation (..),
+    RemoteConversationV2 (..),
   )
+import Wire.Sem.Logger qualified as P
+
+run :: Sem '[P.TinyLog, P.Error InternalError] a -> Either InternalError a
+run = P.run . P.runError . P.discardLogs
 
 tests :: TestTree
 tests =
   testGroup
     "ConversationMapping"
     [ testProperty "conversation view for a valid user is non-empty" $
-        \(ConvWithLocalUser c luid) -> isJust (conversationViewMaybe luid c),
+        \(ConvWithLocalUser c luid) -> isRight (run (conversationView luid c)),
       testProperty "self user in conversation view is correct" $
         \(ConvWithLocalUser c luid) ->
-          fmap (memId . cmSelf . cnvMembers) (conversationViewMaybe luid c)
-            == Just (qUntagged luid),
+          fmap (memId . cmSelf . cnvMembers) (run (conversationView luid c))
+            == Right (tUntagged luid),
       testProperty "conversation view metadata is correct" $
         \(ConvWithLocalUser c luid) ->
-          fmap cnvMetadata (conversationViewMaybe luid c)
-            == Just (Data.convMetadata c),
+          fmap cnvMetadata (run (conversationView luid c))
+            == Right (Data.convMetadata c),
       testProperty "other members in conversation view do not contain self" $
-        \(ConvWithLocalUser c luid) -> case conversationViewMaybe luid c of
-          Nothing -> False
-          Just cnv ->
-            not
-              ( qUntagged luid
-                  `elem` (map omQualifiedId (cmOthers (cnvMembers cnv)))
-              ),
+        \(ConvWithLocalUser c luid) -> case run $ conversationView luid c of
+          Left _ -> False
+          Right cnv ->
+            tUntagged luid
+              `notElem` map omQualifiedId (cmOthers (cnvMembers cnv)),
       testProperty "conversation view contains all users" $
         \(ConvWithLocalUser c luid) ->
-          fmap (sort . cnvUids) (conversationViewMaybe luid c)
-            == Just (sort (convUids (tDomain luid) c)),
+          fmap (sort . cnvUids) (run (conversationView luid c))
+            == Right (sort (convUids (tDomain luid) c)),
       testProperty "conversation view for an invalid user is empty" $
         \(RandomConversation c) luid ->
-          not (elem (tUnqualified luid) (map lmId (Data.convLocalMembers c)))
-            ==> isNothing (conversationViewMaybe luid c),
+          notElem (tUnqualified luid) (map lmId (Data.convLocalMembers c)) ==>
+            isLeft (run (conversationView luid c)),
       testProperty "remote conversation view for a valid user is non-empty" $
         \(ConvWithRemoteUser c ruid) dom ->
-          qDomain (qUntagged ruid) /= dom
-            ==> isJust (conversationToRemote dom ruid c),
+          qDomain (tUntagged ruid) /= dom ==>
+            isJust (conversationToRemote dom ruid c),
       testProperty "self user role in remote conversation view is correct" $
         \(ConvWithRemoteUser c ruid) dom ->
-          qDomain (qUntagged ruid) /= dom
-            ==> fmap (rcmSelfRole . rcnvMembers) (conversationToRemote dom ruid c)
+          qDomain (tUntagged ruid) /= dom ==>
+            fmap (selfRole . members) (conversationToRemote dom ruid c)
               == Just roleNameWireMember,
       testProperty "remote conversation view metadata is correct" $
         \(ConvWithRemoteUser c ruid) dom ->
-          qDomain (qUntagged ruid) /= dom
-            ==> fmap (rcnvMetadata) (conversationToRemote dom ruid c)
+          qDomain (tUntagged ruid) /= dom ==>
+            fmap (.metadata) (conversationToRemote dom ruid c)
               == Just (Data.convMetadata c),
       testProperty "remote conversation view does not contain self" $
         \(ConvWithRemoteUser c ruid) dom -> case conversationToRemote dom ruid c of
           Nothing -> False
           Just rcnv ->
-            not
-              ( qUntagged ruid
-                  `elem` (map omQualifiedId (rcmOthers (rcnvMembers rcnv)))
-              )
+            tUntagged ruid
+              `notElem` map omQualifiedId rcnv.members.others
     ]
 
 cnvUids :: Conversation -> [Qualified UserId]
 cnvUids c =
   let mems = cnvMembers c
-   in memId (cmSelf mems) :
-      map omQualifiedId (cmOthers mems)
+   in memId (cmSelf mems)
+        : map omQualifiedId (cmOthers mems)
 
 convUids :: Domain -> Data.Conversation -> [Qualified UserId]
 convUids dom c =
   map ((`Qualified` dom) . lmId) (Data.convLocalMembers c)
-    <> map (qUntagged . rmId) (Data.convRemoteMembers c)
+    <> map (tUntagged . rmId) (Data.convRemoteMembers c)
 
 genLocalMember :: Gen LocalMember
 genLocalMember =
@@ -117,15 +124,20 @@ genConversation :: Gen Data.Conversation
 genConversation =
   Data.Conversation
     <$> arbitrary
-    <*> pure RegularConv
-    <*> arbitrary
-    <*> arbitrary
-    <*> pure []
-    <*> pure ActivatedAccessRole
     <*> listOf genLocalMember
     <*> listOf genRemoteMember
+    <*> pure False
+    <*> genConversationMetadata
+    <*> pure ProtocolProteus
+
+genConversationMetadata :: Gen ConversationMetadata
+genConversationMetadata =
+  ConversationMetadata RegularConv
+    <$> arbitrary
+    <*> pure []
+    <*> pure (Set.fromList [TeamMemberAccessRole, NonTeamMemberAccessRole])
+    <*> arbitrary
     <*> pure Nothing
-    <*> pure (Just False)
     <*> pure Nothing
     <*> pure Nothing
 

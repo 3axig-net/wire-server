@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,14 +20,17 @@ module Test.Spar.Intra.BrigSpec
   )
 where
 
-import Brig.Types.Common (fromEmail)
 import Control.Lens ((^.))
-import Data.Id (Id (Id))
+import Data.Id (Id (Id), UserId)
 import qualified Data.UUID as UUID
 import Imports hiding (head)
 import qualified Spar.Intra.BrigApp as Intra
+import Spar.Sem.BrigAccess (getAccount)
+import qualified Spar.Sem.BrigAccess as BrigAccess
+import Test.QuickCheck
 import Util
 import qualified Web.Scim.Schema.User as Scim.User
+import Wire.API.User (DeleteUserResult (..), fromEmail)
 
 spec :: SpecWith TestEnv
 spec = do
@@ -37,9 +40,15 @@ spec = do
     it "if a user gets deleted on spar, it will be deleted on brig as well." $ do
       pendingWith "or deactivated?  we should decide what we want here."
 
-  describe "getBrigUser" $ do
+  describe "deleteBrigUserInternal" $ do
+    it "does not throw for non-existing users" $ do
+      uid :: UserId <- liftIO $ generate arbitrary
+      r <- runSpar $ BrigAccess.deleteUser uid
+      liftIO $ r `shouldBe` NoUser
+
+  describe "getAccount" $ do
     it "return Nothing if n/a" $ do
-      musr <- runSpar $ Intra.getBrigUser Intra.WithPendingInvitations (Id . fromJust $ UUID.fromText "29546d9e-ed5b-11ea-8228-c324b1ea1030")
+      musr <- runSpar $ getAccount Intra.WithPendingInvitations (Id . fromJust $ UUID.fromText "29546d9e-ed5b-11ea-8228-c324b1ea1030")
       liftIO $ musr `shouldSatisfy` isNothing
 
     it "return Just if /a" $ do
@@ -52,5 +61,5 @@ spec = do
             scimUserId <$> createUser tok scimUser
 
       uid <- setup
-      musr <- runSpar $ Intra.getBrigUser Intra.WithPendingInvitations uid
+      musr <- runSpar $ getAccount Intra.WithPendingInvitations uid
       liftIO $ musr `shouldSatisfy` isJust

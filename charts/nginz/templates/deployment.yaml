@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: nginz
   labels:
-    wireService: nginz
+    app: nginz
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -16,12 +16,10 @@ spec:
       maxSurge: {{ .Values.replicaCount | mul 2 }}
   selector:
     matchLabels:
-      wireService: nginz
       app: nginz
   template:
     metadata:
       labels:
-        wireService: nginz
         app: nginz
         release: {{ .Release.Name }}
       annotations:
@@ -30,10 +28,21 @@ spec:
         checksum/secret: {{ include (print .Template.BasePath "/secret.yaml") . | sha256sum }}
         fluentbit.io/parser-nginz: nginz
     spec:
-      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }} # should be higher than the drainTimeout (sleep duration of preStop)
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: nginz
       containers:
       - name: nginz-disco
         image: "{{ .Values.images.nginzDisco.repository }}:{{ .Values.images.nginzDisco.tag }}"
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+        securityContext:
+          {{- toYaml .Values.podSecurityContext | nindent 10 }}
+        {{- end }}
         volumeMounts:
         - name: config
           mountPath: /etc/wire/nginz/conf
@@ -43,14 +52,10 @@ spec:
           readOnly: false
       - name: nginz
         image: "{{ .Values.images.nginz.repository }}:{{ .Values.images.nginz.tag }}"
-        lifecycle:
-          preStop:
-            exec:
-              # kubernetes by default sends a SIGTERM to the container,
-              # which would cause nginz to exit, breaking existing websocket connections.
-              # Instead we sleep for a day, then terminate gracefully.
-              # (SIGTERM is still sent, but afterwards)
-              command: ["sh", "-c", "sleep {{ .Values.drainTimeout }} && nginx -c /etc/wire/nginz/conf/nginx.conf -s quit"]
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+        securityContext:
+          {{- toYaml .Values.podSecurityContext | nindent 10 }}
+        {{- end }}
         volumeMounts:
         - name: secrets
           mountPath: /etc/wire/nginz/secrets
@@ -66,6 +71,8 @@ spec:
           containerPort: {{ .Values.config.http.httpPort }}
         - name: tcp
           containerPort: {{ .Values.config.ws.wsPort }}
+        - name: http-metrics
+          containerPort: {{ .Values.config.http.metricsPort }}
         readinessProbe:
           httpGet:
             path: /status

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,7 +21,6 @@ module Galley.App
   ( -- * Environment
     Env,
     reqId,
-    monitor,
     options,
     applog,
     manager,
@@ -37,35 +36,25 @@ module Galley.App
 
     -- * Running Galley effects
     GalleyEffects,
-    runGalley,
-    evalGalley,
+    evalGalleyToIO,
     ask,
     DeleteItem (..),
     toServantHandler,
   )
 where
 
-import Bilge hiding (Request, header, options, statusCode, statusMessage)
+import Bilge hiding (Request, header, host, options, port, statusCode, statusMessage)
 import Cassandra hiding (Set)
-import qualified Cassandra as C
-import qualified Cassandra.Settings as C
-import Control.Error
-import qualified Control.Exception
+import Cassandra.Util (initCassandraForService)
+import Control.Error hiding (err)
 import Control.Lens hiding ((.=))
-import qualified Data.Aeson as Aeson
-import Data.ByteString.Conversion (toByteString')
-import Data.Default (def)
-import qualified Data.List.NonEmpty as NE
-import Data.Metrics.Middleware
-import Data.Proxy (Proxy (..))
+import Data.Id
+import Data.Misc
 import Data.Qualified
 import Data.Range
-import Data.Text (unpack)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
 import Data.Time.Clock
 import Galley.API.Error
-import qualified Galley.Aws as Aws
+import Galley.Aws qualified as Aws
 import Galley.Cassandra.Client
 import Galley.Cassandra.Code
 import Galley.Cassandra.Conversation
@@ -73,104 +62,129 @@ import Galley.Cassandra.Conversation.Members
 import Galley.Cassandra.ConversationList
 import Galley.Cassandra.CustomBackend
 import Galley.Cassandra.LegalHold
+import Galley.Cassandra.Proposal
 import Galley.Cassandra.SearchVisibility
 import Galley.Cassandra.Services
+import Galley.Cassandra.SubConversation
 import Galley.Cassandra.Team
 import Galley.Cassandra.TeamFeatures
 import Galley.Cassandra.TeamNotifications
 import Galley.Effects
-import Galley.Effects.FireAndForget (interpretFireAndForget)
-import Galley.Effects.WaiRoutes.IO
+import Galley.Effects.FireAndForget
 import Galley.Env
 import Galley.External
+import Galley.Intra.BackendNotificationQueue
 import Galley.Intra.Effects
 import Galley.Intra.Federator
-import Galley.Options
+import Galley.Keys
+import Galley.Options hiding (brig, endpoint, federator)
+import Galley.Options qualified as O
 import Galley.Queue
-import qualified Galley.Queue as Q
-import qualified Galley.Types.Teams as Teams
+import Galley.Queue qualified as Q
+import Galley.Types.Teams
+import HTTP2.Client.Manager (Http2Manager, http2ManagerWithSSLCtx)
 import Imports hiding (forkIO)
+import Network.AMQP.Extended (mkRabbitMqChannelMVar)
 import Network.HTTP.Client (responseTimeoutMicro)
 import Network.HTTP.Client.OpenSSL
-import Network.HTTP.Media.RenderHeader (RenderHeader (..))
-import Network.HTTP.Types (hContentType)
-import Network.HTTP.Types.Status (statusCode, statusMessage)
-import Network.Wai
-import qualified Network.Wai.Utilities as Wai
-import qualified Network.Wai.Utilities.Server as Server
+import Network.Wai.Utilities.JSONResponse
 import OpenSSL.Session as Ssl
-import qualified OpenSSL.X509.SystemStore as Ssl
 import Polysemy
+import Polysemy.Async
 import Polysemy.Error
+import Polysemy.Fail
 import Polysemy.Input
 import Polysemy.Internal (Append)
-import qualified Polysemy.TinyLog as P
-import qualified Servant
+import Polysemy.Resource
+import Polysemy.TinyLog qualified as P
+import Servant qualified
 import Ssl.Util
-import System.Logger.Class
-import qualified System.Logger.Extended as Logger
-import qualified UnliftIO.Exception as UnliftIO
-import Util.Options
+import System.Logger qualified as Log
+import System.Logger.Class (Logger)
+import System.Logger.Extended qualified as Logger
+import UnliftIO.Exception qualified as UnliftIO
+import Wire.API.Conversation.Protocol
+import Wire.API.Error
+import Wire.API.Federation.Error
+import Wire.API.Team.Feature
+import Wire.GundeckAPIAccess (runGundeckAPIAccess)
+import Wire.HashPassword
+import Wire.NotificationSubsystem.Interpreter (runNotificationSubsystemGundeck)
+import Wire.Rpc
+import Wire.Sem.Delay
+import Wire.Sem.Logger qualified
+import Wire.Sem.Random.IO
 
 -- Effects needed by the interpretation of other effects
-type GalleyEffects0 = '[Input ClientState, Input Env, Embed IO, Final IO]
+type GalleyEffects0 =
+  '[ Input ClientState,
+     Input Env,
+     HashPassword,
+     Error InvalidInput,
+     Error InternalError,
+     -- federation errors can be thrown by almost every endpoint, so we avoid
+     -- having to declare it every single time, and simply handle it here
+     Error FederationError,
+     Async,
+     Delay,
+     Fail,
+     Embed IO,
+     Error JSONResponse,
+     Resource,
+     Final IO
+   ]
 
 type GalleyEffects = Append GalleyEffects1 GalleyEffects0
 
 -- Define some invariants for the options used
-validateOptions :: Logger -> Opts -> IO ()
-validateOptions l o = do
-  let settings = view optSettings o
+validateOptions :: Opts -> IO (Either HttpsUrl (Map Text HttpsUrl))
+validateOptions o = do
+  let settings' = view settings o
       optFanoutLimit = fromIntegral . fromRange $ currentFanoutLimit o
-  when
-    ( isJust (o ^. optJournal)
-        && settings ^. setMaxTeamSize > optFanoutLimit
-        && not (settings ^. setEnableIndexedBillingTeamMembers . to (fromMaybe False))
-    )
-    $ Logger.warn
-      l
-      ( msg
-          . val
-          $ "You're journaling events for teams larger than " <> toByteString' optFanoutLimit
-            <> " may have some admin user ids missing. \
-               \ This is fine for testing purposes but NOT for production use!!"
-      )
-  when (settings ^. setMaxConvSize > fromIntegral optFanoutLimit) $
+  when (settings' ^. maxConvSize > fromIntegral optFanoutLimit) $
     error "setMaxConvSize cannot be > setTruncationLimit"
-  when (settings ^. setMaxTeamSize < optFanoutLimit) $
+  when (settings' ^. maxTeamSize < optFanoutLimit) $
     error "setMaxTeamSize cannot be < setTruncationLimit"
+  case (o ^. O.federator, o ^. rabbitmq) of
+    (Nothing, Just _) -> error "RabbitMQ config is specified and federator is not, please specify both or none"
+    (Just _, Nothing) -> error "Federator is specified and RabbitMQ config is not, please specify both or none"
+    _ -> pure ()
+  let mlsFlag = settings' ^. featureFlags . to (featureDefaults @MLSConfig)
+      mlsConfig = mlsFlag.config
+      migrationStatus = (.status) $ settings' ^. featureFlags . to (featureDefaults @MlsMigrationConfig)
+  when (migrationStatus == FeatureStatusEnabled && ProtocolMLSTag `notElem` mlsSupportedProtocols mlsConfig) $
+    error "For starting MLS migration, MLS must be included in the supportedProtocol list"
+  unless (mlsDefaultProtocol mlsConfig `elem` mlsSupportedProtocols mlsConfig) $
+    error "The list 'settings.featureFlags.mls.supportedProtocols' must include the value in the field 'settings.featureFlags.mls.defaultProtocol'"
+  let errMsg = "Either conversationCodeURI or multiIngress needs to be set."
+  case (settings' ^. conversationCodeURI, settings' ^. multiIngress) of
+    (Nothing, Nothing) -> error errMsg
+    (Nothing, Just mi) -> pure (Right mi)
+    (Just uri, Nothing) -> pure (Left uri)
+    (Just _, Just _) -> error errMsg
 
-createEnv :: Metrics -> Opts -> IO Env
-createEnv m o = do
-  l <- Logger.mkLogger (o ^. optLogLevel) (o ^. optLogNetStrings) (o ^. optLogFormat)
+createEnv :: Opts -> Logger -> IO Env
+createEnv o l = do
   cass <- initCassandra o l
   mgr <- initHttpManager o
-  validateOptions l o
-  Env def m o l mgr (o ^. optFederator) (o ^. optBrig) cass
+  h2mgr <- initHttp2Manager
+  codeURIcfg <- validateOptions o
+  Env (RequestId defRequestId) o l mgr h2mgr (o ^. O.federator) (o ^. O.brig) cass
     <$> Q.new 16000
     <*> initExtEnv
-    <*> maybe (return Nothing) (fmap Just . Aws.mkEnv l mgr) (o ^. optJournal)
+    <*> maybe (pure Nothing) (fmap Just . Aws.mkEnv l mgr) (o ^. journal)
+    <*> traverse loadAllMLSKeys (o ^. settings . mlsPrivateKeyPaths)
+    <*> traverse (mkRabbitMqChannelMVar l) (o ^. rabbitmq)
+    <*> pure codeURIcfg
 
 initCassandra :: Opts -> Logger -> IO ClientState
-initCassandra o l = do
-  c <-
-    maybe
-      (C.initialContactsPlain (o ^. optCassandra . casEndpoint . epHost))
-      (C.initialContactsDisco "cassandra_galley")
-      (unpack <$> o ^. optDiscoUrl)
-  C.init
-    . C.setLogger (C.mkLogger (Logger.clone (Just "cassandra.galley") l))
-    . C.setContacts (NE.head c) (NE.tail c)
-    . C.setPortNumber (fromIntegral $ o ^. optCassandra . casEndpoint . epPort)
-    . C.setKeyspace (Keyspace $ o ^. optCassandra . casKeyspace)
-    . C.setMaxConnections 4
-    . C.setMaxStreams 128
-    . C.setPoolStripes 4
-    . C.setSendTimeout 3
-    . C.setResponseTimeout 10
-    . C.setProtocolVersion C.V4
-    . C.setPolicy (C.dcFilterPolicyIfConfigured l (o ^. optCassandra . casFilterNodesByDatacentre))
-    $ C.defSettings
+initCassandra o l =
+  initCassandraForService
+    (o ^. cassandra)
+    "galley"
+    (o ^. discoUrl)
+    Nothing
+    l
 
 initHttpManager :: Opts -> IO Manager
 initHttpManager o = do
@@ -180,91 +194,113 @@ initHttpManager o = do
   Ssl.contextAddOption ctx SSL_OP_NO_SSLv3
   Ssl.contextAddOption ctx SSL_OP_NO_TLSv1
   Ssl.contextSetCiphers ctx rsaCiphers
-  Ssl.contextLoadSystemCerts ctx
+  Ssl.contextSetDefaultVerifyPaths ctx
   newManager
     (opensslManagerSettings (pure ctx))
       { managerResponseTimeout = responseTimeoutMicro 10000000,
-        managerConnCount = o ^. optSettings . setHttpPoolSize,
-        managerIdleConnectionCount = 3 * (o ^. optSettings . setHttpPoolSize)
+        managerConnCount = o ^. settings . httpPoolSize,
+        managerIdleConnectionCount = 3 * (o ^. settings . httpPoolSize)
       }
 
-runGalley :: Env -> Request -> Sem GalleyEffects a -> IO a
-runGalley e r m =
-  let e' = reqId .~ lookupReqId r $ e
-   in evalGalley e' m
+initHttp2Manager :: IO Http2Manager
+initHttp2Manager = do
+  ctx <- Ssl.context
+  Ssl.contextAddOption ctx SSL_OP_NO_SSLv2
+  Ssl.contextAddOption ctx SSL_OP_NO_SSLv3
+  Ssl.contextAddOption ctx SSL_OP_NO_TLSv1
+  Ssl.contextSetCiphers ctx rsaCiphers
+  Ssl.contextSetVerificationMode ctx $
+    Ssl.VerifyPeer True True Nothing
+  Ssl.contextSetDefaultVerifyPaths ctx
+  http2ManagerWithSSLCtx ctx
 
 interpretTinyLog ::
-  Members '[Embed IO] r =>
+  (Member (Embed IO) r) =>
   Env ->
   Sem (P.TinyLog ': r) a ->
   Sem r a
 interpretTinyLog e = interpret $ \case
-  P.Polylog l m -> Logger.log (e ^. applog) l (reqIdMsg (e ^. reqId) . m)
+  P.Log l m -> Logger.log (e ^. applog) (Wire.Sem.Logger.toLevel l) (reqIdMsg (e ^. reqId) . m)
 
-lookupReqId :: Request -> RequestId
-lookupReqId = maybe def RequestId . lookup requestIdName . requestHeaders
+evalGalleyToIO :: Env -> Sem GalleyEffects a -> IO a
+evalGalleyToIO env action = do
+  r <-
+    -- log IO exceptions
+    runExceptT (evalGalley env action) `UnliftIO.catch` \(e :: SomeException) -> do
+      Log.err (env ^. applog) $
+        Log.msg ("IO Exception occurred" :: ByteString)
+          . Log.field "message" (displayException e)
+          . Log.field "request" (unRequestId (env ^. reqId))
+      UnliftIO.throwIO e
+  case r of
+    -- throw any errors as IO exceptions without logging them
+    Left e -> UnliftIO.throwIO e
+    Right a -> pure a
 
 toServantHandler :: Env -> Sem GalleyEffects a -> Servant.Handler a
-toServantHandler env galley = do
-  eith <- liftIO $ Control.Exception.try (evalGalley env galley)
-  case eith of
-    Left werr ->
-      handleWaiErrors (view applog env) (unRequestId (view reqId env)) werr
-    Right result -> pure result
-  where
-    handleWaiErrors :: Logger -> ByteString -> Wai.Error -> Servant.Handler a
-    handleWaiErrors logger reqId' werr = do
-      Server.logError' logger (Just reqId') werr
-      Servant.throwError $
-        Servant.ServerError (mkCode werr) (mkPhrase werr) (Aeson.encode werr) [(hContentType, renderHeader (Servant.contentType (Proxy @Servant.JSON)))]
+toServantHandler env = liftIO . evalGalleyToIO env
 
-    mkCode = statusCode . Wai.code
-    mkPhrase = Text.unpack . Text.decodeUtf8 . statusMessage . Wai.code
-
-interpretErrorToException ::
-  (Exception e, Member (Embed IO) r) =>
-  Sem (Error e ': r) a ->
-  Sem r a
-interpretErrorToException = (either (embed @IO . UnliftIO.throwIO) pure =<<) . runError
-
-evalGalley :: Env -> Sem GalleyEffects a -> IO a
-evalGalley e action = do
-  runFinal @IO
+evalGalley :: Env -> Sem GalleyEffects a -> ExceptT JSONResponse IO a
+evalGalley e =
+  ExceptT
+    . runFinal @IO
+    . resourceToIOFinal
+    . runError
     . embedToFinal @IO
+    . failToEmbed @IO
+    . runDelay
+    . asyncToIOFinal
+    . mapError toResponse
+    . mapError toResponse
+    . mapError toResponse
+    . runHashPassword e._options._settings._passwordHashingOptions
     . runInputConst e
     . runInputConst (e ^. cstate)
-    . interpretErrorToException
-    . mapAllErrors
+    . mapError toResponse -- DynError
     . interpretTinyLog e
     . interpretQueue (e ^. deleteQueue)
     . runInputSem (embed getCurrentTime) -- FUTUREWORK: could we take the time only once instead?
-    . interpretWaiRoutes
     . runInputConst (e ^. options)
-    . runInputConst (toLocalUnsafe (e ^. options . optSettings . setFederationDomain) ())
+    . runInputConst (toLocalUnsafe (e ^. options . settings . federationDomain) ())
+    . interpretTeamFeatureSpecialContext e
+    . runInputSem getAllTeamFeaturesForServer
     . interpretInternalTeamListToCassandra
     . interpretTeamListToCassandra
     . interpretLegacyConversationListToCassandra
     . interpretRemoteConversationListToCassandra
     . interpretConversationListToCassandra
+    . interpretTeamMemberStoreToCassandraWithPaging lh
     . interpretTeamMemberStoreToCassandra lh
     . interpretTeamStoreToCassandra lh
     . interpretTeamNotificationStoreToCassandra
-    . interpretTeamFeatureStoreToCassandra
     . interpretServiceStoreToCassandra
     . interpretSearchVisibilityStoreToCassandra
     . interpretMemberStoreToCassandra
     . interpretLegalHoldStoreToCassandra lh
+    . interpretTeamFeatureStoreToCassandra
     . interpretCustomBackendStoreToCassandra
+    . randomToIO
+    . interpretSubConversationStoreToCassandra
     . interpretConversationStoreToCassandra
+    . interpretProposalStoreToCassandra
     . interpretCodeStoreToCassandra
     . interpretClientStoreToCassandra
     . interpretFireAndForget
     . interpretBotAccess
+    . interpretBackendNotificationQueueAccess
     . interpretFederatorAccess
     . interpretExternalAccess
-    . interpretGundeckAccess
+    . runRpcWithHttp (e ^. manager) (e ^. reqId)
+    . runGundeckAPIAccess (e ^. options . gundeck)
+    . runNotificationSubsystemGundeck (notificationSubsystemConfig e)
     . interpretSparAccess
     . interpretBrigAccess
-    $ action
   where
-    lh = view (options . optSettings . setFeatureFlags . Teams.flagLegalHold) e
+    lh = view (options . settings . featureFlags . to npProject) e
+
+interpretTeamFeatureSpecialContext :: Env -> Sem (Input (Maybe [TeamId], FeatureDefaults LegalholdConfig) ': r) a -> Sem r a
+interpretTeamFeatureSpecialContext e =
+  runInputConst
+    ( e ^. options . settings . exposeInvitationURLsTeamAllowlist,
+      e ^. options . settings . featureFlags . to npProject
+    )

@@ -1,12 +1,15 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
-{-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,73 +33,111 @@ import API.Search.Util
 import API.Team.Util
 import API.User.Util
 import Bilge
-import qualified Brig.Options as Opt
-import Brig.Types
+import Bilge.Assert
+import Brig.App (initHttpManagerWithTLSConfig)
+import Brig.Index.Eval (runCommand)
+import Brig.Index.Options
+import Brig.Index.Options qualified as IndexOpts
+import Brig.Options (ElasticSearchOpts)
+import Brig.Options qualified as Opt
+import Brig.Options qualified as Opts
+import Cassandra qualified as C
+import Cassandra.Options qualified as CassOpts
 import Control.Lens ((.~), (?~), (^.))
-import Control.Monad.Catch (MonadCatch, MonadThrow)
-import Control.Retry
-import Data.Aeson (FromJSON, Value, decode)
-import qualified Data.Aeson as Aeson
+import Control.Monad.Catch (MonadCatch)
+import Data.Aeson (Value, decode)
+import Data.Aeson qualified as Aeson
 import Data.Domain (Domain (Domain))
 import Data.Handle (fromHandle)
 import Data.Id
-import qualified Data.Map.Strict as Map
 import Data.Qualified (Qualified (qDomain, qUnqualified))
-import Data.String.Conversions (cs)
-import qualified Data.Text as Text
-import qualified Database.Bloodhound as ES
+import Data.String.Conversions
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Database.Bloodhound qualified as ES
 import Federation.Util
-import qualified Galley.Types.Teams.SearchVisibility as Team
 import Imports
-import qualified Network.HTTP.Client as HTTP
-import qualified Network.Wai.Test as WaiTest
+import Network.HTTP.ReverseProxy (waiProxyTo)
+import Network.HTTP.ReverseProxy qualified as Wai
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
+import Network.Wai.Handler.Warp qualified as Warp
+import Network.Wai.Test qualified as WaiTest
+import Safe (headMay)
+import System.Logger qualified as Log
 import Test.QuickCheck (Arbitrary (arbitrary), generate)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Text.RawString.QQ (r)
-import UnliftIO (Concurrently (..), runConcurrently)
+import URI.ByteString qualified as URI
+import UnliftIO (Concurrently (..), async, bracket, cancel, runConcurrently)
 import Util
-import Wire.API.Team.Feature (TeamFeatureStatusValue (..))
+import Util.Options (Endpoint)
+import Wire.API.Federation.API.Brig (SearchResponse (SearchResponse))
+import Wire.API.Team.Feature
+import Wire.API.Team.SearchVisibility
+import Wire.API.User as User
+import Wire.API.User.Search
+import Wire.API.User.Search qualified as Search
 
 tests :: Opt.Opts -> Manager -> Galley -> Brig -> IO TestTree
 tests opts mgr galley brig = do
   testSetupOutboundOnly <- runHttpT mgr prepareUsersForSearchVisibilityNoNameOutsideTeamTests
-  return $
+  pure $
     testGroup "search" $
       [ testWithBothIndices opts mgr "by-name" $ testSearchByName brig,
         testWithBothIndices opts mgr "by-handle" $ testSearchByHandle brig,
         testWithBothIndices opts mgr "size - when exact handle matches a team user" $ testSearchSize brig True,
         testWithBothIndices opts mgr "size - when exact handle matches a non team user" $ testSearchSize brig False,
         test mgr "empty query" $ testSearchEmpty brig,
-        test mgr "reindex" $ testReindex brig,
+        flakyTest mgr "reindex" $ testReindex brig,
         testWithBothIndices opts mgr "no match" $ testSearchNoMatch brig,
         testWithBothIndices opts mgr "no extra results" $ testSearchNoExtraResults brig,
         testWithBothIndices opts mgr "order-handle (prefix match)" $ testOrderHandle brig,
         testWithBothIndices opts mgr "by-first/middle/last name" $ testSearchByLastOrMiddleName brig,
         testWithBothIndices opts mgr "Non ascii names" $ testSearchNonAsciiNames brig,
-        test mgr "migration to new index" $ testMigrationToNewIndex opts brig,
-        testGroup "team-search-visibility disabled OR SearchVisibilityStandard" $
-          [ testWithBothIndices opts mgr "team member cannot be found by non-team user with display name" $ testSearchTeamMemberAsNonMemberDisplayName brig,
-            testWithBothIndices opts mgr "team member can be found by non-team user with exact handle" $ testSearchTeamMemeberAsNonMemberExactHandle brig,
-            testWithBothIndices opts mgr "team A member cannot be found by team B member with display name" $ testSearchTeamMemberAsOtherMemberDisplayName brig,
-            testWithBothIndices opts mgr "team A member can be found by team B member with exact handle" $ testSearchTeamMemberAsOtherMemberExactHandle brig,
-            testWithBothIndices opts mgr "team A member can be found by other team A member" $ testSearchTeamMemberAsSameMember brig,
-            testWithBothIndices opts mgr "non team user can be found by a team member" $ testSeachNonMemberAsTeamMember brig,
-            testGroup "order" $
-              [ test mgr "team-mates are listed before team-outsiders (exact match)" $ testSearchOrderingAsTeamMemberExactMatch brig,
-                test mgr "team-mates are listed before team-outsiders (prefix match)" $ testSearchOrderingAsTeamMemberPrefixMatch brig,
-                test mgr "team-mates are listed before team-outsiders (worse name match)" $ testSearchOrderingAsTeamMemberWorseNameMatch brig,
-                test mgr "team-mates are listed after team-outsiders (worse handle match)" $ testSearchOrderingAsTeamMemberWorseHandleMatch brig
+        testWithBothIndices opts mgr "user with umlaut" $ testSearchWithUmlaut brig,
+        testWithBothIndices opts mgr "user with japanese name" $ testSearchCJK brig,
+        testGroup "index migration" $
+          [ test mgr "migration to new index from existing index" $ testMigrationToNewIndex opts brig runReindexFromAnotherIndex,
+            test mgr "migration to new index from database" $ testMigrationToNewIndex opts brig (runReindexFromDatabase Reindex),
+            test mgr "migration to new index from database (force sync)" $ testMigrationToNewIndex opts brig (runReindexFromDatabase ReindexSameOrNewer)
+          ],
+        testGroup "team A: SearchVisibilityStandard (= unrestricted outbound search)" $
+          [ testGroup "team A: SearchableByOwnTeam (= restricted inbound search)" $
+              [ testWithBothIndices opts mgr "  I. non-team user cannot find team A member by display name" $ testSearchTeamMemberAsNonMemberDisplayName mgr brig galley FeatureStatusDisabled,
+                testWithBothIndices opts mgr " II. non-team user can find team A member by exact handle" $ testSearchTeamMemberAsNonMemberExactHandle mgr brig galley FeatureStatusDisabled,
+                testWithBothIndices opts mgr "III. team B member cannot find team A member by display name" $ testSearchTeamMemberAsOtherMemberDisplayName mgr brig galley FeatureStatusDisabled,
+                testWithBothIndices opts mgr " IV. team B member can find team A member by exact handle" $ testSearchTeamMemberAsOtherMemberExactHandle mgr brig galley FeatureStatusDisabled,
+                testWithBothIndices opts mgr "  V. team A member can find team A member by display name" $ testSearchTeamMemberAsSameMember mgr brig galley FeatureStatusDisabled,
+                testWithBothIndices opts mgr " VI. team A member can find non-team user by display name" $ testSeachNonMemberAsTeamMember brig,
+                testGroup "order" $
+                  [ test mgr "team-mates are listed before team-outsiders (exact match)" $ testSearchOrderingAsTeamMemberExactMatch brig,
+                    test mgr "team-mates are listed before team-outsiders (prefix match)" $ testSearchOrderingAsTeamMemberPrefixMatch brig,
+                    test mgr "team-mates are listed before team-outsiders (worse name match)" $ testSearchOrderingAsTeamMemberWorseNameMatch brig,
+                    test mgr "team-mates are listed after team-outsiders (worse handle match)" $ testSearchOrderingAsTeamMemberWorseHandleMatch brig
+                  ]
+              ],
+            testGroup "team A: SearchableByAllTeams (= unrestricted inbound search)" $
+              [ test mgr "   I.  non-team user cannot find team A member via display name" $ testSearchTeamMemberAsNonMemberDisplayName mgr brig galley FeatureStatusEnabled,
+                test mgr "  II.  non-team user can find team A member by exact handle" $ testSearchTeamMemberAsNonMemberExactHandle mgr brig galley FeatureStatusEnabled,
+                test mgr "III*.  team B member can find team A member by display name" $ testSearchTeamMemberAsOtherMemberDisplayName mgr brig galley FeatureStatusEnabled,
+                test mgr "  IV.  team B member can find team A member by exact handle" $ testSearchTeamMemberAsOtherMemberExactHandle mgr brig galley FeatureStatusEnabled,
+                test mgr "   V.  team A member can find team A member by display name" $ testSearchTeamMemberAsSameMember mgr brig galley FeatureStatusEnabled
               ]
           ],
-        testGroup "searchSameTeamOnly" $
-          [ testWithBothIndicesAndOpts opts mgr "when searchSameTeamOnly flag is set, non team user cannot be found by a team member" $ testSearchSameTeamOnly brig
+        testGroup "searchSameTeamOnly == true (server setting)" $
+          [ testWithBothIndicesAndOpts opts mgr "any team user cannot find any non-team user by display name or exact handle" $ testSearchSameTeamOnly brig
           ],
-        testGroup "team-search-visibility SearchVisibilityNoNameOutsideTeam" $
-          [ test mgr "team member cannot be found by non-team user" $ testSearchTeamMemberAsNonMemberOutboundOnly brig testSetupOutboundOnly,
-            test mgr "team A member cannot be found by team B member" $ testSearchTeamMemberAsOtherMemberOutboundOnly brig testSetupOutboundOnly,
-            test mgr "team A member *can* be found by other team A member" $ testSearchTeamMemberAsSameMemberOutboundOnly brig testSetupOutboundOnly,
-            test mgr "non team user cannot be found by a team member A" $ testSeachNonMemberAsTeamMemberOutboundOnly brig testSetupOutboundOnly
+        testGroup "team A: SearchVisibilityNoNameOutsideTeam (restricted outbound search)" $
+          [ testGroup "team A: SearchableByOwnTeam (= restricted inbound search)" $
+              [ test mgr "I. non-team user cannot find team A member by display name" $ testSearchTeamMemberAsNonMemberOutboundOnly brig testSetupOutboundOnly,
+                test mgr "team A member cannot find team B member by display name" $ testSearchTeamMemberAsOtherMemberOutboundOnly brig testSetupOutboundOnly,
+                test mgr "team A member can find team B member by by exact handle" $ testSearchOutboundOnlyCanFindOtherByHandle brig testSetupOutboundOnly,
+                test mgr "V. team A member can find other team A member by display name or exact handle" $ testSearchTeamMemberAsSameMemberOutboundOnly brig testSetupOutboundOnly,
+                test mgr "team A member cannot find non-team user by display name" $ testSearchNonMemberOutboundOnlyByDisplay brig testSetupOutboundOnly,
+                test mgr "team A member can find non-team user by exact handle" $ testSearchNonMemberOutboundOnlyByHandle brig testSetupOutboundOnly
+              ]
           ],
         testGroup "federated" $
           [ test mgr "search passing own domain" $ testSearchWithDomain brig,
@@ -104,24 +145,65 @@ tests opts mgr galley brig = do
             -- FUTUREWORK(federation): we need tests for:
             -- failure/error cases on search (augment the federatorMock?)
             -- wire-api-federation Servant-Api vs protobuf-client interactions
-          ]
+          ],
+        test mgr "user with unvalidated email" $ testSearchWithUnvalidatedEmail brig
       ]
   where
     -- Since the tests are about querying only, we only need 1 creation
     -- FUTUREWORK: this should probably be used for all tests in this module, not just some.
     prepareUsersForSearchVisibilityNoNameOutsideTeamTests :: Http ((TeamId, User, User), (TeamId, User, User), User)
     prepareUsersForSearchVisibilityNoNameOutsideTeamTests = do
-      (tidA, ownerA, (memberA : _)) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
-      setTeamTeamSearchVisibilityAvailable galley tidA TeamFeatureEnabled
-      setTeamSearchVisibility galley tidA Team.SearchVisibilityNoNameOutsideTeam
-      (tidB, ownerB, (memberB : _)) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+      (tidA, ownerA, memberA : _) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+      setTeamTeamSearchVisibilityAvailable galley tidA FeatureStatusEnabled
+      setTeamSearchVisibility galley tidA SearchVisibilityNoNameOutsideTeam
+      (tidB, ownerB, memberB : _) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
       regularUser <- randomUserWithHandle brig
       refreshIndex brig
-      return ((tidA, ownerA, memberA), (tidB, ownerB, memberB), regularUser)
+      pure ((tidA, ownerA, memberA), (tidB, ownerB, memberB), regularUser)
 
 type TestConstraints m = (MonadFail m, MonadCatch m, MonadIO m, MonadHttp m)
 
-testSearchByName :: TestConstraints m => Brig -> m ()
+testSearchWithUnvalidatedEmail :: (TestConstraints m) => Brig -> m ()
+testSearchWithUnvalidatedEmail brig = do
+  (tid, owner, user : _) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  let uid = userId user
+      Just oldEmail = userEmail user
+      ownerId = userId owner
+  let searchForUserAndCheckThat = searchAndCheckResult brig tid ownerId uid
+  email <- randomEmail
+  refreshIndex brig
+  searchForUserAndCheckThat
+    ( \tc -> do
+        Search.teamContactEmail tc @?= Just oldEmail
+        assertBool "unvalidated email should be null" (isNothing . Search.teamContactEmailUnvalidated $ tc)
+    )
+  initiateEmailUpdateLogin brig email (emailLogin oldEmail defPassword Nothing) uid !!! const 202 === statusCode
+  refreshIndex brig
+  searchForUserAndCheckThat
+    ( \tc -> do
+        Search.teamContactEmail tc @?= Just oldEmail
+        Search.teamContactEmailUnvalidated tc @?= Just email
+    )
+  activateEmail brig email
+  refreshIndex brig
+  searchForUserAndCheckThat
+    ( \tc -> do
+        Search.teamContactEmail tc @?= Just email
+        assertBool "unvalidated email should be null" (isNothing . Search.teamContactEmailUnvalidated $ tc)
+    )
+  where
+    searchAndCheckResult :: (TestConstraints m) => Brig -> TeamId -> UserId -> UserId -> (Search.TeamContact -> Assertion) -> m ()
+    searchAndCheckResult b tid ownerId userToSearchFor assertion =
+      executeTeamUserSearch b tid ownerId Nothing Nothing Nothing Nothing >>= checkResult userToSearchFor assertion . searchResults
+
+    checkResult :: (TestConstraints m) => UserId -> (Search.TeamContact -> Assertion) -> [Search.TeamContact] -> m ()
+    checkResult userToSearchFor assertion results = liftIO $ do
+      let mbTeamContact = find ((==) userToSearchFor . Search.teamContactUserId) results
+      case mbTeamContact of
+        Nothing -> fail "no team contact found"
+        Just teamContact -> assertion teamContact
+
+testSearchByName :: (TestConstraints m) => Brig -> m ()
 testSearchByName brig = do
   u1 <- randomUser brig
   u2 <- randomUser brig
@@ -136,7 +218,7 @@ testSearchByName brig = do
   assertCan'tFind brig uid1 quid1 (fromName (userDisplayName u1))
   assertCan'tFind brig uid2 quid2 (fromName (userDisplayName u2))
 
-testSearchByLastOrMiddleName :: TestConstraints m => Brig -> m ()
+testSearchByLastOrMiddleName :: (TestConstraints m) => Brig -> m ()
 testSearchByLastOrMiddleName brig = do
   searcher <- userId <$> randomUser brig
   firstName <- randomHandle
@@ -150,7 +232,7 @@ testSearchByLastOrMiddleName brig = do
   assertCanFind brig searcher searched lastName
   assertCanFind brig searcher searched (firstName <> " " <> lastName)
 
-testSearchNonAsciiNames :: TestConstraints m => Brig -> m ()
+testSearchNonAsciiNames :: (TestConstraints m) => Brig -> m ()
 testSearchNonAsciiNames brig = do
   searcher <- userId <$> randomUser brig
   suffix <- randomHandle
@@ -161,7 +243,32 @@ testSearchNonAsciiNames brig = do
   -- This is pathetic transliteration, but it is what we have.
   assertCanFind brig searcher searched ("saktimana" <> suffix)
 
-testSearchByHandle :: TestConstraints m => Brig -> m ()
+testSearchCJK :: (TestConstraints m) => Brig -> m ()
+testSearchCJK brig = do
+  searcher <- randomUser brig
+  user <- createUser' True "藤崎詩織" brig
+  user' <- createUser' True "さおり" brig
+  user'' <- createUser' True "ジョン" brig
+  refreshIndex brig
+  assertCanFind brig (User.userId searcher) user.userQualifiedId "藤崎詩織"
+
+  assertCanFind brig (User.userId searcher) user'.userQualifiedId "saori"
+  assertCanFind brig (User.userId searcher) user'.userQualifiedId "さおり"
+  assertCanFind brig (User.userId searcher) user'.userQualifiedId "サオリ"
+
+  assertCanFind brig (User.userId searcher) user''.userQualifiedId "jon"
+  assertCanFind brig (User.userId searcher) user''.userQualifiedId "ジョン"
+  assertCanFind brig (User.userId searcher) user''.userQualifiedId "じょん"
+
+testSearchWithUmlaut :: (TestConstraints m) => Brig -> m ()
+testSearchWithUmlaut brig = do
+  searcher <- randomUser brig
+  user <- createUser' True "Özi Müller" brig
+  refreshIndex brig
+  assertCanFind brig (User.userId searcher) user.userQualifiedId "ozi muller"
+  assertCanFind brig (User.userId searcher) user.userQualifiedId "Özi Müller"
+
+testSearchByHandle :: (TestConstraints m) => Brig -> m ()
 testSearchByHandle brig = do
   u1 <- randomUserWithHandle brig
   u2 <- randomUser brig
@@ -171,7 +278,7 @@ testSearchByHandle brig = do
       Just h = fromHandle <$> userHandle u1
   assertCanFind brig uid2 quid1 h
 
-testSearchEmpty :: TestConstraints m => Brig -> m ()
+testSearchEmpty :: (TestConstraints m) => Brig -> m ()
 testSearchEmpty brig = do
   -- This user exists just in case empty string starts matching everything
   _someUser <- randomUserWithHandle brig
@@ -180,7 +287,7 @@ testSearchEmpty brig = do
   res <- searchResults <$> executeSearch brig (userId searcher) ""
   liftIO $ assertEqual "nothing should be returned" [] res
 
-testSearchSize :: TestConstraints m => Brig -> Bool -> m ()
+testSearchSize :: (TestConstraints m) => Brig -> Bool -> m ()
 testSearchSize brig exactHandleInTeam = do
   (handleMatch, searchTerm) <-
     if exactHandleInTeam
@@ -209,7 +316,7 @@ testSearchSize brig exactHandleInTeam = do
       Nothing
       (find ((userQualifiedId handleMatch ==) . contactQualifiedId) (tail res))
 
-testSearchNoMatch :: TestConstraints m => Brig -> m ()
+testSearchNoMatch :: (TestConstraints m) => Brig -> m ()
 testSearchNoMatch brig = do
   u1 <- randomUser brig
   _ <- randomUser brig
@@ -219,7 +326,7 @@ testSearchNoMatch brig = do
   result <- searchResults <$> executeSearch brig uid1 "nomatch"
   liftIO $ assertEqual "Expected 0 results" 0 (length result)
 
-testSearchNoExtraResults :: TestConstraints m => Brig -> m ()
+testSearchNoExtraResults :: (TestConstraints m) => Brig -> m ()
 testSearchNoExtraResults brig = do
   u1 <- randomUser brig
   u2 <- randomUser brig
@@ -260,7 +367,7 @@ testReindex brig = do
 -- See also the "cassandra writetime hypothesis":
 --   https://wearezeta.atlassian.net/browse/BE-523
 --   https://github.com/wireapp/wire-server/pull/1798#issuecomment-933174913
-_testOrderName :: TestConstraints m => Brig -> m ()
+_testOrderName :: (TestConstraints m) => Brig -> m ()
 _testOrderName brig = do
   searcher <- userId <$> randomUser brig
   Name searchedWord <- randomNameWithMaxLen 122
@@ -277,7 +384,7 @@ _testOrderName brig = do
       expectedOrder
       resultUIds
 
-testOrderHandle :: TestConstraints m => Brig -> m ()
+testOrderHandle :: (TestConstraints m) => Brig -> m ()
 testOrderHandle brig = do
   searcher <- userId <$> randomUser brig
   searchedWord <- randomHandle
@@ -295,50 +402,75 @@ testOrderHandle brig = do
       expectedOrder
       resultUIds
 
-testSearchTeamMemberAsNonMemberDisplayName :: TestConstraints m => Brig -> m ()
-testSearchTeamMemberAsNonMemberDisplayName brig = do
+testSearchTeamMemberAsNonMemberDisplayName :: (TestConstraints m) => Manager -> Brig -> Galley -> FeatureStatus -> m ()
+testSearchTeamMemberAsNonMemberDisplayName mgr brig galley inboundVisibility = do
   nonTeamMember <- randomUser brig
-  (_, _, [teamMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  (tid, _, [teamMember, teamBTargetReindexedAfter]) <- createPopulatedBindingTeamWithNamesAndHandles brig 2
+  circumventSettingsOverride mgr $ setTeamSearchVisibilityInboundAvailable galley tid inboundVisibility
+  -- we set a random handle here to force a reindexing of that user
+  void $ setRandomHandle brig teamBTargetReindexedAfter
   refreshIndex brig
   assertCan'tFind brig (userId nonTeamMember) (userQualifiedId teamMember) (fromName (userDisplayName teamMember))
+  assertCan'tFind brig (userId nonTeamMember) (userQualifiedId teamBTargetReindexedAfter) (fromName (userDisplayName teamBTargetReindexedAfter))
 
-testSearchTeamMemeberAsNonMemberExactHandle :: TestConstraints m => Brig -> m ()
-testSearchTeamMemeberAsNonMemberExactHandle brig = do
+testSearchTeamMemberAsNonMemberExactHandle :: (TestConstraints m) => Manager -> Brig -> Galley -> FeatureStatus -> m ()
+testSearchTeamMemberAsNonMemberExactHandle mgr brig galley inboundVisibility = do
   nonTeamMember <- randomUser brig
-  (_, _, [teamMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  (tid, _, [teamMember, teamMemberReindexedAfter]) <- createPopulatedBindingTeamWithNamesAndHandles brig 2
+  circumventSettingsOverride mgr $ setTeamSearchVisibilityInboundAvailable galley tid inboundVisibility
+  -- we set a random handle here to force a reindexing of that user
+  teamMemberReindexedAfterHandle <- do
+    teamMemberReindexedAfter' <- setRandomHandle brig teamMemberReindexedAfter
+    pure $ fromMaybe (error "teamATargetReindexedAfter must have a handle") (userHandle teamMemberReindexedAfter')
   refreshIndex brig
-  let teamMemberHandle = fromMaybe (error "teamBMember must have a handle") (userHandle teamMember)
+  let teamMemberHandle = fromMaybe (error "teamMember must have a handle") (userHandle teamMember)
   assertCanFind brig (userId nonTeamMember) (userQualifiedId teamMember) (fromHandle teamMemberHandle)
+  assertCanFind brig (userId nonTeamMember) (userQualifiedId teamMemberReindexedAfter) (fromHandle teamMemberReindexedAfterHandle)
 
-testSearchTeamMemberAsOtherMemberDisplayName :: TestConstraints m => Brig -> m ()
-testSearchTeamMemberAsOtherMemberDisplayName brig = do
-  (_, _, [teamAMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
-  (_, _, [teamBMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+testSearchTeamMemberAsOtherMemberDisplayName :: (TestConstraints m) => Manager -> Brig -> Galley -> FeatureStatus -> m ()
+testSearchTeamMemberAsOtherMemberDisplayName mgr brig galley inboundVisibility = do
+  (_, _, [teamBSearcher]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  (tidA, _, [teamATarget, teamATargetReindexedAfter]) <- createPopulatedBindingTeamWithNamesAndHandles brig 2
   refreshIndex brig
-  assertCan'tFind brig (userId teamAMember) (userQualifiedId teamBMember) (fromName (userDisplayName teamBMember))
-
-testSearchTeamMemberAsOtherMemberExactHandle :: TestConstraints m => Brig -> m ()
-testSearchTeamMemberAsOtherMemberExactHandle brig = do
-  (_, _, [teamAMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
-  (_, _, [teamBMember]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  circumventSettingsOverride mgr $ setTeamSearchVisibilityInboundAvailable galley tidA inboundVisibility
+  void $ setRandomHandle brig teamATargetReindexedAfter
+  hFlush stdout
   refreshIndex brig
-  let teamBMemberHandle = fromMaybe (error "teamBMember must have a handle") (userHandle teamBMember)
-  assertCanFind brig (userId teamAMember) (userQualifiedId teamBMember) (fromHandle teamBMemberHandle)
+  assertion brig (userId teamBSearcher) (userQualifiedId teamATarget) (fromName (userDisplayName teamATarget))
+  assertion brig (userId teamBSearcher) (userQualifiedId teamATargetReindexedAfter) (fromName (userDisplayName teamATargetReindexedAfter))
+  where
+    assertion :: (MonadCatch m, MonadIO m, MonadHttp m, HasCallStack) => Brig -> UserId -> Qualified UserId -> Text -> m ()
+    assertion =
+      case inboundVisibility of
+        FeatureStatusEnabled -> assertCanFind
+        FeatureStatusDisabled -> assertCan'tFind
 
-testSearchTeamMemberAsSameMember :: TestConstraints m => Brig -> m ()
-testSearchTeamMemberAsSameMember brig = do
-  (_, _, [teamAMember, teamAMember']) <- createPopulatedBindingTeam brig 2
+testSearchTeamMemberAsOtherMemberExactHandle :: (TestConstraints m) => Manager -> Brig -> Galley -> FeatureStatus -> m ()
+testSearchTeamMemberAsOtherMemberExactHandle mgr brig galley inboundVisibility = do
+  (_, _, [teamASearcher]) <- createPopulatedBindingTeamWithNamesAndHandles brig 1
+  (tidA, _, [teamATarget, teamATargetReindexedAfter]) <- createPopulatedBindingTeamWithNamesAndHandles brig 2
+  circumventSettingsOverride mgr $ setTeamSearchVisibilityInboundAvailable galley tidA inboundVisibility
+  teamATargetReindexedAfter' <- setRandomHandle brig teamATargetReindexedAfter
   refreshIndex brig
-  assertCanFind brig (userId teamAMember) (userQualifiedId teamAMember') (fromName (userDisplayName teamAMember'))
+  let teamATargetHandle = fromMaybe (error "teamATarget must have a handle") (userHandle teamATarget)
+  assertCanFind brig (userId teamASearcher) (userQualifiedId teamATarget) (fromHandle teamATargetHandle)
+  assertCanFind brig (userId teamASearcher) (userQualifiedId teamATargetReindexedAfter) (fromHandle (fromJust (userHandle teamATargetReindexedAfter')))
 
-testSeachNonMemberAsTeamMember :: TestConstraints m => Brig -> m ()
+testSearchTeamMemberAsSameMember :: (TestConstraints m) => Manager -> Brig -> Galley -> FeatureStatus -> m ()
+testSearchTeamMemberAsSameMember mgr brig galley inboundVisibility = do
+  (tid, _, [teamASearcher, teamATarget]) <- createPopulatedBindingTeam brig 2
+  circumventSettingsOverride mgr $ setTeamSearchVisibilityInboundAvailable galley tid inboundVisibility
+  refreshIndex brig
+  assertCanFind brig (userId teamASearcher) (userQualifiedId teamATarget) (fromName (userDisplayName teamATarget))
+
+testSeachNonMemberAsTeamMember :: (TestConstraints m) => Brig -> m ()
 testSeachNonMemberAsTeamMember brig = do
   nonTeamMember <- randomUser brig
   (_, _, [teamMember]) <- createPopulatedBindingTeam brig 1
   refreshIndex brig
   assertCanFind brig (userId teamMember) (userQualifiedId nonTeamMember) (fromName (userDisplayName nonTeamMember))
 
-testSearchOrderingAsTeamMemberExactMatch :: TestConstraints m => Brig -> m ()
+testSearchOrderingAsTeamMemberExactMatch :: (TestConstraints m) => Brig -> m ()
 testSearchOrderingAsTeamMemberExactMatch brig = do
   searchedName <- randomName
   mapM_ (\(_ :: Int) -> createUser' True (fromName searchedName) brig) [0 .. 99]
@@ -351,7 +483,7 @@ testSearchOrderingAsTeamMemberExactMatch brig = do
       Nothing -> assertFailure "team mate not found in search"
       Just teamSearcheeIndex -> assertEqual "teammate is not the first result" 0 teamSearcheeIndex
 
-testSearchOrderingAsTeamMemberPrefixMatch :: TestConstraints m => Brig -> m ()
+testSearchOrderingAsTeamMemberPrefixMatch :: (TestConstraints m) => Brig -> m ()
 testSearchOrderingAsTeamMemberPrefixMatch brig = do
   searchedName <- randomNameWithMaxLen 122 -- 6 characters for "suffix"
   mapM_ (\(i :: Int) -> createUser' True (fromName searchedName <> Text.pack (show i)) brig) [0 .. 99]
@@ -364,7 +496,7 @@ testSearchOrderingAsTeamMemberPrefixMatch brig = do
       Nothing -> assertFailure "team mate not found in search"
       Just teamSearcheeIndex -> assertEqual "teammate is not the first result" 0 teamSearcheeIndex
 
-testSearchOrderingAsTeamMemberWorseNameMatch :: TestConstraints m => Brig -> m ()
+testSearchOrderingAsTeamMemberWorseNameMatch :: (TestConstraints m) => Brig -> m ()
 testSearchOrderingAsTeamMemberWorseNameMatch brig = do
   searchedTerm <- randomHandle
   _ <- createUser' True searchedTerm brig
@@ -377,7 +509,7 @@ testSearchOrderingAsTeamMemberWorseNameMatch brig = do
       Nothing -> assertFailure "team mate not found in search"
       Just teamSearcheeIndex -> assertEqual "teammate is not the first result" 0 teamSearcheeIndex
 
-testSearchOrderingAsTeamMemberWorseHandleMatch :: TestConstraints m => Brig -> m ()
+testSearchOrderingAsTeamMemberWorseHandleMatch :: (TestConstraints m) => Brig -> m ()
 testSearchOrderingAsTeamMemberWorseHandleMatch brig = do
   searchedTerm <- randomHandle
   nonTeamSearchee <- createUser' True searchedTerm brig
@@ -394,14 +526,17 @@ testSearchOrderingAsTeamMemberWorseHandleMatch brig = do
       Nothing -> assertFailure "team mate not found in search"
       Just teamSearcheeIndex -> assertEqual "teammate is not the second result" 1 teamSearcheeIndex
 
-testSearchSameTeamOnly :: TestConstraints m => Brig -> Opt.Opts -> m ()
+testSearchSameTeamOnly :: (TestConstraints m) => Brig -> Opt.Opts -> m ()
 testSearchSameTeamOnly brig opts = do
-  nonTeamMember <- randomUser brig
+  nonTeamMember' <- randomUser brig
+  nonTeamMember <- setRandomHandle brig nonTeamMember'
   (_, _, [teamMember]) <- createPopulatedBindingTeam brig 1
   refreshIndex brig
-  let newOpts = opts & Opt.optionSettings . Opt.searchSameTeamOnly .~ Just True
-  withSettingsOverrides newOpts $
+  let newOpts = opts & Opt.settingsLens . Opt.searchSameTeamOnlyLens ?~ True
+  withSettingsOverrides newOpts $ do
     assertCan'tFind brig (userId teamMember) (userQualifiedId nonTeamMember) (fromName (userDisplayName nonTeamMember))
+    let nonTeamMemberHandle = fromMaybe (error "nonTeamMember must have a handle") (userHandle nonTeamMember)
+    assertCan'tFind brig (userId teamMember) (userQualifiedId nonTeamMember) (fromHandle nonTeamMemberHandle)
 
 testSearchTeamMemberAsNonMemberOutboundOnly :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
 testSearchTeamMemberAsNonMemberOutboundOnly brig ((_, _, teamAMember), (_, _, _), nonTeamMember) = do
@@ -409,9 +544,12 @@ testSearchTeamMemberAsNonMemberOutboundOnly brig ((_, _, teamAMember), (_, _, _)
 
 testSearchTeamMemberAsOtherMemberOutboundOnly :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
 testSearchTeamMemberAsOtherMemberOutboundOnly brig ((_, _, teamAMember), (_, _, teamBMember), _) = do
-  let teamBMemberHandle = fromMaybe (error "teamBMember must have a handle") (userHandle teamBMember)
   assertCan'tFind brig (userId teamAMember) (userQualifiedId teamBMember) (fromName (userDisplayName teamBMember))
-  assertCan'tFind brig (userId teamAMember) (userQualifiedId teamBMember) (fromHandle teamBMemberHandle)
+
+testSearchOutboundOnlyCanFindOtherByHandle :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
+testSearchOutboundOnlyCanFindOtherByHandle brig ((_, _, teamAMember), (_, _, teamBMember), _) = do
+  let teamBMemberHandle = fromMaybe (error "teamBMember must have a handle") (userHandle teamBMember)
+  assertCanFind brig (userId teamAMember) (userQualifiedId teamBMember) (fromHandle teamBMemberHandle)
 
 testSearchTeamMemberAsSameMemberOutboundOnly :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
 testSearchTeamMemberAsSameMemberOutboundOnly brig ((_, teamAOwner, teamAMember), (_, _, _), _) = do
@@ -422,13 +560,16 @@ testSearchTeamMemberAsSameMemberOutboundOnly brig ((_, teamAOwner, teamAMember),
   assertCanFind brig (userId teamAMember) (userQualifiedId teamAOwner) (fromName (userDisplayName teamAOwner))
   assertCanFind brig (userId teamAMember) (userQualifiedId teamAOwner) (fromHandle teamAOwnerHandle)
 
-testSeachNonMemberAsTeamMemberOutboundOnly :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
-testSeachNonMemberAsTeamMemberOutboundOnly brig ((_, _, teamAMember), (_, _, _), nonTeamMember) = do
-  let teamMemberAHandle = fromMaybe (error "nonTeamMember must have a handle") (userHandle nonTeamMember)
+testSearchNonMemberOutboundOnlyByDisplay :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
+testSearchNonMemberOutboundOnlyByDisplay brig ((_, _, teamAMember), (_, _, _), nonTeamMember) = do
   assertCan'tFind brig (userId teamAMember) (userQualifiedId nonTeamMember) (fromName (userDisplayName nonTeamMember))
-  assertCan'tFind brig (userId teamAMember) (userQualifiedId nonTeamMember) (fromHandle teamMemberAHandle)
 
-testSearchWithDomain :: TestConstraints m => Brig -> m ()
+testSearchNonMemberOutboundOnlyByHandle :: Brig -> ((TeamId, User, User), (TeamId, User, User), User) -> Http ()
+testSearchNonMemberOutboundOnlyByHandle brig ((_, _, teamAMember), (_, _, _), nonTeamMember) = do
+  let teamMemberAHandle = fromMaybe (error "nonTeamMember must have a handle") (userHandle nonTeamMember)
+  assertCanFind brig (userId teamAMember) (userQualifiedId nonTeamMember) (fromHandle teamMemberAHandle)
+
+testSearchWithDomain :: (TestConstraints m) => Brig -> m ()
 testSearchWithDomain brig = do
   searcher <- randomUser brig
   searchee <- randomUser brig
@@ -442,24 +583,27 @@ testSearchWithDomain brig = do
 -- | WARNING: this test only tests that brig will indeed make a call to federator
 -- (i.e. does the correct if/else branching based on the domain),
 -- it does not test any of the federation API details. This needs to be tested separately.
-testSearchOtherDomain :: TestConstraints m => Opt.Opts -> Brig -> m ()
+testSearchOtherDomain :: (TestConstraints m) => Opt.Opts -> Brig -> m ()
 testSearchOtherDomain opts brig = do
   user <- randomUser brig
   -- We cannot assert on a real federated request here, so we make a request to
   -- a mocked federator started and stopped during this test
   otherSearchResult :: [Contact] <- liftIO $ generate arbitrary
-  let mockResponse = Aeson.encode otherSearchResult
-  (results, _) <- liftIO . withTempMockFederator opts mockResponse $ do
+  let mockResponse = Aeson.encode (SearchResponse otherSearchResult ExactHandleSearch)
+  (searchResult, _) <- liftIO . withTempMockFederator opts mockResponse $ do
     executeSearchWithDomain brig (userId user) "someSearchText" (Domain "non-existent.example.com")
   let expectedResult =
         SearchResult
           { searchResults = otherSearchResult,
             searchFound = length otherSearchResult,
             searchReturned = length otherSearchResult,
-            searchTook = 0
+            searchTook = 0,
+            searchPolicy = ExactHandleSearch,
+            searchPagingState = Nothing,
+            searchHasMore = Nothing
           }
   liftIO $ do
-    assertEqual "The search request should get its result from federator" expectedResult results
+    assertEqual "The search request should get its result from federator" expectedResult searchResult
 
 -- | Migration sequence:
 -- 1. A migration is planned, in this time brig writes to two indices
@@ -469,90 +613,218 @@ testSearchOtherDomain opts brig = do
 -- So, we have four time frames ("phases") in which a user could be created/updated:
 -- 1. Before migration is even planned
 -- 2. When brig is writing to both indices
--- 3. While/After reindexing is done form old index to new index
+-- 3. While/After reindexing is done from old index to new index
 -- 4. After brig is writing to only the new index
-testMigrationToNewIndex :: TestConstraints m => Opt.Opts -> Brig -> m ()
-testMigrationToNewIndex opts brig = do
-  (optsOldIndex, ES.IndexName -> oldIndexName) <- optsForOldIndex opts
-  -- Phase 1: Using old index only
-  (phase1NonTeamUser, teamOwner, phase1TeamUser1, phase1TeamUser2, tid) <- withSettingsOverrides optsOldIndex $ do
-    nonTeamUser <- randomUser brig
-    (tid, teamOwner, [teamUser1, teamUser2]) <- createPopulatedBindingTeam brig 2
-    pure (nonTeamUser, teamOwner, teamUser1, teamUser2, tid)
+--
+-- Note: The new index can be on another cluster of ES, but we have only one ES
+-- cluster. This test spins up a proxy server to pass requests to our only ES
+-- server. The proxy server ensures that only requests to the 'old' index go
+-- through.
+testMigrationToNewIndex ::
+  (TestConstraints m, MonadUnliftIO m) =>
+  Opt.Opts ->
+  Brig ->
+  (Log.Logger -> Opt.Opts -> ES.IndexName -> IO ()) ->
+  m ()
+testMigrationToNewIndex opts brig migrateIndexCommand = do
+  logger <- Log.create Log.StdOut
+  -- running brig with `withSettingsOverride` to direct it to the expected index(es).  it's
+  -- important to make both old and new index name/url explicit via `withESProxy`, or the
+  -- calls to `refreshIndex` in this test will interfere with parallel test runs of this test.
+  withESProxy logger opts $ \oldESUrl oldESIndex ->
+    withESProxy logger opts $ \newESUrl newESIndex ->
+      withESProxyOnly [oldESIndex, newESIndex] opts $ \bothIndexUrl -> do
+        let optsWithIndex :: Text -> Opt.Opts
+            optsWithIndex "old" =
+              opts
+                & Opt.elasticsearchLens . Opt.indexLens .~ oldESIndex
+                & Opt.elasticsearchLens . Opt.urlLens .~ oldESUrl
+            optsWithIndex "new" =
+              opts
+                & Opt.elasticsearchLens . Opt.indexLens .~ newESIndex
+                & Opt.elasticsearchLens . Opt.urlLens .~ newESUrl
+            optsWithIndex "both" =
+              optsWithIndex "old"
+                & Opt.elasticsearchLens . Opt.additionalWriteIndexLens ?~ newESIndex
+                & Opt.elasticsearchLens . Opt.additionalWriteIndexUrlLens ?~ newESUrl
+                -- 'additionalCaCertLens' needs to be added in order for brig to be able to reach both indices.
+                & Opt.elasticsearchLens . Opt.additionalCaCertLens .~ (opts ^. Opt.elasticsearchLens . Opt.caCertLens)
+                & Opt.elasticsearchLens . Opt.additionalInsecureSkipVerifyTlsLens .~ (opts ^. Opt.elasticsearchLens . Opt.insecureSkipVerifyTlsLens)
+            optsWithIndex "oldAccessToBoth" =
+              -- Configure only the old index. However, allow HTTP access to both
+              -- (such that jobs can create and fill the new one).
+              optsWithIndex "old" & Opt.elasticsearchLens . Opt.urlLens .~ bothIndexUrl
 
-  -- Phase 2: Using old index for search, writing to both indices, migrations have not run
-  let phase2OptsWhile = optsOldIndex & Opt.elasticsearchL . Opt.additionalWriteIndexL ?~ (opts ^. Opt.elasticsearchL . Opt.indexL)
-  (phase2NonTeamUser, phase2TeamUser) <- withSettingsOverrides phase2OptsWhile $ do
-    phase2NonTeamUser <- randomUser brig
-    phase2TeamUser <- inviteAndRegisterUser teamOwner tid brig
-    refreshIndex brig
+        -- Phase 1: Using old index only
+        (phase1NonTeamUser, teamOwner, phase1TeamUser1, phase1TeamUser2, tid) <- withSettingsOverrides (optsWithIndex "old") $ do
+          nonTeamUser <- randomUser brig
+          (tid, teamOwner, [teamUser1, teamUser2]) <- createPopulatedBindingTeam brig 2
+          pure (nonTeamUser, teamOwner, teamUser1, teamUser2, tid)
 
-    -- searching phase1 users should work
-    assertCanFindByName brig phase1TeamUser1 phase1TeamUser2
-    assertCanFindByName brig phase1TeamUser1 phase1NonTeamUser
+        -- Phase 2: Using old index for search, writing to both indices, migrations have not run
+        (phase2NonTeamUser, phase2TeamUser) <- withSettingsOverrides (optsWithIndex "both") $ do
+          phase2NonTeamUser <- randomUser brig
+          phase2TeamUser <- inviteAndRegisterUser teamOwner tid brig
+          refreshIndex brig
 
-    -- searching phase2 users should work
-    assertCanFindByName brig phase1TeamUser1 phase2NonTeamUser
-    assertCanFindByName brig phase1TeamUser1 phase2TeamUser
-    pure (phase2NonTeamUser, phase2TeamUser)
+          -- searching phase1 users should work
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1TeamUser2
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1NonTeamUser
 
-  refreshIndex brig
-  -- Before migration the phase1 users shouldn't be found in the new index
-  assertCan'tFindByName brig phase1TeamUser1 phase1TeamUser2
-  assertCan'tFindByName brig phase1TeamUser1 phase1NonTeamUser
+          -- searching phase2 users should work
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2NonTeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2TeamUser
 
-  -- Before migration the phase2 users should be found in the new index
-  assertCanFindByName brig phase1TeamUser1 phase2NonTeamUser
-  assertCanFindByName brig phase1TeamUser1 phase2TeamUser
+          pure (phase2NonTeamUser, phase2TeamUser)
 
-  -- Run Migrations
-  let newIndexName = ES.IndexName $ opts ^. Opt.elasticsearchL . Opt.indexL
-  taskNodeId <- assertRight =<< (runBH opts $ ES.reindexAsync $ ES.mkReindexRequest oldIndexName newIndexName)
-  runBH opts $ waitForTaskToComplete @ES.ReindexResponse taskNodeId
+        withSettingsOverrides (optsWithIndex "new") $ do
+          -- Before migration the phase1 users shouldn't be found in the new index
+          assertEventuallyCan'tFindByName brig phase1TeamUser1 phase1TeamUser2
+          assertEventuallyCan'tFindByName brig phase1TeamUser1 phase1NonTeamUser
 
-  -- Phase 3: Using old index for search, writing to both indices, migrations have run
-  refreshIndex brig
-  (phase3NonTeamUser, phase3TeamUser) <- withSettingsOverrides phase2OptsWhile $ do
-    phase3NonTeamUser <- randomUser brig
-    phase3TeamUser <- inviteAndRegisterUser teamOwner tid brig
-    refreshIndex brig
+          -- Before migration the phase2 users should be found in the new index
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2NonTeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2TeamUser
 
-    -- searching phase1/2 users should work
-    assertCanFindByName brig phase1TeamUser1 phase1TeamUser2
-    assertCanFindByName brig phase1TeamUser1 phase1NonTeamUser
-    assertCanFindByName brig phase1TeamUser1 phase2TeamUser
-    assertCanFindByName brig phase1TeamUser1 phase2NonTeamUser
+        -- Run Migrations
+        liftIO $ migrateIndexCommand logger (optsWithIndex "oldAccessToBoth") newESIndex
 
-    -- searching new phase3 should also work
-    assertCanFindByName brig phase1TeamUser1 phase3NonTeamUser
-    assertCanFindByName brig phase1TeamUser1 phase3TeamUser
-    pure (phase3NonTeamUser, phase3TeamUser)
+        -- Phase 3: Using old index for search, writing to both indices, migrations have run
+        (phase3NonTeamUser, phase3TeamUser) <- withSettingsOverrides (optsWithIndex "both") $ do
+          refreshIndex brig
+          phase3NonTeamUser <- randomUser brig
+          phase3TeamUser <- inviteAndRegisterUser teamOwner tid brig
+          refreshIndex brig
 
-  -- Phase 4: Using only new index
-  refreshIndex brig
-  -- Searching should work for phase1 users
-  assertCanFindByName brig phase1TeamUser1 phase1TeamUser2
-  assertCanFindByName brig phase1TeamUser1 phase1NonTeamUser
+          -- searching phase1/2 users should work
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1TeamUser2
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1NonTeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2TeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2NonTeamUser
 
-  -- Searching should work for phase2 users
-  assertCanFindByName brig phase1TeamUser1 phase2TeamUser
-  assertCanFindByName brig phase1TeamUser1 phase2NonTeamUser
+          -- searching new phase3 should also work
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase3NonTeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase3TeamUser
+          pure (phase3NonTeamUser, phase3TeamUser)
 
-  -- Searching should work for phase3 users
-  assertCanFindByName brig phase1TeamUser1 phase3NonTeamUser
-  assertCanFindByName brig phase1TeamUser1 phase3TeamUser
+        -- Phase 4: Using only new index
+        withSettingsOverrides (optsWithIndex "new") $ do
+          -- Searching should work for phase1 users
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1TeamUser2
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase1NonTeamUser
 
-waitForTaskToComplete :: forall a m. (ES.MonadBH m, MonadIO m, MonadThrow m, FromJSON a) => ES.TaskNodeId -> m ()
-waitForTaskToComplete taskNodeId = do
-  let policy = constantDelay 100000 <> limitRetries 30
-  let retryCondition _ = fmap not . isTaskComplete
-  task <- retrying policy retryCondition (const $ ES.getTask @m @a taskNodeId)
-  taskCompleted <- isTaskComplete task
-  liftIO $ assertBool "Timed out waiting for task" taskCompleted
+          -- Searching should work for phase2 users
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2TeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase2NonTeamUser
+
+          -- Searching should work for phase3 users
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase3NonTeamUser
+          assertEventuallyCanFindByName brig phase1TeamUser1 phase3TeamUser
+
+runReindexFromAnotherIndex :: Log.Logger -> Opt.Opts -> ES.IndexName -> IO ()
+runReindexFromAnotherIndex logger opts newIndexName =
+  let esOldOpts :: Opt.ElasticSearchOpts = opts ^. Opt.elasticsearchLens
+      esOldConnectionSettings :: ESConnectionSettings = toESConnectionSettings esOldOpts
+      reindexSettings = ReindexFromAnotherIndexSettings esOldConnectionSettings newIndexName 5
+   in runCommand logger $ ReindexFromAnotherIndex reindexSettings
+
+runReindexFromDatabase ::
+  (ElasticSettings -> CassandraSettings -> Endpoint -> Command) ->
+  Log.Logger ->
+  Opt.Opts ->
+  ES.IndexName ->
+  IO ()
+runReindexFromDatabase syncCommand logger opts newIndexName =
+  let esNewOpts :: Opt.ElasticSearchOpts = (opts ^. Opt.elasticsearchLens) & (Opt.indexLens .~ newIndexName)
+      esNewConnectionSettings :: ESConnectionSettings = toESConnectionSettings esNewOpts
+      replicas = 2
+      shards = 2
+      refreshInterval = 5
+      elasticSettings :: ElasticSettings =
+        IndexOpts.localElasticSettings
+          & IndexOpts.esConnection .~ esNewConnectionSettings
+          & IndexOpts.esIndexReplicas .~ ES.ReplicaCount replicas
+          & IndexOpts.esIndexShardCount .~ shards
+          & IndexOpts.esIndexRefreshInterval .~ refreshInterval
+      cassandraSettings :: CassandraSettings =
+        ( localCassandraSettings
+            & IndexOpts.cHost .~ (Text.unpack opts.cassandra.endpoint.host)
+            & IndexOpts.cPort .~ (opts.cassandra.endpoint.port)
+            & IndexOpts.cKeyspace .~ (C.Keyspace opts.cassandra.keyspace)
+        )
+
+      endpoint :: Endpoint = opts.galley
+   in runCommand logger $ syncCommand elasticSettings cassandraSettings endpoint
+
+toESConnectionSettings :: ElasticSearchOpts -> ESConnectionSettings
+toESConnectionSettings opts = ESConnectionSettings {..}
   where
-    isTaskComplete :: Either ES.EsError (ES.TaskResponse a) -> m Bool
-    isTaskComplete (Left e) = liftIO $ assertFailure $ "Expected Right, got Left: " <> show e
-    isTaskComplete (Right taskRes) = pure $ ES.taskResponseCompleted taskRes
+    toText (ES.Server url) = url
+    esServer = (fromRight undefined . URI.parseURI URI.strictURIParserOptions . Text.encodeUtf8 . toText) opts.url
+    esIndex = opts.index
+    esCaCert = opts.caCert
+    esInsecureSkipVerifyTls = opts.insecureSkipVerifyTls
+    esCredentials = opts.credentials
+
+withESProxy ::
+  (TestConstraints m, MonadUnliftIO m, HasCallStack) =>
+  Log.Logger ->
+  Opt.Opts ->
+  (ES.Server -> ES.IndexName -> m a) ->
+  m a
+withESProxy lg opts f = do
+  indexName <- ES.IndexName <$> randomHandle
+  liftIO $ createCommand lg opts indexName
+  withESProxyOnly [indexName] opts $ flip f indexName
+
+createCommand :: Log.Logger -> Opt.Opts -> ES.IndexName -> IO ()
+createCommand logger opts newIndexName =
+  let esNewOpts = (opts ^. Opt.elasticsearchLens) & (Opt.indexLens .~ newIndexName)
+      replicas = 2
+      shards = 2
+      refreshInterval = 5
+      esSettings =
+        IndexOpts.localElasticSettings
+          & IndexOpts.esConnection .~ toESConnectionSettings esNewOpts
+          & IndexOpts.esIndexReplicas .~ ES.ReplicaCount replicas
+          & IndexOpts.esIndexShardCount .~ shards
+          & IndexOpts.esIndexRefreshInterval .~ refreshInterval
+   in runCommand logger $ Create esSettings opts.galley
+
+-- | Gives a URL to a HTTP proxy server to the continuation. The proxy is only
+-- configured for ES calls for the given @indexNames@ (and some other ES
+-- specific endpoints.)
+withESProxyOnly :: (TestConstraints m, MonadUnliftIO m, HasCallStack) => [ES.IndexName] -> Opt.Opts -> (ES.Server -> m a) -> m a
+withESProxyOnly indexNames opts f = do
+  mgr <- liftIO $ initHttpManagerWithTLSConfig opts.elasticsearch.insecureSkipVerifyTls opts.elasticsearch.caCert
+  (proxyPort, sock) <- liftIO Warp.openFreePort
+  bracket
+    (async $ liftIO $ Warp.runSettingsSocket Warp.defaultSettings sock $ indexProxyServer indexNames opts mgr)
+    cancel
+    (\_ -> f (ES.Server ("http://localhost:" <> Text.pack (show proxyPort))))
+
+-- | Create a `Wai.Application` that acts as a proxy to ElasticSearch. Requests
+-- are only forwarded for specified index names (and some technical endpoints.)
+indexProxyServer :: [ES.IndexName] -> Opt.Opts -> Manager -> Wai.Application
+indexProxyServer idxs opts mgr =
+  let toUri (ES.Server url) = either (error . show) id $ URI.parseURI URI.strictURIParserOptions (Text.encodeUtf8 url)
+      proxyURI = toUri (Opts.url (Opts.elasticsearch opts))
+      proxyToHost = URI.hostBS . URI.authorityHost . fromMaybe (error "No Host") . URI.uriAuthority $ proxyURI
+      proxyToPort = URI.portNumber . fromMaybe (URI.Port 9200) . URI.authorityPort . fromMaybe (error "No Host") . URI.uriAuthority $ proxyURI
+      forwardRequest = Wai.WPRProxyDestSecure (Wai.ProxyDest proxyToHost proxyToPort)
+      denyRequest req =
+        Wai.WPRResponse
+          ( Wai.responseLBS HTTP.status400 [] $
+              "Refusing to proxy to path=" <> cs (Wai.rawPathInfo req) <> ". Proxy configured for indices: " <> cs (show idxs)
+          )
+      proxyApp req
+        | (headMay (Wai.pathInfo req)) `elem` [Just "_reindex", Just "_tasks"] =
+            forwardRequest
+        | (any (\(ES.IndexName idx) -> (headMay (Wai.pathInfo req) == Just idx)) idxs) =
+            forwardRequest
+        | otherwise =
+            denyRequest req
+   in waiProxyTo (pure . proxyApp) Wai.defaultOnExc mgr
 
 testWithBothIndices :: Opt.Opts -> Manager -> TestName -> WaiTest.Session a -> TestTree
 testWithBothIndices opts mgr name f = do
@@ -562,7 +834,7 @@ testWithBothIndices opts mgr name f = do
       test mgr "old-index" $ withOldIndex opts f
     ]
 
-testWithBothIndicesAndOpts :: Opt.Opts -> Manager -> TestName -> (Opt.Opts -> Http ()) -> TestTree
+testWithBothIndicesAndOpts :: Opt.Opts -> Manager -> TestName -> ((HasCallStack) => Opt.Opts -> Http ()) -> TestTree
 testWithBothIndicesAndOpts opts mgr name f =
   testGroup
     name
@@ -572,109 +844,157 @@ testWithBothIndicesAndOpts opts mgr name f =
         f newOpts <* deleteIndex opts indexName
     ]
 
-withOldIndex :: MonadIO m => Opt.Opts -> WaiTest.Session a -> m a
+withOldIndex :: (MonadIO m, HasCallStack) => Opt.Opts -> WaiTest.Session a -> m a
 withOldIndex opts f = do
+  lg <- Log.create Log.StdOut
   indexName <- randomHandle
-  createIndexWithMapping opts indexName oldMapping
-  let newOpts = opts & Opt.elasticsearchL . Opt.indexL .~ indexName
+  createIndexWithMapping lg opts indexName oldMapping
+  let newOpts = opts & Opt.elasticsearchLens . Opt.indexLens .~ (ES.IndexName indexName)
   withSettingsOverrides newOpts f <* deleteIndex opts indexName
 
-optsForOldIndex :: MonadIO m => Opt.Opts -> m (Opt.Opts, Text)
+optsForOldIndex :: (MonadIO m, HasCallStack) => Opt.Opts -> m (Opt.Opts, Text)
 optsForOldIndex opts = do
+  lg <- Log.create Log.StdOut
   indexName <- randomHandle
-  createIndexWithMapping opts indexName oldMapping
-  pure (opts & Opt.elasticsearchL . Opt.indexL .~ indexName, indexName)
+  createIndexWithMapping lg opts indexName oldMapping
+  pure (opts & Opt.elasticsearchLens . Opt.indexLens .~ (ES.IndexName indexName), indexName)
 
-createIndexWithMapping :: MonadIO m => Opt.Opts -> Text -> Value -> m ()
-createIndexWithMapping opts name val = do
-  let indexName = (ES.IndexName name)
-  createReply <- runBH opts $ ES.createIndexWith [ES.AnalysisSetting analysisSettings] 1 indexName
-  unless (ES.isCreated createReply || ES.isSuccess createReply) $ do
-    liftIO $ assertFailure $ "failed to create index: " <> show name <> " with error: " <> show createReply
+createIndexWithMapping :: (MonadIO m, HasCallStack) => Log.Logger -> Opt.Opts -> Text -> Value -> m ()
+createIndexWithMapping lg opts name val = do
+  let indexName = ES.IndexName name
+  liftIO $ createCommand lg opts indexName
   mappingReply <- runBH opts $ ES.putMapping indexName (ES.MappingName "user") val
-  unless (ES.isCreated mappingReply || ES.isSuccess createReply) $ do
+  unless (ES.isCreated mappingReply || ES.isSuccess mappingReply) $ do
     liftIO $ assertFailure $ "failed to create mapping: " <> show name
 
 -- | This doesn't fail if ES returns error because we don't really want to fail the tests for this
-deleteIndex :: MonadIO m => Opt.Opts -> Text -> m ()
+deleteIndex :: (MonadIO m, HasCallStack) => Opt.Opts -> Text -> m ()
 deleteIndex opts name = do
   let indexName = ES.IndexName name
   void $ runBH opts $ ES.deleteIndex indexName
 
-runBH :: MonadIO m => Opt.Opts -> ES.BH IO a -> m a
-runBH opts =
-  let esURL = opts ^. Opt.elasticsearchL . Opt.urlL
-   in liftIO . ES.withBH HTTP.defaultManagerSettings (ES.Server esURL)
+runBH :: (MonadIO m, HasCallStack) => Opt.Opts -> ES.BH m a -> m a
+runBH opts action = do
+  let (ES.Server esURL) = opts ^. Opt.elasticsearchLens . Opt.urlLens
+  mgr <- liftIO $ initHttpManagerWithTLSConfig opts.elasticsearch.insecureSkipVerifyTls opts.elasticsearch.caCert
+  let bEnv = mkBHEnv esURL mgr
+  ES.runBH bEnv action
 
--- | This was copied from at Brig.User.Search.Index at commit 3242aa26
-analysisSettings :: ES.Analysis
-analysisSettings =
-  let analyzerDef =
-        Map.fromList
-          [ ("prefix_index", ES.AnalyzerDefinition (Just $ ES.Tokenizer "whitespace") [ES.TokenFilter "edge_ngram_1_30"] []),
-            ("prefix_search", ES.AnalyzerDefinition (Just $ ES.Tokenizer "whitespace") [ES.TokenFilter "truncate_30"] [])
-          ]
-      filterDef =
-        Map.fromList
-          [ ("edge_ngram_1_30", ES.TokenFilterDefinitionEdgeNgram (ES.NgramFilter 1 30) Nothing),
-            ("truncate_30", ES.TokenFilterTruncate 30)
-          ]
-   in ES.Analysis analyzerDef mempty filterDef mempty
-
---- | This was copied from at Brig.User.Search.Index.indexMapping at commit 3242aa26
+--- | This was copied from at Brig.User.Search.Index.indexMapping at commit 75e6f6e
 oldMapping :: Value
 oldMapping =
   fromJust $
     decode
       [r|
 {
-  "user": {
-    "dynamic": false,
-    "properties": {
-      "account_status": {
-        "store": false,
-        "type": "keyword",
-        "index": true
-      },
-      "handle": {
-        "store": false,
-        "type": "text",
-        "index": true,
-        "fields": {
-          "prefix": {
-            "search_analyzer": "prefix_search",
-            "type": "text",
-            "analyzer": "prefix_index"
-          }
+  "dynamic": false,
+  "properties": {
+    "accent_id": {
+      "index": false,
+      "store": false,
+      "type": "byte"
+    },
+    "account_status": {
+      "index": true,
+      "store": false,
+      "type": "keyword"
+    },
+    "created_at": {
+      "index": false,
+      "store": false,
+      "type": "date"
+    },
+    "email": {
+      "fields": {
+        "keyword": {
+          "type": "keyword"
+        },
+        "prefix": {
+          "analyzer": "prefix_index",
+          "search_analyzer": "prefix_search",
+          "type": "text"
         }
       },
-      "accent_id": {
-        "store": false,
-        "type": "byte",
-        "index": false
-      },
-      "name": {
-        "store": false,
-        "type": "keyword",
-        "index": false
-      },
-      "team": {
-        "store": false,
-        "type": "keyword",
-        "index": true
-      },
-      "normalized": {
-        "store": false,
-        "type": "text",
-        "index": true,
-        "fields": {
-          "prefix": {
-            "search_analyzer": "prefix_search",
-            "type": "text",
-            "analyzer": "prefix_index"
-          }
+      "index": true,
+      "store": false,
+      "type": "text"
+    },
+    "handle": {
+      "fields": {
+        "keyword": {
+          "type": "keyword"
+        },
+        "prefix": {
+          "analyzer": "prefix_index",
+          "search_analyzer": "prefix_search",
+          "type": "text"
         }
-      }
+      },
+      "index": true,
+      "store": false,
+      "type": "text"
+    },
+    "managed_by": {
+      "index": true,
+      "store": false,
+      "type": "keyword"
+    },
+    "name": {
+      "index": false,
+      "store": false,
+      "type": "keyword"
+    },
+    "normalized": {
+      "fields": {
+        "prefix": {
+          "analyzer": "prefix_index",
+          "search_analyzer": "prefix_search",
+          "type": "text"
+        }
+      },
+      "index": true,
+      "store": false,
+      "type": "text"
+    },
+    "role": {
+      "index": true,
+      "store": false,
+      "type": "keyword"
+    },
+    "saml_idp": {
+      "index": false,
+      "store": false,
+      "type": "keyword"
+    },
+    "scim_external_id": {
+      "index": false,
+      "store": false,
+      "type": "keyword"
+    },
+    "search_visibility_inbound": {
+      "index": true,
+      "store": false,
+      "type": "keyword"
+    },
+    "sso": {
+      "properties": {
+        "issuer": {
+          "index": false,
+          "store": false,
+          "type": "keyword"
+        },
+        "nameid": {
+          "index": false,
+          "store": false,
+          "type": "keyword"
+        }
+      },
+      "type": "nested"
+    },
+    "team": {
+      "index": true,
+      "store": false,
+      "type": "keyword"
     }
   }
 }

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,6 +32,3 @@ defAccess ConnectConv (Just (Set [])) = [PrivateAccess]
 defAccess One2OneConv (Just (Set [])) = [PrivateAccess]
 defAccess RegularConv (Just (Set [])) = defRegularConvAccess
 defAccess _ (Just (Set (x : xs))) = x : xs
-
-privateOnly :: Set Access
-privateOnly = Set [PrivateAccess]

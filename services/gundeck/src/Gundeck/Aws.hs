@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,10 +20,12 @@
 
 module Gundeck.Aws
   ( -- * Monad
-    Env,
+    Env (..),
     mkEnv,
     Amazon,
     execute,
+    Gundeck.Aws.region,
+    Gundeck.Aws.account,
 
     -- * Errors
     Error (..),
@@ -43,51 +46,54 @@ module Gundeck.Aws
     Attributes,
     AWS.Seconds (..),
     publish,
-    timeToLive,
 
     -- * Feedback
     listen,
+
+    -- * Exported for testing purposes
+    parseExistsError,
   )
 where
 
+import Amazonka (AWSRequest, AWSResponse, serviceError_abbrev, serviceError_code, serviceError_message, serviceError_status)
+import Amazonka qualified as AWS
+import Amazonka.Data.Text qualified as AWS
+import Amazonka.SNS qualified as SNS
+import Amazonka.SNS.Lens qualified as SNS
+import Amazonka.SQS qualified as SQS
+import Amazonka.SQS.Lens qualified as SQS
+import Amazonka.SQS.Types
+import Control.Category ((>>>))
 import Control.Error hiding (err, isRight)
 import Control.Lens hiding ((.=))
 import Control.Monad.Catch
-import qualified Control.Monad.Trans.AWS as AWST
 import Control.Monad.Trans.Resource
-import Control.Retry (limitRetries, retrying)
+import Control.Retry
 import Data.Aeson (decodeStrict)
 import Data.Attoparsec.Text
-import Data.ByteString.Builder (toLazyByteString)
-import qualified Data.HashMap.Strict as Map
+import Data.ByteString.Builder
+import Data.HashMap.Strict qualified as Map
 import Data.Id
-import qualified Data.Set as Set
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Lazy as LT
+import Data.Set qualified as Set
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Data.Text.Lazy qualified as LT
 import Gundeck.Aws.Arn
-import Gundeck.Aws.Sns (Event, evEndpoint, evType)
+import Gundeck.Aws.Sns
 import Gundeck.Instances ()
-import Gundeck.Options
-import Gundeck.Types.Push (AppName (..), Token, Transport (..))
-import qualified Gundeck.Types.Push as Push
+import Gundeck.Options (Opts)
+import Gundeck.Options qualified as O
 import Imports
-import Network.AWS (AWSRequest, Rs, serviceAbbrev, serviceCode, serviceMessage, serviceStatus)
-import qualified Network.AWS as AWS
-import qualified Network.AWS.Data as AWS
-import qualified Network.AWS.Env as AWS
-import qualified Network.AWS.SNS as SNS
-import Network.AWS.SQS (rmrsMessages)
-import qualified Network.AWS.SQS as SQS
-import Network.AWS.SQS.Types hiding (sqs)
-import Network.HTTP.Client (HttpException (..), HttpExceptionContent (..), Manager)
+import Network.HTTP.Client
 import Network.HTTP.Types
-import qualified Network.TLS as TLS
-import qualified System.Logger as Logger
+import Network.TLS qualified as TLS
+import System.Logger qualified as Logger
 import System.Logger.Class
 import UnliftIO.Async
 import UnliftIO.Exception
 import Util.Options
+import Wire.API.Push.V2 hiding (token)
+import Wire.API.Push.V2 qualified as Push
 
 data Error where
   EndpointNotFound :: EndpointArn -> Error
@@ -136,19 +142,12 @@ newtype Amazon a = Amazon
       MonadCatch,
       MonadMask,
       MonadReader Env,
-      MonadResource
+      MonadResource,
+      MonadUnliftIO
     )
-
-instance MonadUnliftIO Amazon where
-  askUnliftIO = Amazon . ReaderT $ \r ->
-    withUnliftIO $ \u ->
-      return (UnliftIO (unliftIO u . flip runReaderT r . unAmazon))
 
 instance MonadLogger Amazon where
   log l m = view logger >>= \g -> Logger.log g l m
-
-instance AWS.MonadAWS Amazon where
-  liftAWS a = view awsEnv >>= \e -> AWS.runAWS e a
 
 mkEnv :: Logger -> Opts -> Manager -> IO Env
 mkEnv lgr opts mgr = do
@@ -156,19 +155,26 @@ mkEnv lgr opts mgr = do
   e <-
     mkAwsEnv
       g
-      (mkEndpoint SQS.sqs (opts ^. optAws . awsSqsEndpoint))
-      (mkEndpoint SNS.sns (opts ^. optAws . awsSnsEndpoint))
-  q <- getQueueUrl e (opts ^. optAws . awsQueueName)
-  return (Env e g q (opts ^. optAws . awsRegion) (opts ^. optAws . awsAccount))
+      (mkEndpoint SQS.defaultService (opts ^. O.aws . O.sqsEndpoint))
+      (mkEndpoint SNS.defaultService (opts ^. O.aws . O.snsEndpoint))
+  q <- getQueueUrl e (opts ^. O.aws . O.queueName)
+  pure (Env e g q (opts ^. O.aws . O.region) (opts ^. O.aws . O.account))
   where
     mkEndpoint svc e = AWS.setEndpoint (e ^. awsSecure) (e ^. awsHost) (e ^. awsPort) svc
-    mkAwsEnv g sqs sns =
-      set AWS.envLogger (awsLogger g)
-        . set AWS.envRegion (opts ^. optAws . awsRegion)
-        . set AWS.envRetryCheck retryCheck
-        <$> AWS.newEnvWith AWS.Discover Nothing mgr
-        <&> AWS.configure sqs
-        <&> AWS.configure (sns & set AWS.serviceTimeout (Just (AWS.Seconds 5)))
+    mkAwsEnv g sqs sns = do
+      baseEnv <-
+        AWS.newEnv AWS.discover
+          <&> do
+            AWS.configureService sqs
+              >>> AWS.configureService (sns & set AWS.service_timeout (Just (AWS.Seconds 5)))
+      pure $
+        baseEnv
+          { AWS.logger = awsLogger g,
+            AWS.region = opts ^. O.aws . O.region,
+            AWS.retryCheck = retryCheck,
+            AWS.manager = mgr
+          }
+
     awsLogger g l = Logger.log g (mapLevel l) . Logger.msg . toLazyByteString
     mapLevel AWS.Info = Logger.Info
     -- Debug output from amazonka can be very useful for tracing requests
@@ -201,15 +207,15 @@ mkEnv lgr opts mgr = do
     getQueueUrl :: AWS.Env -> Text -> IO QueueUrl
     getQueueUrl e q = do
       x <-
-        runResourceT . AWST.runAWST e $
-          AWST.trying AWS._Error $
-            AWST.send (SQS.getQueueURL q)
+        runResourceT $
+          AWS.trying AWS._Error $
+            AWS.send e (SQS.newGetQueueUrl q)
       either
         (throwM . GeneralError)
-        (return . QueueUrl . view SQS.gqursQueueURL)
+        (pure . QueueUrl . view SQS.getQueueUrlResponse_queueUrl)
         x
 
-execute :: MonadIO m => Env -> Amazon a -> m a
+execute :: (MonadIO m) => Env -> Amazon a -> m a
 execute e m = liftIO $ runResourceT (runReaderT (unAmazon m) e)
 
 --------------------------------------------------------------------------------
@@ -232,14 +238,16 @@ data CreateEndpointError
 -- the the list of given 'UserId's and enable the endpoint.
 updateEndpoint :: Set UserId -> Token -> EndpointArn -> Amazon ()
 updateEndpoint us tk arn = do
-  let req = over SNS.seaAttributes fun (SNS.setEndpointAttributes (toText arn))
-  res <- retrying (limitRetries 1) (const isTimeout) (const (sendCatch req))
+  let req = over SNS.setEndpointAttributes_attributes fun (SNS.newSetEndpointAttributes (toText arn))
+  env <- ask
+  res <- retry 1 (const (sendCatch (env ^. awsEnv) req))
   case res of
-    Right _ -> return ()
+    Right _ -> pure ()
     Left x@(AWS.ServiceError e)
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isMetadataLengthError (e ^. serviceMessage) ->
-        throwM $ InvalidCustomData arn
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isMetadataLengthError (e ^. serviceError_message) ->
+          throwM $ InvalidCustomData arn
     Left x ->
       throwM $
         if is "SNS" 404 x
@@ -256,77 +264,77 @@ updateEndpoint us tk arn = do
       let prefix = "Invalid parameter: Attributes Reason: "
       _ <- string prefix
       _ <- string "Invalid value for attribute: CustomUserData: must be at most 2048 bytes long in UTF-8 encoding"
-      return ()
+      pure ()
 
 deleteEndpoint :: EndpointArn -> Amazon ()
 deleteEndpoint arn = do
-  res <- retrying (limitRetries 1) (const isTimeout) (const (sendCatch req))
-  either (throwM . GeneralError) (const (return ())) res
+  e <- view awsEnv
+  res <- retry 1 (const (sendCatch e req))
+  either (throwM . GeneralError) (const (pure ())) res
   where
-    req = SNS.deleteEndpoint (toText arn)
+    req = SNS.newDeleteEndpoint (toText arn)
 
 lookupEndpoint :: EndpointArn -> Amazon (Maybe SNSEndpoint)
 lookupEndpoint arn = do
-  res <- retrying (limitRetries 1) (const isTimeout) (const (sendCatch req))
-  let attrs = view SNS.gearsAttributes <$> res
+  e <- view awsEnv
+  res <- retry 1 (const (sendCatch e req))
+  let attrs = fromMaybe mempty . view SNS.getEndpointAttributesResponse_attributes <$> res
   case attrs of
     Right a -> Just <$> mkEndpoint a
-    Left x -> if is "SNS" 404 x then return Nothing else throwM (GeneralError x)
+    Left x -> if is "SNS" 404 x then pure Nothing else throwM (GeneralError x)
   where
-    req = SNS.getEndpointAttributes (toText arn)
+    req = SNS.newGetEndpointAttributes (toText arn)
     mkEndpoint a = do
-      t <- maybe (throwM $ NoToken arn) return (Map.lookup "Token" a)
+      t <- maybe (throwM $ NoToken arn) pure (Map.lookup "Token" a)
       let e = either (const Nothing) Just . fromText =<< Map.lookup "Enabled" a
           d = maybe Set.empty mkUsers $ Map.lookup "CustomUserData" a
-      return (SNSEndpoint (Push.Token t) (fromMaybe False e) d)
+      pure (SNSEndpoint (Push.Token t) (fromMaybe False e) d)
     mkUsers = Set.fromList . mapMaybe (hush . fromText) . Text.split (== ':')
 
 createEndpoint :: UserId -> Push.Transport -> ArnEnv -> AppName -> Push.Token -> Amazon (Either CreateEndpointError EndpointArn)
-createEndpoint u tr env app token = do
-  aEnv <- ask
-  let top = mkAppTopic env tr app
-  let arn = mkSnsArn (aEnv ^. region) (aEnv ^. account) top
+createEndpoint u tr arnEnv app token = do
+  env <- ask
+  let top = mkAppTopic arnEnv tr app
+  let arn = mkSnsArn env._region env._account top
   let tkn = Push.tokenText token
   let req =
-        SNS.createPlatformEndpoint (toText arn) tkn
-          & set SNS.cpeCustomUserData (Just (toText u))
-          & set SNS.cpeAttributes (Map.insert "Enabled" "true" Map.empty)
-  res <- retrying (limitRetries 2) (const isTimeout) (const (sendCatch req))
+        SNS.newCreatePlatformEndpoint (toText arn) tkn
+          & set SNS.createPlatformEndpoint_customUserData (Just (toText u))
+          & set SNS.createPlatformEndpoint_attributes (Just $ Map.insert "Enabled" "true" Map.empty)
+  res <- retry 2 (const (sendCatch (env ^. awsEnv) req))
   case res of
     Right r ->
-      case view SNS.cpersEndpointARN r of
+      case view SNS.createPlatformEndpointResponse_endpointArn r of
         Nothing -> throwM NoEndpointArn
         Just s -> Right <$> readArn s
     Left x@(AWS.ServiceError e)
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode,
-        Just ep <- parseExistsError (e ^. serviceMessage) ->
-        return (Left (EndpointInUse ep))
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isLengthError (e ^. serviceMessage) ->
-        return (Left (TokenTooLong $ tokenLength token))
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isTokenError (e ^. serviceMessage) ->
-        return (Left (InvalidToken token))
+      | is "SNS" 400 x && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code,
+        Just ep <- parseExistsError (e ^. serviceError_message) ->
+          pure (Left (EndpointInUse ep))
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isLengthError (e ^. serviceError_message) ->
+          pure (Left (TokenTooLong $ tokenLength token))
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isTokenError (e ^. serviceError_message) -> do
+          debug $
+            msg @Text "InvalidParameter: InvalidToken"
+              . field "response" (show x)
+          pure (Left (InvalidToken token))
       | is "SNS" 404 x ->
-        return (Left (AppNotFound app))
+          pure (Left (AppNotFound app))
       | is "SNS" 403 x -> do
-        warn $ "arn" .= toText arn ~~ msg (val "Not authorized.")
-        return (Left (AppNotFound app))
+          warn $ "arn" .= toText arn ~~ msg (val "Not authorized.")
+          pure (Left (AppNotFound app))
     Left x -> throwM (GeneralError x)
   where
-    readArn r = either (throwM . InvalidArn r) return (fromText r)
+    readArn r = either (throwM . InvalidArn r) pure (fromText r)
     tokenLength = toInteger . Text.length . Push.tokenText
-    -- Thank you Amazon for not having granular error codes!
-    parseExistsError Nothing = Nothing
-    parseExistsError (Just s) = hush . flip parseOnly (toText s) $ do
-      _ <- string "Invalid parameter: Token Reason: Endpoint "
-      a <- AWS.parser
-      _ <- string " already exists with the same Token, but different attributes."
-      return a
     isTokenError Nothing = False
     isTokenError (Just s) = isRight . flip parseOnly (toText s) $ do
       _ <- string "Invalid parameter: Token"
-      return ()
+      pure ()
     isLengthError Nothing = False
     isLengthError (Just s) = isRight . flip parseOnly (toText s) $ do
       let prefix = "Invalid parameter: Token Reason: "
@@ -334,7 +342,15 @@ createEndpoint u tr env app token = do
       _ <-
         string "must be at most 8192 bytes long in UTF-8 encoding"
           <|> string "iOS device tokens must be no more than 400 hexadecimal characters"
-      return ()
+      pure ()
+
+-- Thank you Amazon for not having granular error codes!
+parseExistsError :: Maybe AWS.ErrorMessage -> Maybe EndpointArn
+parseExistsError Nothing = Nothing
+parseExistsError (Just s) = hush . flip parseOnly (toText s) $ do
+  _ <- string "Invalid parameter: Token Reason: Endpoint "
+  let endParser = string " already exists with the same Token, but different attributes."
+  manyTill anyChar endParser >>= either fail pure . AWS.fromText . Text.pack
 
 --------------------------------------------------------------------------------
 -- Publish
@@ -343,6 +359,7 @@ data PublishError
   = EndpointDisabled !EndpointArn
   | InvalidEndpoint !EndpointArn
   | PayloadTooLarge !EndpointArn
+  | UnauthorisedEndpoint !EndpointArn
 
 newtype Attributes = Attributes
   { setAttributes :: Endo (HashMap Text SNS.MessageAttributeValue)
@@ -365,49 +382,36 @@ newtype Attributes = Attributes
 --
 -- cf. http://docs.aws.amazon.com/sns/latest/dg/sns-ttl.html
 
-timeToLive :: Transport -> AWS.Seconds -> Attributes
-timeToLive t s = Attributes (Endo (ttlAttr s))
-  where
-    ttlAttr n
-      | n == 0 = setTTL (ttlNow t)
-      | otherwise = setTTL (toText n)
-    setTTL v =
-      let ty = SNS.messageAttributeValue "String"
-       in Map.insert (ttlKey t) (ty & SNS.mavStringValue .~ Just v)
-    ttlNow GCM = "0"
-    ttlNow APNS = "0"
-    ttlNow APNSSandbox = "0"
-    ttlNow APNSVoIP = "15" -- See note [VoIP TTLs]
-    ttlNow APNSVoIPSandbox = "15" -- See note [VoIP TTLs]
-    ttlKey GCM = "AWS.SNS.MOBILE.GCM.TTL"
-    ttlKey APNS = "AWS.SNS.MOBILE.APNS.TTL"
-    ttlKey APNSSandbox = "AWS.SNS.MOBILE.APNS_SANDBOX.TTL"
-    ttlKey APNSVoIP = "AWS.SNS.MOBILE.APNS_VOIP.TTL"
-    ttlKey APNSVoIPSandbox = "AWS.SNS.MOBILE.APNS_VOIP_SANDBOX.TTL"
-
 publish :: EndpointArn -> LT.Text -> Attributes -> Amazon (Either PublishError ())
 publish arn txt attrs = do
   -- TODO: Make amazonka accept a lazy text or bytestring.
   let req =
-        SNS.publish (LT.toStrict txt)
-          & SNS.pTargetARN .~ Just (toText arn)
-          & SNS.pMessageStructure .~ Just "json"
-          & SNS.pMessageAttributes .~ appEndo (setAttributes attrs) Map.empty
-  res <- retrying (limitRetries 3) (const isTimeout) (const (sendCatch req))
+        SNS.newPublish (LT.toStrict txt)
+          & SNS.publish_targetArn ?~ toText arn
+          & SNS.publish_messageStructure ?~ "json"
+          & SNS.publish_messageAttributes ?~ appEndo (setAttributes attrs) Map.empty
+  env <- ask
+  res <- retry 3 (const (sendCatch (env ^. awsEnv) req))
   case res of
-    Right _ -> return (Right ())
+    Right _ -> pure (Right ())
     Left x@(AWS.ServiceError e)
-      | is "SNS" 400 x && AWS.errorCode "EndpointDisabled" == e ^. serviceCode ->
-        return (Left (EndpointDisabled arn))
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isProtocolSizeError (e ^. serviceMessage) ->
-        return (Left (PayloadTooLarge arn))
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isSnsSizeError (e ^. serviceMessage) ->
-        return (Left (PayloadTooLarge arn))
-      | is "SNS" 400 x && AWS.errorCode "InvalidParameter" == e ^. serviceCode
-          && isArnError (e ^. serviceMessage) ->
-        return (Left (InvalidEndpoint arn))
+      | is "SNS" 400 x && AWS.newErrorCode "EndpointDisabled" == e ^. serviceError_code ->
+          pure (Left (EndpointDisabled arn))
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isProtocolSizeError (e ^. serviceError_message) ->
+          pure (Left (PayloadTooLarge arn))
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isSnsSizeError (e ^. serviceError_message) ->
+          pure (Left (PayloadTooLarge arn))
+      | is "SNS" 400 x
+          && AWS.newErrorCode "InvalidParameter" == e ^. serviceError_code
+          && isArnError (e ^. serviceError_message) ->
+          pure (Left (InvalidEndpoint arn))
+      | is "SNS" 403 x
+          && AWS.newErrorCode "AuthorizationError" == e ^. serviceError_code ->
+          pure (Left (UnauthorisedEndpoint arn))
     Left x -> throwM (GeneralError x)
   where
     -- Thank you Amazon for not having granular error codes!
@@ -421,43 +425,46 @@ publish arn txt attrs = do
       _ <- case t of
         Push.GCM -> string ": Notification data is larger than allowed limit"
         _ -> string ": Notification is too long"
-      return ()
+      pure ()
     isSnsSizeError Nothing = False
     isSnsSizeError (Just s) = isRight . flip parseOnly (toText s) $ do
       _ <- string "Invalid parameter: Message too long"
-      return ()
+      pure ()
     isArnError Nothing = False
     isArnError (Just s) = isRight . flip parseOnly (toText s) $ do
       _ <- string "Invalid parameter: TargetArn Reason: No endpoint found for the target arn specified"
-      return ()
+      pure ()
 
 --------------------------------------------------------------------------------
 -- Feedback
 
 listen :: Int -> (Event -> IO ()) -> Amazon ()
 listen throttleMillis callback = do
+  amazonkaEnv <- view awsEnv
   QueueUrl url <- view eventQueue
   forever . handleAny unexpectedError $ do
-    msgs <- view rmrsMessages <$> send (receive url)
-    void $ mapConcurrently (onMessage url) msgs
+    msgs <- fromMaybe [] . view SQS.receiveMessageResponse_messages <$> send amazonkaEnv (receive url)
+    void $ mapConcurrently (onMessage amazonkaEnv url) msgs
     when (null msgs) $
       threadDelay (1000 * throttleMillis)
   where
     receive url =
-      SQS.receiveMessage url
-        & set SQS.rmWaitTimeSeconds (Just 20)
-          . set SQS.rmMaxNumberOfMessages (Just 10)
-    onMessage url m =
-      case decodeStrict =<< Text.encodeUtf8 <$> m ^. mBody of
+      SQS.newReceiveMessage url
+        & set SQS.receiveMessage_waitTimeSeconds (Just 20)
+          . set SQS.receiveMessage_maxNumberOfMessages (Just 10)
+    onMessage awsE url m =
+      case decodeStrict . Text.encodeUtf8 =<< (m ^. SQS.message_body) of
         Nothing ->
           err . msg $ val "Failed to parse SQS event notification"
         Just e -> do
           info $
-            "sqs-event" .= toText (e ^. evType)
-              ~~ "arn" .= toText (e ^. evEndpoint)
+            "sqs-event"
+              .= toText (e ^. evType)
+              ~~ "arn"
+              .= toText (e ^. evEndpoint)
               ~~ msg (val "Received SQS event")
           liftIO $ callback e
-          for_ (m ^. mReceiptHandle) (void . send . SQS.deleteMessage url)
+          for_ (m ^. message_receiptHandle) (void . send awsE . SQS.newDeleteMessage url)
     unexpectedError x = do
       err $ "error" .= show x ~~ msg (val "Failed to read from SQS")
       threadDelay 3000000
@@ -465,18 +472,33 @@ listen throttleMillis callback = do
 --------------------------------------------------------------------------------
 -- Utilities
 
-sendCatch :: AWSRequest r => r -> Amazon (Either AWS.Error (Rs r))
-sendCatch = AWST.trying AWS._Error . AWS.send
+sendCatch ::
+  (AWSRequest r, Typeable r, Typeable (AWSResponse r)) =>
+  AWS.Env ->
+  r ->
+  Amazon (Either AWS.Error (AWSResponse r))
+sendCatch env = AWS.trying AWS._Error . AWS.send env
 
-send :: AWSRequest r => r -> Amazon (Rs r)
-send r = either (throwM . GeneralError) return =<< sendCatch r
+send ::
+  (AWSRequest r, Typeable r, Typeable (AWSResponse r)) =>
+  AWS.Env ->
+  r ->
+  Amazon (AWSResponse r)
+send env r = either (throwM . GeneralError) pure =<< sendCatch env r
 
 is :: AWS.Abbrev -> Int -> AWS.Error -> Bool
-is srv s (AWS.ServiceError e) = srv == e ^. serviceAbbrev && s == statusCode (e ^. serviceStatus)
+is srv s (AWS.ServiceError e) = srv == e ^. serviceError_abbrev && s == statusCode (e ^. serviceError_status)
 is _ _ _ = False
 
-isTimeout :: MonadIO m => Either AWS.Error a -> m Bool
-isTimeout (Right _) = pure False
-isTimeout (Left e) = case e of
-  AWS.TransportError (HttpExceptionRequest _ ResponseTimeout) -> pure True
-  _ -> pure False
+retry :: Int -> (RetryStatus -> Amazon (Either AWS.Error a)) -> Amazon (Either AWS.Error a)
+retry n =
+  retrying
+    (exponentialBackoff 50000 <> limitRetries n)
+    (const $ \x -> pure $ isTimeout x || isRateLimited x)
+  where
+    isTimeout :: Either AWS.Error a -> Bool
+    isTimeout (Left (AWS.TransportError (HttpExceptionRequest _ ResponseTimeout))) = True
+    isTimeout _ = False
+    isRateLimited :: Either AWS.Error a -> Bool
+    isRateLimited (Left (AWS.TransportError (HttpExceptionRequest _ (StatusCodeException r _)))) = responseStatus r == status429
+    isRateLimited _ = False

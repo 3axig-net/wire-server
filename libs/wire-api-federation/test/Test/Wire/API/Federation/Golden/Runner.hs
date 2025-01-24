@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,15 +17,13 @@
 
 module Test.Wire.API.Federation.Golden.Runner
   ( testObjects,
-    testFromJSONFailure,
-    testFromJSONObjects,
   )
 where
 
 import Data.Aeson
 import Data.Aeson.Encode.Pretty (encodePretty)
-import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Lazy qualified as LBS
 import Imports
 import Test.HUnit
 import Test.Hspec
@@ -60,26 +58,7 @@ testObject obj path = do
 
   pure exists
 
-testFromJSONObjects :: forall a. (Typeable a, ToJSON a, FromJSON a, Eq a, Show a) => [(a, FilePath)] -> IO ()
-testFromJSONObjects = traverse_ (uncurry testFromJSONObject)
-
-testFromJSONObject :: forall a. (Typeable a, FromJSON a, Eq a, Show a) => a -> FilePath -> IO ()
-testFromJSONObject expected path = do
-  let dir = "test/golden/fromJSON"
-      fullPath = dir <> "/" <> path
-  parsed <- eitherDecodeFileStrict fullPath
-  assertEqual (show (typeRep @a) <> ": FromJSON of " <> path <> " should match object") (Right expected) parsed
-
-testFromJSONFailure :: forall a. (Typeable a, FromJSON a, Show a) => FilePath -> IO ()
-testFromJSONFailure path = do
-  let dir = "test/golden/fromJSON"
-      fullPath = dir <> "/" <> path
-  parsed <- eitherDecodeFileStrict @a fullPath
-  case parsed of
-    Right x -> assertFailure $ show (typeRep @a) <> ": FromJSON of " <> path <> ": expected failure, got " <> show x
-    Left _ -> pure ()
-
-assertRight :: Show a => Either a b -> IO b
+assertRight :: (Show a) => Either a b -> IO b
 assertRight =
   \case
     Left a -> assertFailure $ "Expected Right, got Left: " <> show a

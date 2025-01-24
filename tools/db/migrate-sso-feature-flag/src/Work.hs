@@ -1,13 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wno-orphans -Wno-unused-imports #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,21 +21,18 @@
 
 module Work where
 
-import Brig.Types hiding (Client)
 import Cassandra
 import Data.Conduit
 import Data.Conduit.Internal (zipSources)
-import qualified Data.Conduit.List as C
+import Data.Conduit.List qualified as C
 import Data.Id
 import Data.Misc
 import Galley.Cassandra.Instances ()
 import Imports
 import System.Logger (Logger)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 import UnliftIO.Async (pooledMapConcurrentlyN)
 import Wire.API.Team.Feature
-
-deriving instance Cql Name
 
 runCommand :: Logger -> ClientState -> ClientState -> IO ()
 runCommand l spar galley = do
@@ -63,10 +57,11 @@ getSsoTeams = paginateC cql (paramsP LocalQuorum () pageSize) x5
     cql = "select team from idp"
 
 writeSsoFlags :: [TeamId] -> Client ()
-writeSsoFlags = mapM_ (`setSSOTeamConfig` TeamFeatureEnabled)
+writeSsoFlags = mapM_ (`setSSOTeamConfig` FeatureStatusEnabled)
   where
-    setSSOTeamConfig :: MonadClient m => TeamId -> TeamFeatureStatusValue -> m ()
+    setSSOTeamConfig :: (MonadClient m) => TeamId -> FeatureStatus -> m ()
     setSSOTeamConfig tid ssoTeamConfigStatus = do
       retry x5 $ write updateSSOTeamConfig (params LocalQuorum (ssoTeamConfigStatus, tid))
-    updateSSOTeamConfig :: PrepQuery W (TeamFeatureStatusValue, TeamId) ()
-    updateSSOTeamConfig = "update team_features set sso_status = ? where team_id = ?"
+
+    updateSSOTeamConfig :: PrepQuery W (FeatureStatus, TeamId) ()
+    updateSSOTeamConfig = {- `IF EXISTS`, but that requires benchmarking -} "update team_features set sso_status = ? where team_id = ?"

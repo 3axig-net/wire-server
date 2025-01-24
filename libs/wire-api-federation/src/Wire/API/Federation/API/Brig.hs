@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,28 +15,44 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Wire.API.Federation.API.Brig where
+module Wire.API.Federation.API.Brig
+  ( module Notifications,
+    module Wire.API.Federation.API.Brig,
+  )
+where
 
 import Data.Aeson
+import Data.Domain (Domain)
 import Data.Handle (Handle)
 import Data.Id
-import Data.Range
+import Data.OpenApi (OpenApi, ToSchema)
+import Data.Proxy (Proxy (Proxy))
 import Imports
 import Servant.API
-import Servant.API.Generic
+import Servant.OpenApi (HasOpenApi (toOpenApi))
 import Test.QuickCheck (Arbitrary)
-import Wire.API.Arbitrary (GenericUniform (..))
-import Wire.API.Federation.API.Common
-import Wire.API.Federation.Domain (OriginDomainHeader)
-import Wire.API.Message (UserClients)
+import Wire.API.Federation.API.Brig.Notifications as Notifications
+import Wire.API.Federation.Endpoint
+import Wire.API.Federation.Version
+import Wire.API.MLS.CipherSuite
+import Wire.API.MLS.KeyPackage
+import Wire.API.Routes.SpecialiseToVersion
 import Wire.API.User (UserProfile)
-import Wire.API.User.Client (PubClient, UserClientPrekeyMap)
+import Wire.API.User.Client
 import Wire.API.User.Client.Prekey (ClientPrekey, PrekeyBundle)
 import Wire.API.User.Search
 import Wire.API.UserMap (UserMap)
 import Wire.API.Util.Aeson (CustomEncoded (..))
+import Wire.API.VersionInfo
+import Wire.Arbitrary (GenericUniform (..))
 
-newtype SearchRequest = SearchRequest {term :: Text}
+data SearchRequest = SearchRequest
+  { term :: Text,
+    -- | The searcher's team ID, used to matched against the remote backend's team federation policy.
+    from :: Maybe TeamId,
+    -- | The remote teams that the calling backend is allowed to federate with.
+    onlyInTeams :: Maybe [TeamId]
+  }
   deriving (Show, Eq, Generic, Typeable)
   deriving (Arbitrary) via (GenericUniform SearchRequest)
 
@@ -44,67 +60,99 @@ instance ToJSON SearchRequest
 
 instance FromJSON SearchRequest
 
--- | For conventions see /docs/developer/federation-api-conventions.md
---
--- Maybe this module should be called Brig
-data BrigApi routes = BrigApi
-  { getUserByHandle ::
-      routes
-        :- "get-user-by-handle"
-        :> ReqBody '[JSON] Handle
-        :> Post '[JSON] (Maybe UserProfile),
-    getUsersByIds ::
-      routes
-        :- "get-users-by-ids"
-        :> ReqBody '[JSON] [UserId]
-        :> Post '[JSON] [UserProfile],
-    claimPrekey ::
-      routes
-        :- "claim-prekey"
-        :> ReqBody '[JSON] (UserId, ClientId)
-        :> Post '[JSON] (Maybe ClientPrekey),
-    claimPrekeyBundle ::
-      routes
-        :- "claim-prekey-bundle"
-        :> ReqBody '[JSON] UserId
-        :> Post '[JSON] PrekeyBundle,
-    claimMultiPrekeyBundle ::
-      routes
-        :- "claim-multi-prekey-bundle"
-        :> ReqBody '[JSON] UserClients
-        :> Post '[JSON] UserClientPrekeyMap,
-    searchUsers ::
-      routes
-        :- "search-users"
-        -- FUTUREWORK(federation): do we want to perform some type-level validation like length checks?
-        -- (handles can be up to 256 chars currently)
-        :> ReqBody '[JSON] SearchRequest
-        :> Post '[JSON] [Contact],
-    getUserClients ::
-      routes
-        :- "get-user-clients"
-        :> ReqBody '[JSON] GetUserClients
-        :> Post '[JSON] (UserMap (Set PubClient)),
-    sendConnectionAction ::
-      routes
-        :- "send-connection-action"
-        :> OriginDomainHeader
-        :> ReqBody '[JSON] NewConnectionRequest
-        :> Post '[JSON] NewConnectionResponse,
-    onUserDeleted ::
-      routes
-        :- "on-user-deleted-connections"
-        :> OriginDomainHeader
-        :> ReqBody '[JSON] UserDeletedConnectionsNotification
-        :> Post '[JSON] EmptyResponse
+instance ToSchema SearchRequest
+
+data SearchResponse = SearchResponse
+  { contacts :: [Contact],
+    searchPolicy :: FederatedUserSearchPolicy
   }
-  deriving (Generic)
+  deriving (Show, Generic, Typeable)
+
+instance ToJSON SearchResponse
+
+instance FromJSON SearchResponse
+
+instance ToSchema SearchResponse
+
+-- | For conventions see /docs/developer/federation-api-conventions.md
+type BrigApi =
+  FedEndpoint "api-version" () VersionInfo
+    :<|> FedEndpoint "get-user-by-handle" Handle (Maybe UserProfile)
+    :<|> FedEndpoint "get-users-by-ids" [UserId] [UserProfile]
+    :<|> FedEndpoint "claim-prekey" (UserId, ClientId) (Maybe ClientPrekey)
+    :<|> FedEndpoint "claim-prekey-bundle" UserId PrekeyBundle
+    :<|> FedEndpoint "claim-multi-prekey-bundle" UserClients UserClientPrekeyMap
+    -- FUTUREWORK(federation): do we want to perform some type-level validation like length checks?
+    -- (handles can be up to 256 chars currently)
+    :<|> FedEndpoint "search-users" SearchRequest SearchResponse
+    :<|> FedEndpoint "get-user-clients" GetUserClients (UserMap (Set PubClient))
+    :<|> FedEndpointWithMods '[Until V1] (Versioned 'V0 "get-mls-clients") MLSClientsRequestV0 (Set ClientInfo)
+    :<|> FedEndpointWithMods '[From V1] "get-mls-clients" MLSClientsRequest (Set ClientInfo)
+    :<|> FedEndpoint "send-connection-action" NewConnectionRequest NewConnectionResponse
+    :<|> FedEndpoint "claim-key-packages" ClaimKeyPackageRequest (Maybe KeyPackageBundle)
+    :<|> FedEndpoint "get-not-fully-connected-backends" DomainSet NonConnectedBackends
+    -- All the notification endpoints that go through the queue-based
+    -- federation client ('fedQueueClient').
+    :<|> BrigNotificationAPI
+
+newtype DomainSet = DomainSet
+  { domains :: Set Domain
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving (ToJSON, FromJSON) via (CustomEncoded DomainSet)
+
+instance ToSchema DomainSet
+
+newtype NonConnectedBackends = NonConnectedBackends
+  -- TODO:
+  -- The encoding rules that were in place would make this "connectedBackends" over the wire.
+  -- I do not think that this was intended, so I'm leaving this note as it will be an API break.
+  { nonConnectedBackends :: Set Domain
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving (ToJSON, FromJSON) via (CustomEncoded NonConnectedBackends)
+
+instance ToSchema NonConnectedBackends
 
 newtype GetUserClients = GetUserClients
-  { gucUsers :: [UserId]
+  { users :: [UserId]
   }
   deriving stock (Eq, Show, Generic)
   deriving (ToJSON, FromJSON) via (CustomEncoded GetUserClients)
+
+instance ToSchema GetUserClients
+
+data MLSClientsRequestV0 = MLSClientsRequestV0
+  { userId :: UserId, -- implicitly qualified by the local domain
+    signatureScheme :: SignatureSchemeTag
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving (ToJSON, FromJSON) via (CustomEncoded MLSClientsRequestV0)
+
+instance ToSchema MLSClientsRequestV0
+
+data MLSClientsRequest = MLSClientsRequest
+  { userId :: UserId, -- implicitly qualified by the local domain
+    cipherSuite :: CipherSuite
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving (ToJSON, FromJSON) via (CustomEncoded MLSClientsRequest)
+
+instance ToSchema MLSClientsRequest
+
+mlsClientsRequestToV0 :: MLSClientsRequest -> MLSClientsRequestV0
+mlsClientsRequestToV0 mcr =
+  MLSClientsRequestV0
+    { userId = mcr.userId,
+      signatureScheme = Ed25519
+    }
+
+mlsClientsRequestFromV0 :: MLSClientsRequestV0 -> MLSClientsRequest
+mlsClientsRequestFromV0 mcr =
+  MLSClientsRequest
+    { userId = mcr.userId,
+      cipherSuite = tagCipherSuite MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+    }
 
 -- NOTE: ConversationId for remote connections
 --
@@ -124,14 +172,19 @@ newtype GetUserClients = GetUserClients
 
 data NewConnectionRequest = NewConnectionRequest
   { -- | The 'from' userId is understood to always have the domain of the backend making the connection request
-    ncrFrom :: UserId,
+    from :: UserId,
+    -- | The team ID of the 'from' user. If the user is not in a team, it is set
+    -- to 'Nothing'. It is implicitly qualified the same as the 'from' user.
+    fromTeam :: Maybe TeamId,
     -- | The 'to' userId is understood to always have the domain of the receiving backend.
-    ncrTo :: UserId,
-    ncrAction :: RemoteConnectionAction
+    to :: UserId,
+    action :: RemoteConnectionAction
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform NewConnectionRequest)
   deriving (FromJSON, ToJSON) via (CustomEncoded NewConnectionRequest)
+
+instance ToSchema NewConnectionRequest
 
 data RemoteConnectionAction
   = RemoteConnect
@@ -140,21 +193,32 @@ data RemoteConnectionAction
   deriving (Arbitrary) via (GenericUniform RemoteConnectionAction)
   deriving (FromJSON, ToJSON) via (CustomEncoded RemoteConnectionAction)
 
+instance ToSchema RemoteConnectionAction
+
 data NewConnectionResponse
   = NewConnectionResponseUserNotActivated
+  | NewConnectionResponseNotFederating
   | NewConnectionResponseOk (Maybe RemoteConnectionAction)
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform NewConnectionResponse)
   deriving (FromJSON, ToJSON) via (CustomEncoded NewConnectionResponse)
 
-type UserDeletedNotificationMaxConnections = 1000
+instance ToSchema NewConnectionResponse
 
-data UserDeletedConnectionsNotification = UserDeletedConnectionsNotification
-  { -- | This is qualified implicitly by the origin domain
-    udcnUser :: UserId,
-    -- | These are qualified implicitly by the target domain
-    udcnConnections :: Range 1 UserDeletedNotificationMaxConnections [UserId]
+data ClaimKeyPackageRequest = ClaimKeyPackageRequest
+  { -- | The user making the request, implictly qualified by the origin domain.
+    claimant :: UserId,
+    -- | The user whose key packages are being claimed, implictly qualified by
+    -- the target domain.
+    target :: UserId,
+    -- | The ciphersuite of the key packages being claimed.
+    cipherSuite :: CipherSuite
   }
   deriving stock (Eq, Show, Generic)
-  deriving (Arbitrary) via (GenericUniform UserDeletedConnectionsNotification)
-  deriving (FromJSON, ToJSON) via (CustomEncoded UserDeletedConnectionsNotification)
+  deriving (Arbitrary) via (GenericUniform ClaimKeyPackageRequest)
+  deriving (FromJSON, ToJSON) via (CustomEncoded ClaimKeyPackageRequest)
+
+instance ToSchema ClaimKeyPackageRequest
+
+swaggerDoc :: OpenApi
+swaggerDoc = toOpenApi (Proxy @(SpecialiseToVersion 'V1 BrigApi))

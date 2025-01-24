@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,12 +19,13 @@
 
 module Test.Federator.Util where
 
-import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Lazy qualified as LBS
 import Data.Default
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Test as Wai
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
+import Network.Wai.Test qualified as Wai
+import Network.Wai.Utilities.Server (federationRequestIdHeaderName)
 import Polysemy
 import Polysemy.Error
 import Test.Tasty.HUnit
@@ -62,12 +63,12 @@ testRequest tr = do
   pure . flip Wai.setPath (trPath tr) $
     Wai.defaultRequest
       { Wai.requestMethod = trMethod tr,
-        Wai.requestBody = atomicModifyIORef refChunks $ \bss ->
-          case bss of
-            [] -> ([], mempty)
-            x : y -> (y, x),
+        Wai.requestBody = atomicModifyIORef refChunks $ \case
+          [] -> ([], mempty)
+          x : y -> (y, x),
         Wai.requestHeaders =
           [("X-SSL-Certificate", HTTP.urlEncode True h) | h <- toList (trCertificateHeader tr)]
             <> [(originDomainHeaderName, h) | h <- toList (trDomainHeader tr)]
+            <> [(federationRequestIdHeaderName, "test")]
             <> trExtraHeaders tr
       }

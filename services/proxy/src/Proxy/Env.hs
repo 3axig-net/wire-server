@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,7 +22,6 @@ module Proxy.Env
     createEnv,
     destroyEnv,
     reqId,
-    monitor,
     options,
     applog,
     manager,
@@ -31,18 +32,15 @@ where
 import Control.Lens (makeLenses, (^.))
 import Data.Configurator
 import Data.Configurator.Types
-import Data.Default (def)
-import Data.Id (RequestId)
-import Data.Metrics.Middleware (Metrics)
+import Data.Id (RequestId (..), defRequestId)
 import Imports
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Proxy.Options
-import qualified System.Logger.Extended as Logger
+import System.Logger.Extended qualified as Logger
 
 data Env = Env
   { _reqId :: !RequestId,
-    _monitor :: !Metrics,
     _options :: !Opts,
     _applog :: !Logger.Logger,
     _manager :: !Manager,
@@ -52,8 +50,8 @@ data Env = Env
 
 makeLenses ''Env
 
-createEnv :: Metrics -> Opts -> IO Env
-createEnv m o = do
+createEnv :: Opts -> IO Env
+createEnv o = do
   g <- Logger.mkLogger (o ^. logLevel) (o ^. logNetStrings) (o ^. logFormat)
   n <-
     newManager
@@ -64,7 +62,8 @@ createEnv m o = do
         }
   let ac = AutoConfig 60 (reloadError g)
   (c, t) <- autoReload ac [Required $ o ^. secretsConfig]
-  return $! Env def m o g n c t
+  let rid = RequestId defRequestId
+  pure $! Env rid o g n c t
   where
     reloadError g x =
       Logger.err g (Logger.msg $ Logger.val "Failed reloading config: " Logger.+++ show x)

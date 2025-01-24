@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,8 +27,8 @@ module Galley.Queue
   )
 where
 
-import qualified Control.Concurrent.STM as Stm
-import qualified Galley.Effects.Queue as E
+import Control.Concurrent.STM qualified as Stm
+import Galley.Effects.Queue qualified as E
 import Imports
 import Numeric.Natural (Natural)
 import Polysemy
@@ -38,10 +38,10 @@ data Queue a = Queue
     _queue :: Stm.TBQueue a
   }
 
-new :: MonadIO m => Natural -> m (Queue a)
+new :: (MonadIO m) => Natural -> m (Queue a)
 new n = liftIO $ Queue <$> Stm.newTVarIO 0 <*> Stm.newTBQueueIO n
 
-tryPush :: MonadIO m => Queue a -> a -> m Bool
+tryPush :: (MonadIO m) => Queue a -> a -> m Bool
 tryPush q a = liftIO . atomically $ do
   isFull <- Stm.isFullTBQueue (_queue q)
   unless isFull $ do
@@ -49,16 +49,16 @@ tryPush q a = liftIO . atomically $ do
     Stm.writeTBQueue (_queue q) a
   pure (not isFull)
 
-pop :: MonadIO m => Queue a -> m a
+pop :: (MonadIO m) => Queue a -> m a
 pop q = liftIO . atomically $ do
   Stm.modifyTVar' (_len q) (pred . max 1)
   Stm.readTBQueue (_queue q)
 
-len :: MonadIO m => Queue a -> m Word
+len :: (MonadIO m) => Queue a -> m Word
 len q = liftIO $ Stm.readTVarIO (_len q)
 
 interpretQueue ::
-  Member (Embed IO) r =>
+  (Member (Embed IO) r) =>
   Queue a ->
   Sem (E.Queue a ': r) x ->
   Sem r x

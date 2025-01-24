@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,6 +39,7 @@ module Galley.Effects.TeamStore
     getUserTeams,
     getUsersTeams,
     getOneUserTeam,
+    lookupBindingTeam,
 
     -- ** Update teams
     deleteTeamConversation,
@@ -56,7 +59,9 @@ module Galley.Effects.TeamStore
     getTeamMembersWithLimit,
     getTeamMembers,
     getBillingTeamMembers,
+    getTeamAdmins,
     selectTeamMembers,
+    selectTeamMembersPaginated,
 
     -- ** Update team members
     setTeamMemberPermissions,
@@ -76,12 +81,20 @@ where
 import Data.Id
 import Data.Range
 import Galley.Effects.ListItems
-import Galley.Effects.Paging
 import Galley.Types.Teams
-import Galley.Types.Teams.Intra
 import Imports
 import Polysemy
-import qualified Proto.TeamEvents as E
+import Proto.TeamEvents qualified as E
+import Wire.API.Error
+import Wire.API.Error.Galley
+import Wire.API.Routes.Internal.Galley.TeamsIntra
+import Wire.API.Team
+import Wire.API.Team.Conversation
+import Wire.API.Team.Feature
+import Wire.API.Team.Member (HardTruncationLimit, TeamMember, TeamMemberList)
+import Wire.API.Team.Permission
+import Wire.Sem.Paging
+import Wire.Sem.Paging.Cassandra (CassandraPaging)
 
 data TeamStore m a where
   CreateTeamMember :: TeamId -> TeamMember -> TeamStore m ()
@@ -90,12 +103,13 @@ data TeamStore m a where
     Maybe TeamId ->
     UserId ->
     Range 1 256 Text ->
-    Range 1 256 Text ->
+    Icon ->
     Maybe (Range 1 256 Text) ->
     TeamBinding ->
     TeamStore m Team
   DeleteTeamMember :: TeamId -> UserId -> TeamStore m ()
   GetBillingTeamMembers :: TeamId -> TeamStore m [UserId]
+  GetTeamAdmins :: TeamId -> TeamStore m [UserId]
   GetTeam :: TeamId -> TeamStore m (Maybe TeamData)
   GetTeamName :: TeamId -> TeamStore m (Maybe Text)
   GetTeamConversation :: TeamId -> ConvId -> TeamStore m (Maybe TeamConversation)
@@ -105,6 +119,14 @@ data TeamStore m a where
   GetTeamMembersWithLimit :: TeamId -> Range 1 HardTruncationLimit Int32 -> TeamStore m TeamMemberList
   GetTeamMembers :: TeamId -> TeamStore m [TeamMember]
   SelectTeamMembers :: TeamId -> [UserId] -> TeamStore m [TeamMember]
+  SelectTeamMembersPaginated ::
+    TeamId ->
+    [UserId] ->
+    Maybe (PagingState CassandraPaging TeamMember) ->
+    PagingBounds CassandraPaging TeamMember ->
+    TeamStore m (Page CassandraPaging TeamMember)
+  -- FUTUREWORK(mangoiv): this should be a single 'TeamId' (@'Maybe' 'TeamId'@), there's no way
+  -- a user could be part of multiple teams
   GetUserTeams :: UserId -> TeamStore m [TeamId]
   GetUsersTeams :: [UserId] -> TeamStore m (Map UserId TeamId)
   GetOneUserTeam :: UserId -> TeamStore m (Maybe TeamId)
@@ -116,15 +138,29 @@ data TeamStore m a where
   SetTeamData :: TeamId -> TeamUpdateData -> TeamStore m ()
   SetTeamStatus :: TeamId -> TeamStatus -> TeamStore m ()
   FanoutLimit :: TeamStore m (Range 1 HardTruncationLimit Int32)
-  GetLegalHoldFlag :: TeamStore m FeatureLegalHold
+  GetLegalHoldFlag :: TeamStore m (FeatureDefaults LegalholdConfig)
   EnqueueTeamEvent :: E.TeamEvent -> TeamStore m ()
 
 makeSem ''TeamStore
 
 listTeams ::
-  Member (ListItems p TeamId) r =>
+  (Member (ListItems p TeamId) r) =>
   UserId ->
   Maybe (PagingState p TeamId) ->
   PagingBounds p TeamId ->
   Sem r (Page p TeamId)
 listTeams = listItems
+
+lookupBindingTeam ::
+  ( Member (ErrorS 'TeamNotFound) r,
+    Member (ErrorS 'NonBindingTeam) r,
+    Member TeamStore r
+  ) =>
+  UserId ->
+  Sem r TeamId
+lookupBindingTeam zusr = do
+  tid <- getOneUserTeam zusr >>= noteS @'TeamNotFound
+  binding <- getTeamBinding tid >>= noteS @'TeamNotFound
+  case binding of
+    Binding -> pure tid
+    NonBinding -> throwS @'NonBindingTeam

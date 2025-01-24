@@ -4,7 +4,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -12,7 +11,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -56,7 +55,7 @@ import qualified Web.Scim.Schema.User.Name as ScimN
 import Wire.API.User.RichInfo
 
 spec :: Spec
-spec = describe "toScimStoredUser'" $ do
+spec = describe "toScimStoredUser" $ do
   it "works" $ do
     let usr :: Scim.User SparTag
         usr =
@@ -104,7 +103,7 @@ spec = describe "toScimStoredUser'" $ do
             { Scim.resourceType = ScimR.UserResource,
               Scim.created = fromUTCTimeMillis now,
               Scim.lastModified = fromUTCTimeMillis now,
-              Scim.version = Scim.Weak "46246ab15ccab8a70b59f97f7182d6fb557dd454c0f06cdcb83d99d027cff08e",
+              Scim.version = Scim.Weak "ee3ebd2f5722d0b95e20ded809a81321b3810543457ca6ca459d822294c12c71",
               Scim.location =
                 Scim.URI . fromJust $
                   Network.URI.parseURI
@@ -116,7 +115,7 @@ spec = describe "toScimStoredUser'" $ do
             URI.ByteString.parseURI laxURIParserOptions "https://127.0.0.1/scim/v2/"
         uid = Id . fromJust . UUID.fromText $ "90b5ee1c-088e-11e9-9a16-73f80f483813"
         result :: ScimC.StoredUser SparTag
-        result = toScimStoredUser' now now baseuri uid usr
+        result = toScimStoredUser now now baseuri uid usr
     Scim.meta result `shouldBe` meta
     Scim.value (Scim.thing result) `shouldBe` usr
   it "roundtrips" . property $ do
@@ -137,7 +136,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra mempty) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "newAttr" "newValue"]))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "newAttr" "newValue"])))
       it "can replace in rich info map" $ do
         let operationJSON =
               [aesonQQ|{
@@ -150,7 +149,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue"]))) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "newValue"]))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "newValue"])))
       it "treats rich info map case insensitively" $ do
         let operationJSON =
               [aesonQQ|{
@@ -163,7 +162,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue"]))) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "newValue"]))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "newValue"])))
       it "can remove from rich info map" $ do
         let operationJSON =
               [aesonQQ|{
@@ -175,7 +174,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue"]))) operation
-          `shouldBe` (Right (ScimUserExtra mempty))
+          `shouldBe` Right (ScimUserExtra mempty)
       it "adds new fields to rich info assoc list at the end" $ do
         let operationJSON =
               [aesonQQ|{
@@ -188,7 +187,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue"]))) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue", RichField "newAttr" "newValue"]))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue", RichField "newAttr" "newValue"])))
       it "can replace in rich info assoc list while maintaining order" $ do
         let operationJSON =
               [aesonQQ|{
@@ -211,7 +210,7 @@ spec = describe "toScimStoredUser'" $ do
                 RichField "thirdAttr" "thirdVal"
               ]
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList origAssocList))) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList expectedAssocList))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList expectedAssocList)))
       it "can remove from rich info assoc list" $ do
         let operationJSON =
               [aesonQQ|{
@@ -223,7 +222,7 @@ spec = describe "toScimStoredUser'" $ do
                                      }|]
         let (Aeson.Success (PatchOp [operation])) = Aeson.parse (parseJSON @(PatchOp SparTag)) operationJSON
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList [RichField "oldAttr" "oldValue"]))) operation
-          `shouldBe` (Right (ScimUserExtra mempty))
+          `shouldBe` Right (ScimUserExtra mempty)
       it "throws error if asked to patch an recognized schema" $ do
         let schema = Just (CustomSchema "wrong-schema")
             path = Just (NormalPath (AttrPath schema "oldAttr" Nothing))
@@ -252,7 +251,7 @@ spec = describe "toScimStoredUser'" $ do
                 RichField "thirdAttr" "thirdVal"
               ]
         applyOperation (ScimUserExtra (RichInfo (mkRichInfoAssocList origAssocList))) operation
-          `shouldBe` (Right (ScimUserExtra (RichInfo (mkRichInfoAssocList expectedAssocList))))
+          `shouldBe` Right (ScimUserExtra (RichInfo (mkRichInfoAssocList expectedAssocList)))
 
   describe "normalization" $ do
     let usr :: User SparTag

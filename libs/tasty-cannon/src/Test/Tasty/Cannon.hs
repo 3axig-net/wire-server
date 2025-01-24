@@ -2,10 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,12 +31,8 @@ module Test.Tasty.Cannon
     close,
     bracket,
     bracketAsClient,
-    bracketN,
-    bracketAsClientN,
 
     -- ** Random Connection IDs
-    connectR,
-    connectAsClientR,
     bracketR,
     bracketAsClientR,
     bracketR2,
@@ -48,7 +45,6 @@ module Test.Tasty.Cannon
     MatchFailure (..),
     await,
     awaitMatch,
-    awaitMatch_,
     awaitMatchN,
     assertMatch,
     assertMatch_,
@@ -75,22 +71,22 @@ import Control.Concurrent.Async
 import Control.Concurrent.Timeout hiding (threadDelay)
 import Control.Exception (asyncExceptionFromException, throwIO)
 import Control.Monad.Catch hiding (bracket)
-import qualified Control.Monad.Catch as Catch
+import Control.Monad.Catch qualified as Catch
 import Data.Aeson (FromJSON, Value (..), decodeStrict', fromJSON)
-import qualified Data.Aeson as JSON
-import qualified Data.ByteString.Char8 as C
+import Data.Aeson qualified as JSON
+import Data.ByteString.Char8 qualified as C
 import Data.ByteString.Conversion
 import Data.Id
 import Data.List1
 import Data.Timeout (Timeout, TimeoutUnit (..), (#))
-import Gundeck.Types
 import Imports
 import Network.HTTP.Client
-import qualified Network.HTTP.Client as Http
+import Network.HTTP.Client qualified as Http
 import Network.HTTP.Types.Status
-import qualified Network.WebSockets as WS
+import Network.WebSockets qualified as WS
 import System.Random (randomIO)
 import Test.Tasty.HUnit
+import Wire.API.Internal.Notification
 
 type Cannon = Http.Request -> Http.Request
 
@@ -103,20 +99,20 @@ data WebSocket = WebSocket
     wsAppThread :: Async ()
   }
 
-connect :: MonadIO m => Cannon -> UserId -> ConnId -> m WebSocket
+connect :: (MonadIO m) => Cannon -> UserId -> ConnId -> m WebSocket
 connect can uid = connectAsMaybeClient can uid Nothing
 
-connectAsClient :: MonadIO m => Cannon -> UserId -> ClientId -> ConnId -> m WebSocket
+connectAsClient :: (MonadIO m) => Cannon -> UserId -> ClientId -> ConnId -> m WebSocket
 connectAsClient can uid client = connectAsMaybeClient can uid (Just client)
 
-connectAsMaybeClient :: MonadIO m => Cannon -> UserId -> Maybe ClientId -> ConnId -> m WebSocket
+connectAsMaybeClient :: (MonadIO m) => Cannon -> UserId -> Maybe ClientId -> ConnId -> m WebSocket
 connectAsMaybeClient can uid client conn = liftIO $ do
   nchan <- newTChanIO
   latch <- newEmptyMVar
   wsapp <- run can uid client conn (clientApp nchan latch)
-  return $ WebSocket nchan latch wsapp
+  pure $ WebSocket nchan latch wsapp
 
-close :: MonadIO m => WebSocket -> m ()
+close :: (MonadIO m) => WebSocket -> m ()
 close ws = liftIO $ do
   putMVar (wsCloseLatch ws) ()
   void $ waitCatch (wsAppThread ws)
@@ -142,35 +138,7 @@ bracketAsClient ::
 bracketAsClient can uid client conn =
   Catch.bracket (connectAsClient can uid client conn) close
 
-bracketN ::
-  (MonadIO m, MonadMask m) =>
-  Cannon ->
-  [(UserId, ConnId)] ->
-  ([WebSocket] -> m a) ->
-  m a
-bracketN c us f = go [] us
-  where
-    go wss [] = f (reverse wss)
-    go wss ((x, y) : xs) = bracket c x y (\ws -> go (ws : wss) xs)
-
-bracketAsClientN ::
-  (MonadMask m, MonadIO m) =>
-  Cannon ->
-  [(UserId, ClientId, ConnId)] ->
-  ([WebSocket] -> m a) ->
-  m a
-bracketAsClientN c us f = go [] us
-  where
-    go wss [] = f (reverse wss)
-    go wss ((x, y, z) : xs) = bracketAsClient c x y z (\ws -> go (ws : wss) xs)
-
 -- Random Connection IDs
-
-connectR :: MonadIO m => Cannon -> UserId -> m WebSocket
-connectR can uid = randomConnId >>= connect can uid
-
-connectAsClientR :: MonadIO m => Cannon -> UserId -> ClientId -> m WebSocket
-connectAsClientR can uid clientId = randomConnId >>= connectAsClient can uid clientId
 
 bracketR :: (MonadIO m, MonadMask m) => Cannon -> UserId -> (WebSocket -> m a) -> m a
 bracketR can usr f = do
@@ -271,7 +239,7 @@ instance Show RegistrationTimeout where
   show (RegistrationTimeout s) =
     "Failed to find a registration after " ++ show s ++ " retries.\n"
 
-await :: MonadIO m => Timeout -> WebSocket -> m (Maybe Notification)
+await :: (MonadIO m) => Timeout -> WebSocket -> m (Maybe Notification)
 await t = liftIO . timeout t . atomically . readTChan . wsChan
 
 -- | 'await' a 'Notification' on the 'WebSocket'.  If it satisfies the 'Assertion', return it.
@@ -288,8 +256,8 @@ awaitMatch ::
   (HasCallStack, MonadIO m, MonadCatch m) =>
   Timeout ->
   WebSocket ->
-  (Notification -> Assertion) ->
-  m (Either MatchTimeout Notification)
+  (Notification -> IO a) ->
+  m (Either MatchTimeout a)
 awaitMatch t ws match = go [] []
   where
     go buf errs = do
@@ -297,9 +265,9 @@ awaitMatch t ws match = go [] []
       case mn of
         Just n ->
           do
-            liftIO (match n)
+            a <- liftIO (match n)
             refill buf
-            return (Right n)
+            pure (Right a)
             `catchAll` \e -> case asyncExceptionFromException e of
               Just x -> throwM (x :: SomeAsyncException)
               Nothing ->
@@ -307,30 +275,22 @@ awaitMatch t ws match = go [] []
                  in go (n : buf) (e' : errs)
         Nothing -> do
           refill buf
-          return (Left (MatchTimeout errs))
+          pure (Left (MatchTimeout errs))
     refill = mapM_ (liftIO . atomically . writeTChan (wsChan ws))
-
-awaitMatch_ ::
-  (HasCallStack, MonadIO m, MonadCatch m) =>
-  Timeout ->
-  WebSocket ->
-  (Notification -> Assertion) ->
-  m ()
-awaitMatch_ t w = void . awaitMatch t w
 
 assertMatch ::
   (HasCallStack, MonadIO m, MonadCatch m) =>
   Timeout ->
   WebSocket ->
-  (Notification -> Assertion) ->
-  m Notification
+  (Notification -> IO a) ->
+  m a
 assertMatch t ws f = awaitMatch t ws f >>= assertSuccess
 
 assertMatch_ ::
   (HasCallStack, MonadIO m, MonadCatch m) =>
   Timeout ->
   WebSocket ->
-  (Notification -> Assertion) ->
+  (Notification -> IO a) ->
   m ()
 assertMatch_ t w = void . assertMatch t w
 
@@ -338,40 +298,40 @@ awaitMatchN ::
   (HasCallStack, MonadIO m) =>
   Timeout ->
   [WebSocket] ->
-  (Notification -> Assertion) ->
-  m [Either MatchTimeout Notification]
+  (Notification -> IO a) ->
+  m [Either MatchTimeout a]
 awaitMatchN t wss f = snd <$$> awaitMatchN' t (((),) <$> wss) f
 
 awaitMatchN' ::
   (HasCallStack, MonadIO m) =>
   Timeout ->
   [(extra, WebSocket)] ->
-  (Notification -> Assertion) ->
-  m [(extra, Either MatchTimeout Notification)]
+  (Notification -> IO a) ->
+  m [(extra, Either MatchTimeout a)]
 awaitMatchN' t wss f = liftIO $ mapConcurrently (\(extra, ws) -> (extra,) <$> awaitMatch t ws f) wss
 
 assertMatchN ::
   (HasCallStack, MonadIO m, MonadThrow m) =>
   Timeout ->
   [WebSocket] ->
-  (Notification -> Assertion) ->
-  m [Notification]
+  (Notification -> IO a) ->
+  m [a]
 assertMatchN t wss f = awaitMatchN t wss f >>= mapM assertSuccess
 
 assertMatchN_ ::
   (HasCallStack, MonadIO m, MonadThrow m) =>
   Timeout ->
   [WebSocket] ->
-  (Notification -> Assertion) ->
+  (Notification -> IO a) ->
   m ()
 assertMatchN_ t wss f = void $ assertMatchN t wss f
 
-assertSuccess :: (HasCallStack, MonadIO m, MonadThrow m) => Either MatchTimeout Notification -> m Notification
-assertSuccess = either throwM return
+assertSuccess :: (HasCallStack, MonadIO m, MonadThrow m) => Either MatchTimeout a -> m a
+assertSuccess = either throwM pure
 
-assertNoEvent :: (HasCallStack, MonadIO m, MonadCatch m) => Timeout -> [WebSocket] -> m ()
+assertNoEvent :: (HasCallStack, MonadIO m) => Timeout -> [WebSocket] -> m ()
 assertNoEvent t ww = do
-  results <- awaitMatchN' t (zip [(0 :: Int) ..] ww) (const $ pure ())
+  results <- awaitMatchN' t (zip [(0 :: Int) ..] ww) pure
   for_ results $ \(ix, result) ->
     either (const $ pure ()) (liftIO . f ix) result
   where
@@ -380,7 +340,7 @@ assertNoEvent t ww = do
 -----------------------------------------------------------------------------
 -- Unpacking Notifications
 
-unpackPayload :: FromJSON a => Notification -> List1 a
+unpackPayload :: (FromJSON a) => Notification -> List1 a
 unpackPayload = fmap decodeEvent . ntfPayload
   where
     decodeEvent o = case fromJSON (Object o) of
@@ -390,17 +350,17 @@ unpackPayload = fmap decodeEvent . ntfPayload
 -----------------------------------------------------------------------------
 -- Randomness
 
-randomConnId :: MonadIO m => m ConnId
+randomConnId :: (MonadIO m) => m ConnId
 randomConnId = liftIO $ do
   r <- randomIO :: IO Word32
-  return . ConnId $ C.pack $ show r
+  pure . ConnId $ C.pack $ show r
 
 -----------------------------------------------------------------------------
 -- Internals
 
 -- | Start a client thread in 'Async' that opens a web socket to a Cannon, wait
 --   for the connection to register with Gundeck, and return the 'Async' thread.
-run :: MonadIO m => Cannon -> UserId -> Maybe ClientId -> ConnId -> WS.ClientApp () -> m (Async ())
+run :: (MonadIO m) => Cannon -> UserId -> Maybe ClientId -> ConnId -> WS.ClientApp () -> m (Async ())
 run cannon@(($ Http.defaultRequest) -> ca) uid client connId app = liftIO $ do
   latch <- newEmptyMVar
   wsapp <-
@@ -419,7 +379,7 @@ run cannon@(($ Http.defaultRequest) -> ca) uid client connId app = liftIO $ do
   stat <- poll wsapp
   case stat of
     Just (Left ex) -> throwIO ex
-    _ -> waitForRegistry numRetries >> return wsapp
+    _ -> waitForRegistry numRetries >> pure wsapp
   where
     caHost = C.unpack (Http.host ca)
     caPort = Http.port ca

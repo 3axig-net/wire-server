@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,8 +17,9 @@
 
 module Gundeck.Push.Data
   ( insert,
+    updateArn,
     delete,
-    Gundeck.Push.Data.lookup,
+    lookup,
     erase,
     Consistency (..),
   )
@@ -29,10 +30,10 @@ import Data.ByteString.Conversion
 import Data.Id (ClientId, ConnId, UserId)
 import Gundeck.Instances ()
 import Gundeck.Push.Native.Types
-import Gundeck.Types
-import Imports
+import Imports hiding (lookup)
 import System.Logger.Class (MonadLogger, field, msg, val, (~~))
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
+import Wire.API.Push.V2 hiding (token)
 
 lookup :: (MonadClient m, MonadLogger m) => UserId -> Consistency -> m [Address]
 lookup u c = foldM mk [] =<< retry x1 (query q (params c (Identity u)))
@@ -41,19 +42,25 @@ lookup u c = foldM mk [] =<< retry x1 (query q (params c (Identity u)))
     q = "select usr, transport, app, ptoken, arn, connection, client from user_push where usr = ?"
     mk as r = maybe as (: as) <$> mkAddr r
 
-insert :: MonadClient m => UserId -> Transport -> AppName -> Token -> EndpointArn -> ConnId -> ClientId -> m ()
+insert :: (MonadClient m) => UserId -> Transport -> AppName -> Token -> EndpointArn -> ConnId -> ClientId -> m ()
 insert u t a p e o c = retry x5 $ write q (params LocalQuorum (u, t, a, p, e, o, c))
   where
     q :: PrepQuery W (UserId, Transport, AppName, Token, EndpointArn, ConnId, ClientId) ()
     q = "insert into user_push (usr, transport, app, ptoken, arn, connection, client) values (?, ?, ?, ?, ?, ?, ?)"
 
-delete :: MonadClient m => UserId -> Transport -> AppName -> Token -> m ()
+updateArn :: (MonadClient m) => UserId -> Transport -> AppName -> Token -> EndpointArn -> m ()
+updateArn uid transport app token arn = retry x5 $ write q (params LocalQuorum (arn, uid, transport, app, token))
+  where
+    q :: PrepQuery W (EndpointArn, UserId, Transport, AppName, Token) ()
+    q = {- `IF EXISTS`, but that requires benchmarking -} "update user_push set arn = ? where usr = ? and transport = ? and app = ? and ptoken = ?"
+
+delete :: (MonadClient m) => UserId -> Transport -> AppName -> Token -> m ()
 delete u t a p = retry x5 $ write q (params LocalQuorum (u, t, a, p))
   where
     q :: PrepQuery W (UserId, Transport, AppName, Token) ()
     q = "delete from user_push where usr = ? and transport = ? and app = ? and ptoken = ?"
 
-erase :: MonadClient m => UserId -> m ()
+erase :: (MonadClient m) => UserId -> m ()
 erase u = retry x5 $ write q (params LocalQuorum (Identity u))
   where
     q :: PrepQuery W (Identity UserId) ()
@@ -64,7 +71,7 @@ mkAddr ::
   (UserId, Transport, AppName, Token, Maybe EndpointArn, ConnId, Maybe ClientId) ->
   m (Maybe Address)
 mkAddr (usr, trp, app, tok, arn, con, clt) = case (clt, arn) of
-  (Just c, Just a) -> return $! Just $! Address usr a con (pushToken trp app tok c)
+  (Just c, Just a) -> pure $! Just $! Address usr a con (pushToken trp app tok c)
   _ -> do
     Log.info $
       field "user" (toByteString usr)
@@ -73,4 +80,4 @@ mkAddr (usr, trp, app, tok, arn, con, clt) = case (clt, arn) of
         ~~ field "token" (tokenText tok)
         ~~ msg (val "Deleting legacy push token without a client or ARN.")
     delete usr trp app tok
-    return Nothing
+    pure Nothing

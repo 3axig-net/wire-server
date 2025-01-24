@@ -1,9 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,18 +19,16 @@
 
 module Wire.API.CustomBackend
   ( CustomBackend (..),
-
-    -- * Swagger
-    modelCustomBackend,
   )
 where
 
-import Data.Aeson
-import Data.Json.Util ((#))
+import Control.Lens ((?~))
 import Data.Misc (HttpsUrl)
-import qualified Data.Swagger.Build.Api as Doc
+import Data.OpenApi qualified as S
+import Data.Schema
+import Deriving.Aeson
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 data CustomBackend = CustomBackend
   { backendConfigJsonUrl :: HttpsUrl,
@@ -39,24 +36,11 @@ data CustomBackend = CustomBackend
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform CustomBackend)
+  deriving (ToJSON, FromJSON, S.ToSchema) via (Schema CustomBackend)
 
-modelCustomBackend :: Doc.Model
-modelCustomBackend = Doc.defineModel "CustomBackend" $ do
-  Doc.description "Description of a custom backend"
-  Doc.property "config_json_url" Doc.string' $
-    Doc.description "the location of the custom backend's config.json file"
-  Doc.property "webapp_welcome_url" Doc.string' $
-    Doc.description "the location of the custom webapp"
-
-instance ToJSON CustomBackend where
-  toJSON j =
-    object $
-      "config_json_url" .= backendConfigJsonUrl j
-        # "webapp_welcome_url" .= backendWebappWelcomeUrl j
-        # []
-
-instance FromJSON CustomBackend where
-  parseJSON = withObject "CustomBackend" $ \o ->
-    CustomBackend
-      <$> o .: "config_json_url"
-      <*> o .: "webapp_welcome_url"
+instance ToSchema CustomBackend where
+  schema =
+    objectWithDocModifier "CustomBackend" (description ?~ "Description of a custom backend") $
+      CustomBackend
+        <$> backendConfigJsonUrl .= fieldWithDocModifier "config_json_url" (description ?~ "the location of the custom backend's config.json file") schema
+        <*> backendWebappWelcomeUrl .= fieldWithDocModifier "webapp_welcome_url" (description ?~ "the location of the custom webapp") schema

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,33 +18,33 @@
 module Federator.Validation
   ( ensureCanFederateWith,
     parseDomain,
-    parseDomainText,
+    decodeCertificate,
     validateDomain,
     validateDomainName,
     ValidationError (..),
   )
 where
 
-import qualified Data.ByteString.Char8 as B8
+import Data.ByteString.Char8 qualified as B8
 import Data.ByteString.Conversion
 import Data.Domain
 import Data.List.NonEmpty (NonEmpty)
-import qualified Data.PEM as X509
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Encoding.Error as Text
-import qualified Data.Text.Lazy as LText
-import qualified Data.X509 as X509
-import qualified Data.X509.Validation as X509
+import Data.PEM qualified as X509
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Data.Text.Encoding.Error qualified as Text
+import Data.Text.Lazy qualified as LText
+import Data.X509 qualified as X509
+import Data.X509.Validation qualified as X509
 import Federator.Discovery
 import Federator.Error
-import Federator.Options
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai.Utilities.Error qualified as Wai
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
+import Wire.API.Routes.FederationDomainConfig
 import Wire.Network.DNS.SRV (SrvTarget (..))
 
 data ValidationError
@@ -59,21 +59,21 @@ instance Exception ValidationError
 
 instance AsWai ValidationError where
   toWai err =
-    Wai.mkError HTTP.status403 (validationErrorLabel err)
+    Wai.mkError (validationErrorStatus err) (validationErrorLabel err)
       . LText.fromStrict
-      $ waiErrorDescription err
+      $ validationErrorDescription err
 
-  waiErrorDescription :: ValidationError -> Text
-  waiErrorDescription NoClientCertificate = "no client certificate provided"
-  waiErrorDescription (CertificateParseError reason) =
-    "certificate parse failure: " <> reason
-  waiErrorDescription (DomainParseError domain) =
-    "domain parse failure for [" <> domain <> "]"
-  waiErrorDescription (AuthenticationFailure errs) =
-    "none of the domain names match the certificate, errors: "
-      <> Text.pack (show (toList errs))
-  waiErrorDescription (FederationDenied domain) =
-    "origin domain [" <> domainText domain <> "] not in the federation allow list"
+validationErrorDescription :: ValidationError -> Text
+validationErrorDescription NoClientCertificate = "no client certificate provided"
+validationErrorDescription (CertificateParseError reason) =
+  "certificate parse failure: " <> reason
+validationErrorDescription (DomainParseError domain) =
+  "domain parse failure for [" <> domain <> "]"
+validationErrorDescription (AuthenticationFailure errs) =
+  "none of the domain names match the certificate, errors: "
+    <> Text.pack (show (toList errs))
+validationErrorDescription (FederationDenied domain) =
+  "origin domain [" <> domainText domain <> "] not in the federation allow list"
 
 validationErrorLabel :: ValidationError -> LText
 validationErrorLabel NoClientCertificate = "no-client-certificate"
@@ -82,78 +82,73 @@ validationErrorLabel (DomainParseError _) = "domain-parse-error"
 validationErrorLabel (AuthenticationFailure _) = "authentication-failure"
 validationErrorLabel (FederationDenied _) = "federation-denied"
 
--- | Validates an already-parsed domain against the allowList using the federator
--- startup configuration.
+validationErrorStatus :: ValidationError -> HTTP.Status
+-- the FederationDenied case is handled differently, because it may be caused
+-- by wrong input in the original request, so we let this error propagate to the
+-- client
+validationErrorStatus (FederationDenied _) = HTTP.status400
+validationErrorStatus _ = HTTP.status403
+
+-- | Validates an already-parsed domain against the allow list (stored in
+-- `brig.federation_remotes`, cached in `Env`).
 ensureCanFederateWith ::
-  Members '[Input RunSettings, Error ValidationError] r =>
+  ( Member (Input FederationDomainConfigs) r,
+    Member (Error ValidationError) r
+  ) =>
   Domain ->
   Sem r ()
 ensureCanFederateWith targetDomain = do
-  strategy <- inputs federationStrategy
+  FederationDomainConfigs strategy domains _ <- input
   case strategy of
+    AllowNone -> throw (FederationDenied targetDomain)
     AllowAll -> pure ()
-    AllowList (AllowedDomains domains) ->
-      unless (targetDomain `elem` domains) $
+    AllowDynamic -> do
+      unless (targetDomain `elem` fmap domain domains) $
         throw (FederationDenied targetDomain)
 
 decodeCertificate ::
-  Member (Error String) r =>
   ByteString ->
-  Sem r X509.Certificate
+  Either String X509.Certificate
 decodeCertificate =
-  fromEither
-    . ( (pure . X509.getCertificate)
-          <=< X509.decodeSignedCertificate
-          <=< (pure . X509.pemContent)
-          <=< expectOne "certificate"
-          <=< X509.pemParseBS
-      )
+  (pure . X509.getCertificate)
+    <=< X509.decodeSignedCertificate
+    <=< (pure . X509.pemContent)
+    <=< expectOne "certificate"
+    <=< X509.pemParseBS
   where
     expectOne :: String -> [a] -> Either String a
     expectOne label [] = Left $ "no " <> label <> " found"
     expectOne _ [x] = pure x
     expectOne label _ = Left $ "found multiple " <> label <> "s"
 
-parseDomain :: Member (Error ValidationError) r => ByteString -> Sem r Domain
+parseDomain :: (Member (Error ValidationError) r) => ByteString -> Sem r Domain
 parseDomain domain =
   note (DomainParseError (Text.decodeUtf8With Text.lenientDecode domain)) $
     fromByteString domain
 
-parseDomainText :: Member (Error ValidationError) r => Text -> Sem r Domain
-parseDomainText domain =
-  mapError @String (const (DomainParseError domain))
-    . fromEither
-    . mkDomain
-    $ domain
-
--- | Validates an unknown domain string against the allowList using the
+-- | Validates an unknown domain string against the allow list using the
 -- federator startup configuration and checks that it matches the names reported
 -- by the client certificate
 validateDomain ::
-  Members
-    '[ Input RunSettings,
-       Error ValidationError,
-       Error DiscoveryFailure,
-       DiscoverFederator
-     ]
-    r =>
-  Maybe ByteString ->
-  ByteString ->
+  ( Member (Input FederationDomainConfigs) r,
+    Member (Error ValidationError) r,
+    Member (Error DiscoveryFailure) r,
+    Member DiscoverFederator r
+  ) =>
+  X509.Certificate ->
+  Domain ->
   Sem r Domain
-validateDomain Nothing _ = throw NoClientCertificate
-validateDomain (Just encodedCertificate) unparsedDomain = do
-  targetDomain <- parseDomain unparsedDomain
+validateDomain certificate targetDomain = do
+  ensureCanFederateWith targetDomain
 
   -- run discovery to find the hostname of the client federator
-  certificate <-
-    mapError (CertificateParseError . Text.pack) $
-      decodeCertificate encodedCertificate
   hostnames <- srvTargetDomain <$$> discoverAllFederatorsWithError targetDomain
   let validationErrors = (\h -> validateDomainName (B8.unpack h) certificate) <$> hostnames
   unless (any null validationErrors) $
-    throw $ AuthenticationFailure validationErrors
+    throw $
+      AuthenticationFailure validationErrors
 
-  ensureCanFederateWith targetDomain $> targetDomain
+  pure targetDomain
 
 -- | Match a hostname against the domain names of a certificate.
 --

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,10 +14,11 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.AssetSettings_user where
 
-import Control.Lens ((.~))
-import Imports (Bool (False, True), Maybe (Just, Nothing), (&))
+import Control.Lens ((.~), (?~))
+import Imports (Bool (False, True), Maybe (Nothing), (&))
 import Wire.API.Asset
   ( AssetRetention
       ( AssetEternal,
@@ -34,11 +35,11 @@ import Wire.API.Asset
 
 testObject_AssetSettings_user_1 :: AssetSettings
 testObject_AssetSettings_user_1 =
-  defAssetSettings & setAssetPublic .~ True & setAssetRetention .~ Just AssetExpiring
+  defAssetSettings & setAssetPublic .~ True & setAssetRetention ?~ AssetExpiring
 
 testObject_AssetSettings_user_2 :: AssetSettings
 testObject_AssetSettings_user_2 =
-  defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ Just AssetExpiring
+  defAssetSettings & setAssetPublic .~ False & setAssetRetention ?~ AssetExpiring
 
 testObject_AssetSettings_user_3 :: AssetSettings
 testObject_AssetSettings_user_3 = defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ Nothing
@@ -48,28 +49,28 @@ testObject_AssetSettings_user_5 = defAssetSettings & setAssetPublic .~ True & se
 
 testObject_AssetSettings_user_6 :: AssetSettings
 testObject_AssetSettings_user_6 =
-  defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ (Just AssetEternalInfrequentAccess)
+  defAssetSettings & setAssetPublic .~ False & setAssetRetention ?~ AssetEternalInfrequentAccess
 
 testObject_AssetSettings_user_10 :: AssetSettings
 testObject_AssetSettings_user_10 =
-  defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ Just AssetPersistent
+  defAssetSettings & setAssetPublic .~ False & setAssetRetention ?~ AssetPersistent
 
 testObject_AssetSettings_user_14 :: AssetSettings
 testObject_AssetSettings_user_14 =
-  defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ (Just AssetEternal)
+  defAssetSettings & setAssetPublic .~ False & setAssetRetention ?~ AssetEternal
 
 testObject_AssetSettings_user_15 :: AssetSettings
 testObject_AssetSettings_user_15 =
-  defAssetSettings & setAssetPublic .~ False & setAssetRetention .~ (Just AssetVolatile)
+  defAssetSettings & setAssetPublic .~ False & setAssetRetention ?~ AssetVolatile
 
 testObject_AssetSettings_user_16 :: AssetSettings
 testObject_AssetSettings_user_16 =
-  defAssetSettings & setAssetPublic .~ True & setAssetRetention .~ (Just AssetPersistent)
+  defAssetSettings & setAssetPublic .~ True & setAssetRetention ?~ AssetPersistent
 
 testObject_AssetSettings_user_19 :: AssetSettings
 testObject_AssetSettings_user_19 =
-  defAssetSettings & setAssetPublic .~ True & setAssetRetention .~ (Just AssetEternalInfrequentAccess)
+  defAssetSettings & setAssetPublic .~ True & setAssetRetention ?~ AssetEternalInfrequentAccess
 
 testObject_AssetSettings_user_20 :: AssetSettings
 testObject_AssetSettings_user_20 =
-  defAssetSettings & setAssetPublic .~ True & setAssetRetention .~ (Just AssetEternal)
+  defAssetSettings & setAssetPublic .~ True & setAssetRetention ?~ AssetEternal

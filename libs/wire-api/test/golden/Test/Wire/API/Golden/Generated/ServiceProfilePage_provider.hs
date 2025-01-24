@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,12 +16,14 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.ServiceProfilePage_provider where
 
 import Data.Id (Id (Id))
-import qualified Data.UUID as UUID (fromString)
+import Data.UUID qualified as UUID (fromString)
 import GHC.Exts (IsList (fromList))
 import Imports (Bool (False, True), Maybe (Just), fromJust)
+import Wire.API.Asset
 import Wire.API.Provider (ServiceTag (BusinessTag, MusicTag))
 import Wire.API.Provider.Service
   ( ServiceProfile
@@ -45,8 +47,8 @@ testObject_ServiceProfilePage_provider_1 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -59,8 +61,8 @@ testObject_ServiceProfilePage_provider_1 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -73,8 +75,8 @@ testObject_ServiceProfilePage_provider_1 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -87,8 +89,8 @@ testObject_ServiceProfilePage_provider_1 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -101,8 +103,8 @@ testObject_ServiceProfilePage_provider_1 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -115,8 +117,8 @@ testObject_ServiceProfilePage_provider_1 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -137,8 +139,8 @@ testObject_ServiceProfilePage_provider_2 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -151,8 +153,8 @@ testObject_ServiceProfilePage_provider_2 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -165,8 +167,8 @@ testObject_ServiceProfilePage_provider_2 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -187,8 +189,8 @@ testObject_ServiceProfilePage_provider_3 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -209,8 +211,8 @@ testObject_ServiceProfilePage_provider_4 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -223,8 +225,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName = "~\1048124M\tq\NULD\24766.!\1023601\a\54866r(\160676>OFM\f\1099670(\ENQa\1002463\1031190"
@@ -236,8 +238,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName = Name {fromName = "B\n\v/m\187731,\4141+/-*\1103865Z+"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -246,8 +248,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -260,8 +262,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -274,8 +276,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -288,8 +290,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
               serviceProfileName = Name {fromName = "C\991783\1075342i\37668"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -298,8 +300,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -312,8 +314,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -326,8 +328,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -340,8 +342,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -354,8 +356,8 @@ testObject_ServiceProfilePage_provider_4 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -376,8 +378,8 @@ testObject_ServiceProfilePage_provider_5 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -390,8 +392,8 @@ testObject_ServiceProfilePage_provider_5 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName = Name {fromName = "\"\f\1037434\DC4\a\fdP]%k"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -400,8 +402,8 @@ testObject_ServiceProfilePage_provider_5 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -414,8 +416,8 @@ testObject_ServiceProfilePage_provider_5 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -436,8 +438,8 @@ testObject_ServiceProfilePage_provider_6 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -462,8 +464,8 @@ testObject_ServiceProfilePage_provider_8 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -476,8 +478,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -490,8 +492,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -504,8 +506,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName = Name {fromName = "\US!e"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -514,8 +516,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -528,8 +530,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name {fromName = "/e\DC4>P\147469\EOT\SOH\ETXA-\ACK\168594E'\1113832h\\\1003827V1\1018011"},
               serviceProfileSummary = "",
@@ -539,8 +541,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -553,8 +555,8 @@ testObject_ServiceProfilePage_provider_8 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -575,8 +577,8 @@ testObject_ServiceProfilePage_provider_9 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name {fromName = "1\59914rq\156963KEi\b\151982#U\\\1025181>W5y+=*.\\*&r\1069846#&nL\147426\no\vv"},
               serviceProfileSummary = "",
@@ -586,8 +588,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -600,8 +602,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -614,8 +616,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -628,8 +630,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -642,8 +644,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName = Name {fromName = "_%#\188987T"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -652,8 +654,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -666,8 +668,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -680,8 +682,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -694,8 +696,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -708,8 +710,8 @@ testObject_ServiceProfilePage_provider_9 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -730,8 +732,8 @@ testObject_ServiceProfilePage_provider_10 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name {fromName = "yk\1008919\1007203\SUB\CAN$Z\59204\SOH*q\172316\1059368K,\62488\134081\1034503\&0s"},
               serviceProfileSummary = "",
@@ -741,8 +743,8 @@ testObject_ServiceProfilePage_provider_10 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -755,8 +757,8 @@ testObject_ServiceProfilePage_provider_10 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -777,8 +779,8 @@ testObject_ServiceProfilePage_provider_11 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -786,7 +788,7 @@ testObject_ServiceProfilePage_provider_11 =
                   },
               serviceProfileSummary = "",
               serviceProfileDescr = "\42170",
-              serviceProfileAssets = [(ImageAsset "" (Just AssetPreview))],
+              serviceProfileAssets = [ImageAsset (AssetKeyV3 (Id (fromJust (UUID.fromString "5cd81cc4-c643-4e9c-849c-c596a88c27fd"))) AssetExpiring) (Just AssetPreview)],
               serviceProfileTags = fromList [],
               serviceProfileEnabled = True
             }
@@ -799,8 +801,8 @@ testObject_ServiceProfilePage_provider_12 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName = Name {fromName = "h\CAN"},
               serviceProfileSummary = "",
               serviceProfileDescr = "\FS",
@@ -821,8 +823,8 @@ testObject_ServiceProfilePage_provider_14 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -835,8 +837,8 @@ testObject_ServiceProfilePage_provider_14 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName = Name {fromName = "w0\1017076!.i+iz0@86X]\b\46893U"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -845,8 +847,8 @@ testObject_ServiceProfilePage_provider_14 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")),
               serviceProfileName =
                 Name {fromName = "e\1023873\148734\DC4\DLE8X\nB\98187\992445=!t;~^*qZ[IW\186026m;Y\STX"},
               serviceProfileSummary = "",
@@ -864,8 +866,8 @@ testObject_ServiceProfilePage_provider_15 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -878,8 +880,8 @@ testObject_ServiceProfilePage_provider_15 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -892,8 +894,8 @@ testObject_ServiceProfilePage_provider_15 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -906,8 +908,8 @@ testObject_ServiceProfilePage_provider_15 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -920,8 +922,8 @@ testObject_ServiceProfilePage_provider_15 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -942,8 +944,8 @@ testObject_ServiceProfilePage_provider_16 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -968,8 +970,8 @@ testObject_ServiceProfilePage_provider_18 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -982,8 +984,8 @@ testObject_ServiceProfilePage_provider_18 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")),
               serviceProfileName = Name {fromName = "|GR\1107656($\ESCM\151608#uX\v&\1067261\ENQ\NUL.7o-J~\97827~M>r"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -1000,8 +1002,8 @@ testObject_ServiceProfilePage_provider_19 =
     { serviceProfilePageHasMore = False,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1014,8 +1016,8 @@ testObject_ServiceProfilePage_provider_19 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1028,8 +1030,8 @@ testObject_ServiceProfilePage_provider_19 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name {fromName = "\1061758.\1012347T\187344\SUB\1024660\1015134\DC2_x\1035579\DEL\1065185mm"},
               serviceProfileSummary = "",
@@ -1039,8 +1041,8 @@ testObject_ServiceProfilePage_provider_19 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
               serviceProfileName = Name {fromName = "W!\1067757Gx0K$\62009_|/U[H"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -1049,8 +1051,8 @@ testObject_ServiceProfilePage_provider_19 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")),
               serviceProfileName = Name {fromName = "\DC1z\DC2\52395"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",
@@ -1059,8 +1061,8 @@ testObject_ServiceProfilePage_provider_19 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1081,8 +1083,8 @@ testObject_ServiceProfilePage_provider_20 =
     { serviceProfilePageHasMore = True,
       serviceProfilePageResults =
         [ ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1095,8 +1097,8 @@ testObject_ServiceProfilePage_provider_20 =
               serviceProfileEnabled = True
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1109,8 +1111,8 @@ testObject_ServiceProfilePage_provider_20 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")),
               serviceProfileName =
                 Name
                   { fromName =
@@ -1123,8 +1125,8 @@ testObject_ServiceProfilePage_provider_20 =
               serviceProfileEnabled = False
             },
           ServiceProfile
-            { serviceProfileId = (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))),
-              serviceProfileProvider = (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))),
+            { serviceProfileId = Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")),
+              serviceProfileProvider = Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")),
               serviceProfileName = Name {fromName = "\51044> \DC4rM]\SUB\157493\DC1\n$0\1043945P\ACK-G\111084\9729"},
               serviceProfileSummary = "",
               serviceProfileDescr = "",

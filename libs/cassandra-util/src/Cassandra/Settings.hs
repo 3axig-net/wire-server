@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,6 +29,7 @@ module Cassandra.Settings
 where
 
 import Control.Lens
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.Lens
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Text (pack, stripSuffix, unpack)
@@ -36,18 +37,19 @@ import Database.CQL.IO as C hiding (values)
 import Database.CQL.IO.Tinylog as C (mkLogger)
 import Imports
 import Network.Wreq
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 
 -- | This function is likely only useful at Wire, as it is Wire-infra specific.
 -- Given a server name and a url returning a wire-custom "disco" json (AWS describe-instances-like json), e.g.
 -- { "roles" : { "server_name": [ {"privateIpAddress": "...", ...}, {...} ] } },
 -- return a list of IP addresses.
-initialContactsDisco :: MonadIO m => String -> String -> m (NonEmpty String)
+initialContactsDisco :: (MonadIO m) => String -> String -> m (NonEmpty String)
 initialContactsDisco (pack -> srv) url = liftIO $ do
   rs <- asValue =<< get url
-  let srvs = case stripSuffix "_seed" srv of
-        Nothing -> [srv, srv <> "_seed"]
-        Just _ -> [srv] -- requesting only seeds is a valid use-case
+  let srvs = map Key.fromText $
+        case stripSuffix "_seed" srv of
+          Nothing -> [srv, srv <> "_seed"]
+          Just _ -> [srv] -- requesting only seeds is a valid use-case
   let ip =
         rs
           ^.. responseBody
@@ -59,11 +61,11 @@ initialContactsDisco (pack -> srv) url = liftIO $ do
             . _String
           & map unpack
   case ip of
-    i : ii -> return (i :| ii)
+    i : ii -> pure (i :| ii)
     _ -> error "initial-contacts: no IP addresses found."
 
 -- | Puts the address into a list using the same signature as the other initialContacts
-initialContactsPlain :: MonadIO m => Text -> m (NonEmpty String)
+initialContactsPlain :: (MonadIO m) => Text -> m (NonEmpty String)
 initialContactsPlain address = pure $ unpack address :| []
 
 -- | Use dcAwareRandomPolicy if config option filterNodesByDatacentre is set,

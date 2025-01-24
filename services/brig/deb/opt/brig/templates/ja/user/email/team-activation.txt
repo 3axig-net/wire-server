@@ -1,0 +1,19 @@
+[${brand_logo}]
+
+${brand_label_url} [${brand_url}]
+
+あなたの新しい ${brand} アカウント
+新しい ${brand} チーム が、 ${email} によって作成されました。 メールアドレスの認証をお願いします。
+
+認証 [${url}]If you can’t select the button, copy and paste this link to your
+browser:
+
+${url}
+
+ご不明な点がございましたら、 こちら [${support}] から私たちにご連絡ください。
+
+
+--------------------------------------------------------------------------------
+
+プライバシーポリシーと利用規約 [${legal}] · 不具合を報告する [${misuse}]
+${copyright}. ALL RIGHTS RESERVED.

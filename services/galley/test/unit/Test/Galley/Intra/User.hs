@@ -1,10 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,7 +22,6 @@
 
 module Test.Galley.Intra.User where
 
--- import Debug.Trace (traceShow)
 import Galley.Intra.User (chunkify)
 import Imports
 import Test.QuickCheck
@@ -35,7 +35,7 @@ tests =
     [ testChunkify
     ]
 
-testChunkify :: HasCallStack => TestTree
+testChunkify :: (HasCallStack) => TestTree
 testChunkify =
   testGroup
     "chunkify"

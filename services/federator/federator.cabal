@@ -1,65 +1,109 @@
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 2131bf1a367dd734cbccd900c4724c5b48e3f494501b2221e3f32ecaf0a12ec4
-
-name:           federator
-version:        1.0.0
-synopsis:       Federation Service
-category:       Network
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2020 Wire Swiss GmbH
-license:        AGPL-3
-build-type:     Simple
+cabal-version:      1.12
+name:               federator
+version:            1.0.0
+synopsis:           Federation Service
+category:           Network
+author:             Wire Swiss GmbH
+maintainer:         Wire Swiss GmbH <backend@wire.com>
+copyright:          (c) 2020 Wire Swiss GmbH
+license:            AGPL-3
+build-type:         Simple
 extra-source-files:
-    test/resources/integration-ca.pem
-    test/resources/integration-leaf-key.pem
-    test/resources/integration-leaf.pem
-    test/resources/unit/example.com.pem
-    test/resources/unit/gen-certs.sh
-    test/resources/unit/invalid.pem
-    test/resources/unit/localhost-dot-key.pem
-    test/resources/unit/localhost-dot.pem
-    test/resources/unit/localhost-key.pem
-    test/resources/unit/localhost.client-only-key.pem
-    test/resources/unit/localhost.client-only.pem
-    test/resources/unit/localhost.example.com-key.pem
-    test/resources/unit/localhost.example.com.pem
-    test/resources/unit/localhost.pem
-    test/resources/unit/README.md
-    test/resources/unit/second-federator.example.com-key.pem
-    test/resources/unit/second-federator.example.com.pem
-    test/resources/unit/unit-ca-key.pem
-    test/resources/unit/unit-ca.pem
+  test/resources/integration-ca.pem
+  test/resources/integration-leaf-key.pem
+  test/resources/integration-leaf.pem
+  test/resources/unit/example.com.pem
+  test/resources/unit/gen-certs.sh
+  test/resources/unit/gen-multidomain-certs.sh
+  test/resources/unit/invalid.pem
+  test/resources/unit/localhost-dot-key.pem
+  test/resources/unit/localhost-dot.pem
+  test/resources/unit/localhost-key.pem
+  test/resources/unit/localhost.client-only-key.pem
+  test/resources/unit/localhost.client-only.pem
+  test/resources/unit/localhost.example.com-key.pem
+  test/resources/unit/localhost.example.com.pem
+  test/resources/unit/localhost.pem
+  test/resources/unit/multidomain-federator.example.com-key.pem
+  test/resources/unit/multidomain-federator.example.com.pem
+  test/resources/unit/README.md
+  test/resources/unit/second-federator.example.com-key.pem
+  test/resources/unit/second-federator.example.com.pem
+  test/resources/unit/unit-ca-key.pem
+  test/resources/unit/unit-ca.pem
 
 library
+  -- cabal-fmt: expand src
   exposed-modules:
-      Federator.App
-      Federator.Discovery
-      Federator.Env
-      Federator.Error
-      Federator.Error.ServerError
-      Federator.ExternalServer
-      Federator.InternalServer
-      Federator.MockServer
-      Federator.Monitor
-      Federator.Monitor.Internal
-      Federator.Options
-      Federator.Remote
-      Federator.Response
-      Federator.Run
-      Federator.Service
-      Federator.Validation
-  other-modules:
-      Paths_federator
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    Federator.Discovery
+    Federator.Env
+    Federator.Error
+    Federator.Error.ServerError
+    Federator.ExternalServer
+    Federator.Health
+    Federator.InternalServer
+    Federator.Interpreter
+    Federator.Metrics
+    Federator.MockServer
+    Federator.Monitor
+    Federator.Monitor.Internal
+    Federator.Options
+    Federator.Remote
+    Federator.Response
+    Federator.RPC
+    Federator.Run
+    Federator.Service
+    Federator.Validation
+
+  other-modules:      Paths_federator
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
       aeson
     , async
@@ -68,275 +112,308 @@ library
     , binary
     , bytestring
     , bytestring-conversion
-    , constraints
     , containers
+    , crypton-x509
+    , crypton-x509-validation
     , data-default
     , dns
     , dns-util
-    , either
     , exceptions
     , extended
     , filepath
     , hinotify
+    , HsOpenSSL
     , http-client
-    , http-client-openssl
+    , http-media
     , http-types
     , http2
+    , http2-manager
     , imports
+    , kan-extensions
     , lens
     , metrics-core
     , metrics-wai
     , mtl
-    , network
-    , network-uri
     , pem
     , polysemy
     , polysemy-wire-zoo
-    , retry
-    , servant
-    , servant-server
-    , streaming-commons
-    , string-conversions
-    , text
-    , time-manager
-    , tinylog
-    , tls
-    , types-common
-    , unix
-    , uri-bytestring
-    , uuid
-    , wai
-    , wai-utilities
-    , warp
-    , warp-tls
-    , wire-api
-    , wire-api-federation
-    , x509
-    , x509-store
-    , x509-system
-    , x509-validation
-  default-language: Haskell2010
-
-executable federator
-  main-is: Main.hs
-  other-modules:
-      Paths_federator
-  hs-source-dirs:
-      exec
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -with-rtsopts=-N1 -with-rtsopts=-T -rtsopts
-  build-depends:
-      aeson
-    , async
-    , base
-    , bilge
-    , binary
-    , bytestring
-    , bytestring-conversion
-    , constraints
-    , containers
-    , data-default
-    , dns
-    , dns-util
-    , either
-    , exceptions
-    , extended
-    , federator
-    , filepath
-    , hinotify
-    , http-client
-    , http-client-openssl
-    , http-types
-    , http2
-    , imports
-    , lens
-    , metrics-core
-    , metrics-wai
-    , mtl
-    , network
-    , network-uri
-    , pem
-    , polysemy
-    , polysemy-wire-zoo
-    , retry
-    , servant
-    , servant-server
-    , streaming-commons
-    , string-conversions
-    , text
-    , time-manager
-    , tinylog
-    , tls
-    , types-common
-    , unix
-    , uri-bytestring
-    , uuid
-    , wai
-    , wai-utilities
-    , warp
-    , warp-tls
-    , wire-api
-    , wire-api-federation
-    , x509
-    , x509-store
-    , x509-system
-    , x509-validation
-  default-language: Haskell2010
-
-executable federator-integration
-  main-is: Main.hs
-  other-modules:
-      Test.Federator.IngressSpec
-      Test.Federator.InwardSpec
-      Test.Federator.JSON
-      Test.Federator.Util
-      Paths_federator
-  hs-source-dirs:
-      test/integration
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
-  build-depends:
-      aeson
-    , async
-    , base
-    , bilge
-    , binary
-    , bytestring
-    , bytestring-conversion
-    , connection
-    , constraints
-    , containers
-    , cryptonite
-    , data-default
-    , dns
-    , dns-util
-    , either
-    , errors
-    , exceptions
-    , extended
-    , federator
-    , filepath
-    , hinotify
-    , hspec
-    , http-client
-    , http-client-openssl
-    , http-client-tls
-    , http-types
-    , http2
-    , imports
-    , lens
-    , metrics-core
-    , metrics-wai
-    , mtl
-    , network
-    , network-uri
-    , optparse-applicative
-    , pem
-    , polysemy
-    , polysemy-wire-zoo
-    , random
-    , retry
-    , servant
-    , servant-server
-    , streaming-commons
-    , string-conversions
-    , tasty
-    , tasty-hunit
-    , text
-    , time-manager
-    , tinylog
-    , tls
-    , types-common
-    , unix
-    , uri-bytestring
-    , uuid
-    , wai
-    , wai-utilities
-    , warp
-    , warp-tls
-    , wire-api
-    , wire-api-federation
-    , x509
-    , x509-store
-    , x509-system
-    , x509-validation
-    , yaml
-  default-language: Haskell2010
-
-test-suite federator-tests
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  other-modules:
-      Test.Federator.Client
-      Test.Federator.ExternalServer
-      Test.Federator.InternalServer
-      Test.Federator.Monitor
-      Test.Federator.Options
-      Test.Federator.Remote
-      Test.Federator.Response
-      Test.Federator.Util
-      Test.Federator.Validation
-      Paths_federator
-  hs-source-dirs:
-      test/unit
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -with-rtsopts=-N
-  build-depends:
-      QuickCheck
-    , aeson
-    , async
-    , base
-    , bilge
-    , binary
-    , bytestring
-    , bytestring-conversion
-    , constraints
-    , containers
-    , data-default
-    , directory
-    , dns
-    , dns-util
-    , either
-    , exceptions
-    , extended
-    , federator
-    , filepath
-    , hinotify
-    , http-client
-    , http-client-openssl
-    , http-types
-    , http2
-    , imports
-    , interpolate
-    , lens
-    , metrics-core
-    , metrics-wai
-    , mtl
-    , network
-    , network-uri
-    , pem
-    , polysemy
-    , polysemy-mocks
-    , polysemy-wire-zoo
-    , retry
+    , prometheus-client
     , servant
     , servant-client
+    , servant-client-core
     , servant-server
-    , streaming-commons
+    , text
+    , tinylog
+    , transformers
+    , types-common
+    , unix
+    , utf8-string
+    , wai
+    , wai-utilities
+    , warp
+    , wire-api
+    , wire-api-federation
+
+  default-language:   GHC2021
+
+executable federator
+  main-is:            Main.hs
+  other-modules:      Paths_federator
+  hs-source-dirs:     exec
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded "-with-rtsopts=-N -T" -rtsopts -Wredundant-constraints
+    -Wunused-packages
+
+  build-depends:
+      base
+    , federator
+    , HsOpenSSL
+    , imports
+    , types-common
+
+  default-language:   GHC2021
+
+executable federator-integration
+  main-is:            Main.hs
+  other-modules:
+    Paths_federator
+    Test.Federator.IngressSpec
+    Test.Federator.InwardSpec
+    Test.Federator.JSON
+    Test.Federator.Util
+
+  hs-source-dirs:     test/integration
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages -threaded
+    -with-rtsopts=-N1
+
+  build-depends:
+      aeson
+    , async
+    , base
+    , bilge
+    , binary
+    , bytestring
+    , bytestring-conversion
+    , crypton
+    , crypton-connection
+    , data-default
+    , dns-util
+    , exceptions
+    , federator
+    , HsOpenSSL
+    , hspec
+    , hspec-junit-formatter
+    , http-client-tls
+    , http-types
+    , http2-manager
+    , imports
+    , kan-extensions
+    , lens
+    , optparse-applicative
+    , polysemy
+    , QuickCheck
+    , random
+    , servant-client-core
+    , string-conversions
+    , tasty-hunit
+    , text
+    , types-common
+    , uuid
+    , wire-api
+    , wire-api-federation
+    , yaml
+
+  default-language:   GHC2021
+
+test-suite federator-tests
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+  other-modules:
+    Paths_federator
+    Test.Federator.Client
+    Test.Federator.ExternalServer
+    Test.Federator.InternalServer
+    Test.Federator.Monitor
+    Test.Federator.Options
+    Test.Federator.Remote
+    Test.Federator.Util
+    Test.Federator.Validation
+
+  hs-source-dirs:     test/unit
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -with-rtsopts=-N -Wredundant-constraints
+    -Wunused-packages
+
+  build-depends:
+      aeson
+    , base
+    , bytestring
+    , bytestring-conversion
+    , containers
+    , crypton-x509-validation
+    , data-default
+    , dns-util
+    , federator
+    , filepath
+    , HsOpenSSL
+    , http-media
+    , http-types
+    , http2
+    , http2-manager
+    , imports
+    , interpolate
+    , kan-extensions
+    , mtl
+    , polysemy
+    , polysemy-wire-zoo
+    , QuickCheck
+    , servant
+    , servant-client
+    , servant-client-core
+    , servant-server
     , string-conversions
     , tasty
     , tasty-hunit
     , tasty-quickcheck
     , temporary
     , text
-    , time-manager
     , tinylog
-    , tls
     , transformers
     , types-common
     , unix
-    , uri-bytestring
-    , uuid
     , wai
     , wai-extra
     , wai-utilities
@@ -344,9 +421,6 @@ test-suite federator-tests
     , warp-tls
     , wire-api
     , wire-api-federation
-    , x509
-    , x509-store
-    , x509-system
-    , x509-validation
     , yaml
-  default-language: Haskell2010
+
+  default-language:   GHC2021

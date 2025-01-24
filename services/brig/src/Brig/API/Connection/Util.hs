@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,27 +18,42 @@
 module Brig.API.Connection.Util
   ( ConnectionM,
     checkLimit,
+    ensureIsActivated,
+    ensureNotSameAndActivated,
   )
 where
 
 import Brig.API.Types
 import Brig.App
-import qualified Brig.Data.Connection as Data
-import Brig.Options (Settings (setUserMaxConnections))
-import Control.Error (noteT)
-import Control.Lens (view)
+import Brig.Data.Connection qualified as Data
+import Brig.Options (Settings (userMaxConnections))
+import Control.Error (MaybeT, noteT)
 import Control.Monad.Trans.Except
 import Data.Id (UserId)
-import Data.Qualified (Local, tUnqualified)
+import Data.Qualified
 import Imports
+import Polysemy
 import Wire.API.Connection (Relation (..))
+import Wire.UserStore
 
-type ConnectionM = ExceptT ConnectionError AppIO
+type ConnectionM r = ExceptT ConnectionError (AppT r)
 
 -- Helpers
 
-checkLimit :: Local UserId -> ExceptT ConnectionError AppIO ()
+checkLimit :: Local UserId -> ExceptT ConnectionError (AppT r) ()
 checkLimit u = noteT (TooManyConnections (tUnqualified u)) $ do
-  n <- lift $ Data.countConnections u [Accepted, Sent]
-  l <- setUserMaxConnections <$> view settings
+  n <- lift . wrapClient $ Data.countConnections u [Accepted, Sent]
+  l <- asks (.settings.userMaxConnections)
   guard (n < l)
+
+ensureNotSameAndActivated :: (Member UserStore r) => Local UserId -> Qualified UserId -> ConnectionM r ()
+ensureNotSameAndActivated self target = do
+  when (tUntagged self == target) $
+    throwE (InvalidUser target)
+  noteT ConnectNoIdentity $
+    ensureIsActivated self
+
+ensureIsActivated :: (Member UserStore r) => Local UserId -> MaybeT (AppT r) ()
+ensureIsActivated lusr = do
+  active <- lift . liftSem $ isActivated (tUnqualified lusr)
+  guard active

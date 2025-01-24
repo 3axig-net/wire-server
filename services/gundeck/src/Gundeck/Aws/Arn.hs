@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -50,14 +51,14 @@ module Gundeck.Aws.Arn
   )
 where
 
+import Amazonka (Region (..))
+import Amazonka.Data
+import Control.Foldl qualified as Foldl
 import Control.Lens
 import Data.Attoparsec.Text
-import qualified Data.Text as Text
-import Data.Yaml (FromJSON)
-import Gundeck.Types (AppName (..), Transport (..))
+import Data.Text qualified as Text
 import Imports
-import Network.AWS (Region (..))
-import Network.AWS.Data
+import Wire.API.Push.V2 (AppName (..), Transport (..))
 
 newtype ArnEnv = ArnEnv {arnEnvText :: Text} deriving (Show, ToText, FromJSON)
 
@@ -102,7 +103,7 @@ instance ToText (SnsArn a) where
   toText = view snsAsText
 
 instance (FromText a, ToText a) => FromText (SnsArn a) where
-  parser = snsArnParser
+  fromText = parseOnly snsArnParser
 
 instance ToText AppTopic where
   toText = view appAsText
@@ -111,9 +112,9 @@ instance ToText EndpointTopic where
   toText = view endpointAsText
 
 instance FromText EndpointTopic where
-  parser = endpointTopicParser
+  fromText = parseOnly endpointTopicParser
 
-mkSnsArn :: ToText topic => Region -> Account -> topic -> SnsArn topic
+mkSnsArn :: (ToText topic) => Region -> Account -> topic -> SnsArn topic
 mkSnsArn r a t =
   let txt = Text.intercalate ":" ["arn:aws:sns", toText r, toText a, toText t]
    in SnsArn txt r a t
@@ -142,24 +143,34 @@ arnTransportText APNSVoIPSandbox = "APNS_VOIP_SANDBOX"
 snsArnParser :: (FromText t, ToText t) => Parser (SnsArn t)
 snsArnParser = do
   _ <- string "arn" *> char ':' *> string "aws" *> char ':' *> string "sns"
-  r <- char ':' *> takeTill (== ':') >>= either fail return . parseOnly parser
+  r <- char ':' *> takeTill (== ':') >>= either fail pure . fromText
   a <- char ':' *> takeTill (== ':')
-  t <- char ':' *> parser
-  return $ mkSnsArn r (Account a) t
+  t <- char ':' *> takeText >>= either fail pure . fromText
+  pure $ mkSnsArn r (Account a) t
 
 endpointTopicParser :: Parser EndpointTopic
 endpointTopicParser = do
   _ <- string "endpoint"
   t <- char '/' *> transportParser
-  e <- char '/' *> takeTill (== '-')
-  a <- char '-' *> takeTill (== '/')
+  envAndName <- char '/' *> takeTill (== '/')
   i <- char '/' *> takeWhile1 (not . isSpace)
-  return $ mkEndpointTopic (ArnEnv e) t (AppName a) (EndpointId i)
+  let xs = Text.split (== '-') envAndName
+      e = Text.intercalate (Text.pack "-") (init xs)
+  a <- case Foldl.fold Foldl.last xs of
+    Just x -> pure x
+    Nothing -> fail ("Cannot parse appName in " ++ show xs)
+
+  pure $ mkEndpointTopic (ArnEnv e) t (AppName a) (EndpointId i)
 
 transportParser :: Parser Transport
 transportParser =
-  string "GCM" *> pure GCM
-    <|> string "APNS_VOIP_SANDBOX" *> pure APNSVoIPSandbox
-    <|> string "APNS_VOIP" *> pure APNSVoIP
-    <|> string "APNS_SANDBOX" *> pure APNSSandbox
-    <|> string "APNS" *> pure APNS
+  string "GCM"
+    $> GCM
+    <|> string "APNS_VOIP_SANDBOX"
+    $> APNSVoIPSandbox
+    <|> string "APNS_VOIP"
+    $> APNSVoIP
+    <|> string "APNS_SANDBOX"
+    $> APNSSandbox
+    <|> string "APNS"
+    $> APNS

@@ -1,0 +1,8 @@
+{
+    "config": {
+        "enforcedTimeoutSeconds": 0
+    },
+    "lockStatus": "unlocked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

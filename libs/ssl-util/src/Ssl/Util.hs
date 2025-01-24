@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -128,7 +128,7 @@ verifyFingerprint ::
   SSL ->
   IO ()
 verifyFingerprint hash fprs ssl = do
-  cert <- SSL.getPeerCertificate ssl >>= maybe (throwIO PinMissingCert) return
+  cert <- SSL.getPeerCertificate ssl >>= maybe (throwIO PinMissingCert) pure
   pkey <- X509.getPublicKey cert
   mfpr <- hash pkey
   case mfpr of
@@ -156,18 +156,18 @@ verifyFingerprint hash fprs ssl = do
 -- | Compute a simple (non-standard) fingerprint of an RSA
 -- public key for use with 'verifyRsaFingerprint' with the given
 -- 'Digest'.
-rsaFingerprint :: RSAKey k => Digest -> k -> IO ByteString
+rsaFingerprint :: (RSAKey k) => Digest -> k -> IO ByteString
 rsaFingerprint d k = fmap (digestLBS d . toLazyByteString) $ do
   let s = rsaSize k
   n <- integerToMPI (rsaN k)
   e <- integerToMPI (rsaE k)
-  return $! intDec s <> byteString n <> byteString e
+  pure $! intDec s <> byteString n <> byteString e
 
 -- | 'verifyFingerprint' specialised to 'RSAPubKey's using 'rsaFingerprint'.
 verifyRsaFingerprint :: Digest -> [ByteString] -> SSL -> IO ()
 verifyRsaFingerprint d = verifyFingerprint $ \pk ->
   case toPublicKey pk of
-    Nothing -> return Nothing
+    Nothing -> pure Nothing
     Just k -> Just <$> rsaFingerprint d (k :: RSAPubKey)
 
 -- [Note: Hostname verification]

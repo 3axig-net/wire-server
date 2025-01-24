@@ -1,11 +1,10 @@
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,54 +21,52 @@
 
 module API.UserPendingActivation where
 
-import API.Team.Util (getTeams)
+import API.Team.Util (getTeam)
 import Bilge hiding (query)
 import Bilge.Assert ((<!!), (===))
-import Brig.Options (Opts (..), setTeamInvitationTimeout)
-import Brig.Types hiding (User)
-import qualified Brig.Types as Brig
-import Brig.Types.Intra (AccountStatus (Deleted))
-import Brig.Types.Team.Invitation (Invitation (inInvitation))
+import Brig.Options (Opts (..), teamInvitationTimeout)
 import Cassandra
 import Control.Exception (assert)
 import Control.Lens ((^.), (^?))
 import Control.Monad.Catch (MonadCatch)
 import Control.Monad.Random
 import Data.Aeson hiding (json)
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Lens (key, _String)
 import Data.ByteString.Conversion (fromByteString, toByteString')
 import Data.Id (InvitationId, TeamId, UserId)
 import Data.Range (unsafeRange)
-import Data.String.Conversions (cs)
+import Data.String.Conversions
 import Data.Text.Encoding (encodeUtf8)
-import qualified Data.UUID as UUID
-import qualified Data.UUID.V4 as UUID
-import qualified Galley.Types.Teams as Galley
+import Data.UUID qualified as UUID
+import Data.UUID.V4 qualified as UUID
 import Imports
-import qualified SAML2.WebSSO as SAML
+import SAML2.WebSSO qualified as SAML
 import Spar.Scim (CreateScimTokenResponse (..), SparTag, userSchemas)
 import Test.QuickCheck (generate)
 import Test.QuickCheck.Arbitrary (Arbitrary (arbitrary))
 import Test.Tasty
 import Test.Tasty.HUnit (assertEqual)
-import qualified Text.Email.Parser as Email
+import Text.Email.Parser qualified as Email
 import Util hiding (createUser)
 import Web.HttpApiData (toHeader)
-import qualified Web.Scim.Class.User as Scim
+import Web.Scim.Class.User qualified as Scim
 import Web.Scim.Schema.Common (WithId)
-import qualified Web.Scim.Schema.Common as Scim
+import Web.Scim.Schema.Common qualified as Scim
 import Web.Scim.Schema.Meta (WithMeta)
-import qualified Web.Scim.Schema.Meta as Scim
-import qualified Web.Scim.Schema.User as Scim.User
-import qualified Web.Scim.Schema.User.Email as Email
-import qualified Web.Scim.Schema.User.Phone as Phone
+import Web.Scim.Schema.Meta qualified as Scim
+import Web.Scim.Schema.User qualified as Scim.User
+import Web.Scim.Schema.User.Phone qualified as Phone
+import Wire.API.Routes.Internal.Galley.TeamsIntra qualified as Team
+import Wire.API.Team hiding (newTeam)
+import Wire.API.Team.Invitation
+import Wire.API.User hiding (CreateScimToken)
 import Wire.API.User.RichInfo (RichInfo)
 import Wire.API.User.Scim (CreateScimToken (..), ScimToken, ScimUserExtra (ScimUserExtra))
 
 tests :: Opts -> Manager -> ClientState -> Brig -> Galley -> Spar -> IO TestTree
 tests opts m db brig galley spar = do
-  return $
+  pure $
     testGroup
       "cleanExpiredPendingInvitations"
       [ test m "expired users get cleaned" (testCleanExpiredPendingInvitations opts db brig galley spar),
@@ -107,74 +104,78 @@ createScimToken spar' owner = do
   CreateScimTokenResponse tok _ <-
     createToken spar' owner $
       CreateScimToken
-        { createScimTokenDescr = "testCreateToken",
-          createScimTokenPassword = Just defPassword
+        { description = "testCreateToken",
+          password = Just defPassword,
+          verificationCode = Nothing,
+          name = Nothing,
+          idp = Nothing
         }
   pure tok
 
-createUserStep :: Spar -> Brig -> ScimToken -> TeamId -> Scim.User.User SparTag -> Email -> HttpT IO (WithMeta (WithId UserId (Scim.User.User SparTag)), Invitation, InvitationCode)
+createUserStep :: Spar -> Brig -> ScimToken -> TeamId -> Scim.User.User SparTag -> EmailAddress -> HttpT IO (WithMeta (WithId UserId (Scim.User.User SparTag)), Invitation, InvitationCode)
 createUserStep spar' brig' tok tid scimUser email = do
   scimStoredUser <- createUser spar' tok scimUser
   inv <- getInvitationByEmail brig' email
-  Just inviteeCode <- getInvitationCode brig' tid (inInvitation inv)
+  Just inviteeCode <- getInvitationCode brig' tid inv.invitationId
   pure (scimStoredUser, inv, inviteeCode)
 
-assertUserExist :: HasCallStack => String -> ClientState -> UserId -> Bool -> HttpT IO ()
+assertUserExist :: (HasCallStack) => String -> ClientState -> UserId -> Bool -> HttpT IO ()
 assertUserExist msg db' uid shouldExist = liftIO $ do
   exists <- aFewTimes 12 (runClient db' (userExists uid)) (== shouldExist)
   assertEqual msg shouldExist exists
 
-waitUserExpiration :: (MonadIO m, MonadUnliftIO m) => Opts -> m ()
+waitUserExpiration :: (MonadUnliftIO m) => Opts -> m ()
 waitUserExpiration opts' = do
-  let timeoutSecs = round @Double . realToFrac . setTeamInvitationTimeout . optSettings $ opts'
+  let timeoutSecs = round @Double . realToFrac $ opts'.settings.teamInvitationTimeout
   Control.Exception.assert (timeoutSecs < 30) $ do
     threadDelay $ (timeoutSecs + 3) * 1_000_000
 
-userExists :: MonadClient m => UserId -> m Bool
+userExists :: (MonadClient m) => UserId -> m Bool
 userExists uid = do
   x <- retry x1 (query1 usersSelect (params LocalQuorum (Identity uid)))
   pure $
     case x of
       Nothing -> False
       Just (_, mbStatus) ->
-        maybe True (/= Deleted) mbStatus
+        Just Deleted /= mbStatus
   where
     usersSelect :: PrepQuery R (Identity UserId) (UserId, Maybe AccountStatus)
     usersSelect = "SELECT id, status FROM user where id = ?"
 
-getInvitationByEmail :: Brig -> Email -> Http Invitation
+getInvitationByEmail :: Brig -> EmailAddress -> Http Invitation
 getInvitationByEmail brig email =
   responseJsonUnsafe
     <$> ( Bilge.get (brig . path "/i/teams/invitations/by-email" . contentJson . queryItem "email" (toByteString' email))
             <!! const 200 === statusCode
         )
 
-newTeam :: Galley.BindingNewTeam
-newTeam = Galley.BindingNewTeam $ Galley.newNewTeam (unsafeRange "teamName") (unsafeRange "defaultIcon")
+newTeam :: NewTeam
+newTeam = newNewTeam (unsafeRange "teamName") DefaultIcon
 
-createUserWithTeamDisableSSO :: (HasCallStack, MonadCatch m, MonadHttp m, MonadIO m, MonadFail m) => Brig -> Galley -> m (UserId, TeamId)
+createUserWithTeamDisableSSO :: (HasCallStack, MonadCatch m, MonadHttp m, MonadIO m) => Brig -> Galley -> m (UserId, TeamId)
 createUserWithTeamDisableSSO brg gly = do
   e <- randomEmail
   n <- UUID.toString <$> liftIO UUID.nextRandom
   let p =
-        RequestBodyLBS . Aeson.encode $
-          object
+        RequestBodyLBS
+          . Aeson.encode
+          $ object
             [ "name" .= n,
-              "email" .= Brig.fromEmail e,
+              "email" .= fromEmail e,
               "password" .= defPassword,
               "team" .= newTeam
             ]
   bdy <- selfUser . responseJsonUnsafe <$> post (brg . path "/i/users" . contentJson . body p)
-  let (uid, Just tid) = (Brig.userId bdy, Brig.userTeam bdy)
-  (team : _) <- (^. Galley.teamListTeams) <$> getTeams uid gly
+  let (uid, Just tid) = (userId bdy, userTeam bdy)
+  team <- Team.tdTeam <$> getTeam gly tid
   () <-
-    Control.Exception.assert {- "Team ID in registration and team table do not match" -} (tid == team ^. Galley.teamId) $
+    Control.Exception.assert {- "Team ID in registration and team table do not match" -} (tid == team ^. teamId) $
       pure ()
-  selfTeam <- Brig.userTeam . Brig.selfUser <$> getSelfProfile brg uid
+  selfTeam <- userTeam . selfUser <$> getSelfProfile brg uid
   () <-
     Control.Exception.assert {- "Team ID in self profile and team table do not match" -} (selfTeam == Just tid) $
       pure ()
-  return (uid, tid)
+  pure (uid, tid)
 
 randomScimUser :: (HasCallStack, MonadRandom m, MonadIO m) => m (Scim.User.User SparTag)
 randomScimUser = fst <$> randomScimUserWithSubject
@@ -189,12 +190,12 @@ randomScimUserWithSubject = do
 
 -- | See 'randomScimUser', 'randomScimUserWithSubject'.
 randomScimUserWithSubjectAndRichInfo ::
-  (HasCallStack, MonadRandom m, MonadIO m) =>
+  (HasCallStack, MonadRandom m) =>
   RichInfo ->
   m (Scim.User.User SparTag, SAML.UnqualifiedNameID)
 randomScimUserWithSubjectAndRichInfo richInfo = do
   suffix <- cs <$> replicateM 7 (getRandomR ('0', '9'))
-  emails <- getRandomR (0, 3) >>= \n -> replicateM n randomScimEmail
+  _emails <- getRandomR (0, 3) >>= \n -> replicateM n randomScimEmail
   phones <- getRandomR (0, 3) >>= \n -> replicateM n randomScimPhone
   -- Related, but non-trivial to re-use here: 'nextSubject'
   (externalId, subj) <-
@@ -210,28 +211,21 @@ randomScimUserWithSubjectAndRichInfo richInfo = do
         )
       _ -> error "randomScimUserWithSubject: impossible"
   pure
-    ( (Scim.User.empty userSchemas ("scimuser_" <> suffix) (ScimUserExtra richInfo))
+    ( (Scim.User.empty @SparTag userSchemas ("scimuser_" <> suffix) (ScimUserExtra richInfo))
         { Scim.User.displayName = Just ("ScimUser" <> suffix),
           Scim.User.externalId = Just externalId,
-          Scim.User.emails = emails,
           Scim.User.phoneNumbers = phones
         },
       subj
     )
 
-randomScimEmail :: MonadRandom m => m Email.Email
+randomScimEmail :: (MonadRandom m) => m EmailAddress
 randomScimEmail = do
-  let typ :: Maybe Text = Nothing
-      -- TODO: where should we catch users with more than one
-      -- primary email?
-      primary :: Maybe Scim.ScimBool = Nothing
-  value :: Email.EmailAddress2 <- do
-    localpart <- cs <$> replicateM 15 (getRandomR ('a', 'z'))
-    domainpart <- (<> ".com") . cs <$> replicateM 15 (getRandomR ('a', 'z'))
-    pure . Email.EmailAddress2 $ Email.unsafeEmailAddress localpart domainpart
-  pure Email.Email {..}
+  localpart <- cs <$> replicateM 15 (getRandomR ('a', 'z'))
+  domainpart <- (<> ".com") . cs <$> replicateM 15 (getRandomR ('a', 'z'))
+  pure $ Email.unsafeEmailAddress localpart domainpart
 
-randomScimPhone :: MonadRandom m => m Phone.Phone
+randomScimPhone :: (MonadRandom m) => m Phone.Phone
 randomScimPhone = do
   let typ :: Maybe Text = Nothing
   value :: Maybe Text <- do
@@ -243,7 +237,7 @@ randomScimPhone = do
 
 -- | Create a user.
 createUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   Spar ->
   ScimToken ->
   Scim.User.User SparTag ->
@@ -308,7 +302,7 @@ getInvitationCode brig t ref = do
           . queryItem "invitation_id" (toByteString' ref)
       )
   let lbs = fromMaybe "" $ responseBody r
-  return $ fromByteString . fromMaybe (error "No code?") $ encodeUtf8 <$> (lbs ^? key "code" . _String)
+  pure $ fromByteString (maybe (error "No code?") encodeUtf8 (lbs ^? key "code" . _String))
 
 -- | Create a SCIM token.
 createToken_ ::
@@ -330,7 +324,7 @@ createToken_ spar userid payload = do
 
 -- | Create a SCIM token.
 createToken ::
-  HasCallStack =>
+  (HasCallStack) =>
   Spar ->
   UserId ->
   CreateScimToken ->
@@ -344,17 +338,18 @@ createToken spar zusr payload = do
       <!! const 200 === statusCode
   pure (responseJsonUnsafe r)
 
-registerInvitation :: Brig -> Email -> Name -> InvitationCode -> Bool -> Http ()
+registerInvitation :: Brig -> EmailAddress -> Name -> InvitationCode -> Bool -> Http ()
 registerInvitation brig email name inviteeCode shouldSucceed = do
   void $
     post
-      ( brig . path "/register"
+      ( brig
+          . path "/register"
           . contentJson
           . json (acceptWithName name email inviteeCode)
       )
       <!! const (if shouldSucceed then 201 else 400) === statusCode
 
-acceptWithName :: Name -> Email -> InvitationCode -> Aeson.Value
+acceptWithName :: Name -> EmailAddress -> InvitationCode -> Aeson.Value
 acceptWithName name email code =
   Aeson.object
     [ "name" Aeson..= fromName name,

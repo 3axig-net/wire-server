@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,10 +16,11 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.OtrRecipients_user where
 
-import Data.Id (ClientId (ClientId, client), Id (Id))
-import qualified Data.UUID as UUID (fromString)
+import Data.Id
+import Data.UUID qualified as UUID (fromString)
 import GHC.Exts (IsList (fromList))
 import Imports (fromJust)
 import Wire.API.Message (OtrRecipients (..), UserClientMap (UserClientMap, userClientMap))
@@ -33,13 +34,13 @@ testObject_OtrRecipients_user_1 =
               fromList
                 [ ( Id (fromJust (UUID.fromString "00000025-0000-0031-0000-003e00000001")),
                     fromList
-                      [ (ClientId {client = "10"}, "q"),
-                        (ClientId {client = "4"}, "\f"),
-                        (ClientId {client = "b"}, "\83295")
+                      [ (ClientId 0x10, "q"),
+                        (ClientId 4, "\f"),
+                        (ClientId 0xb, "\83295")
                       ]
                   ),
                   ( Id (fromJust (UUID.fromString "0000002c-0000-0078-0000-001d00000069")),
-                    fromList [(ClientId {client = "1d"}, "\"\168226l"), (ClientId {client = "3"}, "{Pu^1")]
+                    fromList [(ClientId 0x1d, "\"\168226l"), (ClientId 3, "{Pu^1")]
                   )
                 ]
           }

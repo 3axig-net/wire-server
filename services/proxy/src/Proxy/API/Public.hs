@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,58 +16,81 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Proxy.API.Public
-  ( sitemap,
+  ( PublicAPI,
+    servantSitemap,
+    waiRoutingSitemap,
   )
 where
 
-import qualified Bilge.Request as Req
-import qualified Bilge.Response as Res
+import Bilge.Request qualified as Req
+import Bilge.Response qualified as Res
 import Control.Lens hiding ((.=))
 import Control.Monad.Catch
 import Control.Retry
 import Data.ByteString (breakSubstring)
-import qualified Data.ByteString.Lazy as B
+import Data.ByteString.Lazy qualified as B
 import Data.CaseInsensitive (CI)
-import qualified Data.CaseInsensitive as CI
-import qualified Data.Configurator as Config
-import qualified Data.List as List
-import qualified Data.Text as Text
+import Data.CaseInsensitive qualified as CI
+import Data.Configurator qualified as Config
+import Data.List qualified as List
+import Data.Text qualified as Text
 import Imports hiding (head)
-import qualified Network.HTTP.Client as Client
+import Network.HTTP.Client qualified as Client
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types
 import Network.Wai
-import qualified Network.Wai.Internal as I
+import Network.Wai.Internal qualified as I
 import Network.Wai.Predicate hiding (Error, err, setStatus)
 import Network.Wai.Predicate.Request (getRequest)
 import Network.Wai.Routing hiding (path, route)
+import Network.Wai.Routing qualified as Routing
 import Network.Wai.Utilities
+import Network.Wai.Utilities.Server (compile)
 import Proxy.Env
 import Proxy.Proxy
+import Servant qualified
 import System.Logger.Class hiding (Error, info, render)
-import qualified System.Logger.Class as Logger
+import System.Logger.Class qualified as Logger
 
-sitemap :: Env -> Routes a Proxy ()
-sitemap e = do
+type PublicAPI = Servant.Raw -- see https://wearezeta.atlassian.net/browse/WPB-1216
+
+servantSitemap :: Env -> Servant.ServerT PublicAPI Proxy.Proxy.Proxy
+servantSitemap e = Servant.Tagged app
+  where
+    app :: Application
+    app r k = appInProxy e r (Routing.route tree r k')
+      where
+        tree :: Tree (App Proxy)
+        tree = compile (waiRoutingSitemap e)
+
+        k' :: Response -> Proxy.Proxy.Proxy ResponseReceived
+        k' = liftIO . k
+
+-- | IF YOU MODIFY THIS, BE AWARE OF:
+--
+-- >>> /libs/wire-api/src/Wire/API/Routes/Public/Proxy.hs
+-- >>> https://wearezeta.atlassian.net/browse/SQSERVICES-1647
+waiRoutingSitemap :: Env -> Routes a Proxy ()
+waiRoutingSitemap e = do
   get
     "/proxy/youtube/v3/:path"
     (proxy e "key" "secrets.youtube" Prefix "/youtube/v3" youtube)
-    return
+    pure
 
   get
     "/proxy/googlemaps/api/staticmap"
     (proxy e "key" "secrets.googlemaps" Static "/maps/api/staticmap" googleMaps)
-    return
+    pure
 
   get
     "/proxy/googlemaps/maps/api/geocode/:path"
     (proxy e "key" "secrets.googlemaps" Prefix "/maps/api/geocode" googleMaps)
-    return
+    pure
 
   get
     "/proxy/giphy/v1/gifs/:path"
     (proxy e "api_key" "secrets.giphy" Prefix "/v1/gifs" giphy)
-    return
+    pure
 
   post "/proxy/spotify/api/token" (continue spotifyToken) request
 
@@ -98,15 +121,15 @@ proxy e qparam keyname reroute path phost rq k = do
   liftIO $ loop runInIO (2 :: Int) r (WPRModifiedRequestSecure r' phost)
   where
     loop runInIO !n waiReq req =
-      waiProxyTo (const $ return req) (onUpstreamError runInIO) (e ^. manager) waiReq $ \res ->
+      waiProxyTo (const $ pure req) (onUpstreamError runInIO) (e ^. manager) waiReq $ \res ->
         if responseStatus res == status502 && n > 0
           then do
             threadDelay 5000
             loop runInIO (n - 1) waiReq req
-          else runProxy e waiReq (k res)
+          else appInProxy e waiReq (k res)
     onUpstreamError runInIO x _ next = do
       void . runInIO $ Logger.warn (msg (val "gateway error") ~~ field "error" (show x))
-      next (errorRs' error502)
+      next (errorRs error502)
 
 spotifyToken :: Request -> Proxy Response
 spotifyToken rq = do
@@ -120,10 +143,13 @@ spotifyToken rq = do
   when (isError (Client.responseStatus res)) $
     debug $
       msg (val "unexpected upstream response")
-        ~~ "upstream" .= val "spotify::token"
-        ~~ "status" .= S (Client.responseStatus res)
-        ~~ "body" .= B.take 256 (Client.responseBody res)
-  return $
+        ~~ "upstream"
+        .= val "spotify::token"
+        ~~ "status"
+        .= S (Client.responseStatus res)
+        ~~ "body"
+        .= B.take 256 (Client.responseBody res)
+  pure $
     plain (Client.responseBody res)
       & setStatus (Client.responseStatus res)
         . maybeHeader hContentType res
@@ -145,10 +171,13 @@ soundcloudResolve url = do
   when (isError (Client.responseStatus res)) $
     debug $
       msg (val "unexpected upstream response")
-        ~~ "upstream" .= val "soundcloud::resolve"
-        ~~ "status" .= S (Client.responseStatus res)
-        ~~ "body" .= B.take 256 (Client.responseBody res)
-  return $
+        ~~ "upstream"
+        .= val "soundcloud::resolve"
+        ~~ "status"
+        .= S (Client.responseStatus res)
+        ~~ "body"
+        .= B.take 256 (Client.responseBody res)
+  pure $
     plain (Client.responseBody res)
       & setStatus (Client.responseStatus res)
         . maybeHeader hContentType res
@@ -172,24 +201,27 @@ soundcloudStream url = do
   unless (status302 == Client.responseStatus res) $ do
     debug $
       msg (val "unexpected upstream response")
-        ~~ "upstream" .= val "soundcloud::stream"
-        ~~ "status" .= S (Client.responseStatus res)
-        ~~ "body" .= B.take 256 (Client.responseBody res)
+        ~~ "upstream"
+        .= val "soundcloud::stream"
+        ~~ "status"
+        .= S (Client.responseStatus res)
+        ~~ "body"
+        .= B.take 256 (Client.responseBody res)
     failWith "unexpected upstream response"
   case Res.getHeader hLocation res of
     Nothing -> failWith "missing location header"
-    Just loc -> return (empty & setStatus status302 . addHeader hLocation loc)
+    Just loc -> pure (empty & setStatus status302 . addHeader hLocation loc)
 
 x2 :: RetryPolicy
 x2 = exponentialBackoff 5000 <> limitRetries 2
 
-handler :: (MonadIO m, MonadMask m) => RetryStatus -> Handler m Bool
+handler :: (MonadIO m) => RetryStatus -> Handler m Bool
 handler = const . Handler $ \case
-  Client.HttpExceptionRequest _ Client.NoResponseDataReceived -> return True
-  Client.HttpExceptionRequest _ Client.IncompleteHeaders -> return True
-  Client.HttpExceptionRequest _ (Client.ConnectionTimeout) -> return True
-  Client.HttpExceptionRequest _ (Client.ConnectionFailure _) -> return True
-  _ -> return False
+  Client.HttpExceptionRequest _ Client.NoResponseDataReceived -> pure True
+  Client.HttpExceptionRequest _ Client.IncompleteHeaders -> pure True
+  Client.HttpExceptionRequest _ Client.ConnectionTimeout -> pure True
+  Client.HttpExceptionRequest _ (Client.ConnectionFailure _) -> pure True
+  _ -> pure False
 
 safeQuery :: Query -> Query
 safeQuery = filter noAccessToken

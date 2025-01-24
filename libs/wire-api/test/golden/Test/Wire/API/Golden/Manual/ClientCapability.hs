@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,3 +21,6 @@ import Wire.API.User.Client (ClientCapability (..))
 
 testObject_ClientCapability_1 :: ClientCapability
 testObject_ClientCapability_1 = ClientSupportsLegalholdImplicitConsent
+
+testObject_ClientCapability_2 :: ClientCapability
+testObject_ClientCapability_2 = ClientSupportsConsumableNotifications

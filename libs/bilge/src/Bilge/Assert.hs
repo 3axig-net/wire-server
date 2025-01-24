@@ -1,8 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,8 +39,8 @@ where
 import Control.Monad.Catch
 import Control.Monad.Writer.Class
 import Control.Monad.Writer.Strict
-import qualified Data.ByteString as S
-import qualified Data.ByteString.Lazy as Lazy
+import Data.ByteString qualified as S
+import Data.ByteString.Lazy qualified as Lazy
 import Imports
 import Network.HTTP.Client
 import System.Console.ANSI
@@ -55,10 +57,10 @@ instance Contains ByteString where
 instance Contains Lazy.ByteString where
   contains a b = contains (Lazy.toStrict a) (Lazy.toStrict b)
 
-instance Eq a => Contains [a] where
+instance (Eq a) => Contains [a] where
   contains = isInfixOf
 
-instance Contains a => Contains (Maybe a) where
+instance (Contains a) => Contains (Maybe a) where
   contains (Just a) (Just b) = contains a b
   contains Nothing _ = True
   contains _ Nothing = False
@@ -77,7 +79,7 @@ newtype Assertions a = Assertions
 -- assertion that failed). It will also return the response,
 -- so it can be used for further inspection.
 (<!!) ::
-  (HasCallStack, Functor m, MonadIO m, MonadCatch m) =>
+  (HasCallStack, MonadIO m, MonadCatch m) =>
   m (Response (Maybe Lazy.ByteString)) ->
   Assertions () ->
   m (Response (Maybe Lazy.ByteString))
@@ -87,20 +89,20 @@ io <!! aa = do
   let failures = filter (isJust . snd) $ zip [1 ..] results
   unless (null failures) $
     error . concat $
-      title "Assertions failed:\n" :
-      intersperse "\n" (map msg failures)
+      title "Assertions failed:\n"
+        : intersperse "\n" (map msg failures)
         ++ ["\n\nResponse was:\n\n" ++ show r]
-  return r
+  pure r
   where
     msg :: (Int, Maybe String) -> String
     msg (i, Just m) = printf "%2d: " i ++ err m
     msg _ = ""
-    printErr :: MonadIO m => SomeException -> m a
+    printErr :: SomeException -> m a
     printErr e = error $ title "Error executing request: " ++ err (show e)
 
 -- | Like '<!!' but discards the 'Response'.
 (!!!) ::
-  (HasCallStack, Functor m, MonadIO m, MonadCatch m) =>
+  (HasCallStack, MonadIO m, MonadCatch m) =>
   m (Response (Maybe Lazy.ByteString)) ->
   Assertions () ->
   m ()
@@ -143,25 +145,25 @@ f =~= g = Assertions $ tell [\r -> test " not in " contains (f r) (g r)]
 
 -- | Most generic assertion on a request. If the test function evaluates to
 -- @(Just msg)@ then the assertion fails with the error message @msg@.
-assertResponse :: HasCallStack => (Response (Maybe Lazy.ByteString) -> Maybe String) -> Assertions ()
+assertResponse :: (HasCallStack) => (Response (Maybe Lazy.ByteString) -> Maybe String) -> Assertions ()
 assertResponse f = Assertions $ tell [f]
 
 -- | Generic assertion on a request. The 'String' argument will be printed
 -- in case the assertion fails.
-assertTrue :: HasCallStack => String -> (Response (Maybe Lazy.ByteString) -> Bool) -> Assertions ()
+assertTrue :: (HasCallStack) => String -> (Response (Maybe Lazy.ByteString) -> Bool) -> Assertions ()
 assertTrue e f = Assertions $ tell [\r -> if f r then Nothing else Just e]
 
 -- | Generic assertion on a request.
-assertTrue_ :: HasCallStack => (Response (Maybe Lazy.ByteString) -> Bool) -> Assertions ()
+assertTrue_ :: (HasCallStack) => (Response (Maybe Lazy.ByteString) -> Bool) -> Assertions ()
 assertTrue_ = assertTrue "false"
 
 -- | Generic assertion inside the 'Assertions' monad. The 'String' argument
 -- will be printed in case the assertion fails.
-assert :: HasCallStack => String -> Bool -> Assertions ()
+assert :: (HasCallStack) => String -> Bool -> Assertions ()
 assert m = assertTrue m . const
 
 -- | Generic assertion inside the 'Assertions' monad.
-assert_ :: HasCallStack => Bool -> Assertions ()
+assert_ :: (HasCallStack) => Bool -> Assertions ()
 assert_ = assertTrue_ . const
 
 -- Internal
