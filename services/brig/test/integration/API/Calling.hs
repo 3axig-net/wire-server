@@ -1,8 +1,9 @@
+{-# LANGUAGE DeepSubsumption #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,42 +22,46 @@ module API.Calling where
 
 import Bilge
 import Bilge.Assert
-import qualified Brig.Options as Opts
-import Brig.Types
-import Control.Lens (view, (?~), (^.))
-import Control.Monad.Catch (MonadCatch, MonadThrow)
+import Brig.Options qualified as Opts
+import Control.Lens (view, (.~), (?~), (^.))
+import Control.Monad.Catch (MonadCatch)
 import Data.Bifunctor (Bifunctor (first))
 import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy as LB
+import Data.ByteString.Lazy qualified as LB
 import Data.Id
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.List1 (List1)
-import qualified Data.List1 as List1
-import Data.Misc (Port, mkHttpsUrl)
-import qualified Data.Set as Set
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Misc (Port (..), mkHttpsUrl)
+import Data.Set qualified as Set
+import Data.String.Conversions
 import Imports
 import System.FilePath ((</>))
 import Test.Tasty
 import Test.Tasty.HUnit
 import URI.ByteString (laxURIParserOptions, parseURI)
 import UnliftIO.Exception (finally)
-import qualified UnliftIO.Temporary as Temp
+import UnliftIO.Temporary qualified as Temp
 import Util
 import Wire.API.Call.Config
+import Wire.API.User
 
 tests :: Manager -> Brig -> Opts.Opts -> FilePath -> FilePath -> IO TestTree
 tests m b opts turn turnV2 = do
-  return $
+  pure $
     testGroup "calling" $
       [ testGroup "turn" $
           [ test m "basic /calls/config - 200" $ testCallsConfig b,
             -- FIXME: requires tests to run on same host as brig
-            test m "multiple servers /calls/config - 200" . withTurnFile turn $ testCallsConfigMultiple b,
-            test m "multiple servers /calls/config/v2 - 200" . withTurnFile turnV2 $ testCallsConfigMultipleV2 b
+            test m "multiple servers using files /calls/config - 200" . withTurnFile turn $ testCallsConfigMultiple b,
+            test m "multiple servers using SRV /calls/config - 200" $ testCallsConfigSRV b opts,
+            test m "multiple servers using files /calls/config/v2 - 200" . withTurnFile turnV2 $ testCallsConfigMultipleV2 b,
+            test m "multiple servers using SRV records /calls/config/v2 - 200" $ testCallsConfigV2SRV b opts
           ],
-        testGroup "sft" $
+        testGroup
+          "sft"
           [ test m "SFT servers /calls/config/v2 - 200" $ testSFT b opts,
-            test m "SFT servers static URI - 200" $ testSFTStatic b opts
+            test m "SFT servers /calls/config/v2 - 200 - SFT does not respond as expected" $ testSFTUnavailable b opts "https://example.com",
+            test m "SFT servers /calls/config/v2 - 200 - SFT DNS does not resolve" $ testSFTUnavailable b opts "https://sft.example.com"
           ]
       ]
 
@@ -64,51 +69,40 @@ testCallsConfig :: Brig -> Http ()
 testCallsConfig b = do
   uid <- userId <$> randomUser b
   cfg <- getTurnConfigurationV1 uid b
-  let _expected = List1.singleton (toTurnURILegacy "127.0.0.1" 3478)
+  let _expected = toTurnURILegacy "127.0.0.1" 3478 :| []
   assertConfiguration cfg _expected
 
 testCallsConfigMultiple :: Brig -> TurnUpdater -> Http ()
 testCallsConfigMultiple b turnUpdater = do
   uid <- userId <$> randomUser b
   -- Ensure we have a clean config
-  let _expected = List1.singleton (toTurnURILegacy "127.0.0.1" 3478)
+  let _expected = toTurnURILegacy "127.0.0.1" 3478 :| []
   modifyAndAssert b uid getTurnConfigurationV1 turnUpdater "turn:127.0.0.1:3478" _expected
   -- Change server list
   let _changes = "turn:127.0.0.2:3478\nturn:127.0.0.3:3478"
   let _expected =
-        List1.list1
-          (toTurnURILegacy "127.0.0.2" 3478)
-          [toTurnURILegacy "127.0.0.3" 3478]
+        toTurnURILegacy "127.0.0.2" 3478
+          :| [toTurnURILegacy "127.0.0.3" 3478]
   modifyAndAssert b uid getTurnConfigurationV1 turnUpdater _changes _expected
   -- Change server list yet again, try adding transport and ensure that it gets dropped
   let _changes = "turn:127.0.0.2:3478?transport=udp\nturn:127.0.0.3:3478?transport=udp"
   modifyAndAssert b uid getTurnConfigurationV1 turnUpdater _changes _expected
   -- Revert the config file back to the original
-  let _expected = List1.singleton (toTurnURILegacy "127.0.0.1" 3478)
+  let _expected = toTurnURILegacy "127.0.0.1" 3478 :| []
   modifyAndAssert b uid getTurnConfigurationV1 turnUpdater "turn:127.0.0.1:3478" _expected
 
-testSFTStatic :: Brig -> Opts.Opts -> Http ()
-testSFTStatic b opts = do
-  uid <- userId <$> randomUser b
-  let Right server1 = mkHttpsUrl =<< first show (parseURI laxURIParserOptions "https://sft01.integration-tests.zinfra.io:443")
-  withSettingsOverrides (opts & Opts.optionSettings . Opts.sftStaticUrl ?~ server1) $ do
-    cfg1 <- retryWhileN 10 (isNothing . view rtcConfSftServers) (getTurnConfigurationV2 uid b)
-    liftIO $
-      assertEqual
-        "when SFT static URL is enabled, sft_servers should return just one static entry."
-        (Set.fromList [sftServer server1])
-        (Set.fromList $ maybe [] NonEmpty.toList $ cfg1 ^. rtcConfSftServers)
-
+-- | This test relies on pre-created public DNS records. Code here:
+-- https://github.com/zinfra/cailleach/blob/fb4caacaca02e6e28d68dc0cdebbbc987f5e31da/targets/misc/wire-server-integration-tests/dns.tf
 testSFT :: Brig -> Opts.Opts -> Http ()
 testSFT b opts = do
   uid <- userId <$> randomUser b
   cfg <- getTurnConfigurationV2 uid b
-  liftIO $
+  liftIO $ do
     assertEqual
       "when SFT discovery is not enabled, sft_servers shouldn't be returned"
       Nothing
       (cfg ^. rtcConfSftServers)
-  withSettingsOverrides (opts & Opts.sftL ?~ Opts.SFTOptions "integration-tests.zinfra.io" Nothing (Just 0.001) Nothing) $ do
+  withSettingsOverrides (opts & Opts.sftLens ?~ Opts.SFTOptions "integration-tests.zinfra.io" Nothing (Just 0.001) Nothing Nothing) $ do
     cfg1 <- retryWhileN 10 (isNothing . view rtcConfSftServers) (getTurnConfigurationV2 uid b)
     -- These values are controlled by https://github.com/zinfra/cailleach/tree/77ca2d23cf2959aa183dd945d0a0b13537a8950d/environments/dns-integration-tests
     let Right server1 = mkHttpsUrl =<< first show (parseURI laxURIParserOptions "https://sft01.integration-tests.zinfra.io:443")
@@ -119,13 +113,25 @@ testSFT b opts = do
         (Set.fromList [sftServer server1, sftServer server2])
         (Set.fromList $ maybe [] NonEmpty.toList $ cfg1 ^. rtcConfSftServers)
 
+testSFTUnavailable :: Brig -> Opts.Opts -> String -> Http ()
+testSFTUnavailable b opts domain = do
+  uid <- userId <$> randomUser b
+  withSettingsOverrides (opts {Opts.settings = (Opts.settings opts) {Opts.sftStaticUrl = fromByteString (cs domain), Opts.sftListAllServers = Just Opts.ListAllSFTServers}}) $ do
+    cfg <- getTurnConfigurationV2 uid b
+    liftIO $ do
+      assertEqual
+        "sft_servers_all should be missing"
+        Nothing
+        (cfg ^. rtcConfSftServersAll)
+
 modifyAndAssert ::
+  (HasCallStack) =>
   Brig ->
   UserId ->
   (UserId -> Brig -> Http RTCConfiguration) ->
   (String -> IO ()) ->
   String ->
-  List1 TurnURI ->
+  NonEmpty TurnURI ->
   Http ()
 modifyAndAssert b uid getTurnConfig updater newServers expected = do
   liftIO $ updater newServers
@@ -136,68 +142,88 @@ testCallsConfigMultipleV2 :: Brig -> TurnUpdater -> Http ()
 testCallsConfigMultipleV2 b turnUpdaterV2 = do
   uid <- userId <$> randomUser b
   -- Ensure we have a clean config
-  let _expected = List1.singleton (toTurnURI SchemeTurn "localhost" 3478 Nothing)
+  let _expected = toTurnURI SchemeTurn "localhost" 3478 Nothing :| []
   modifyAndAssert b uid getTurnConfigurationV2 turnUpdaterV2 "turn:localhost:3478" _expected
   -- Change server list
   let _changes = "turn:localhost:3478\nturn:localhost:3479"
   let _expected =
-        List1.list1
-          (toTurnURI SchemeTurn "localhost" 3478 Nothing)
-          [toTurnURI SchemeTurn "localhost" 3479 Nothing]
+        toTurnURI SchemeTurn "localhost" 3478 Nothing
+          :| [toTurnURI SchemeTurn "localhost" 3479 Nothing]
   modifyAndAssert b uid getTurnConfigurationV2 turnUpdaterV2 _changes _expected
   -- Change server list yet again, change the transport and schema
   let _changes = "turn:localhost:3478?transport=tcp\nturns:localhost:3479?transport=tcp"
   let _expected =
-        List1.list1
-          (toTurnURI SchemeTurn "localhost" 3478 $ Just TransportTCP)
-          [toTurnURI SchemeTurns "localhost" 3479 $ Just TransportTCP]
+        toTurnURI SchemeTurn "localhost" 3478 (Just TransportTCP)
+          :| [toTurnURI SchemeTurns "localhost" 3479 $ Just TransportTCP]
   modifyAndAssert b uid getTurnConfigurationV2 turnUpdaterV2 _changes _expected
   -- Ensure limit=1 returns only the udp server (see brig-types/tests for other use cases involving 'limit')
   let _changes = "turn:localhost:3478?transport=udp\nturns:localhost:3479?transport=tcp"
   let _expected2 =
-        List1.list1
-          (toTurnURI SchemeTurn "localhost" 3478 $ Just TransportUDP)
-          [toTurnURI SchemeTurns "localhost" 3479 $ Just TransportTCP]
-  let _expected1 = List1.list1 (toTurnURI SchemeTurn "localhost" 3478 $ Just TransportUDP) []
+        toTurnURI SchemeTurn "localhost" 3478 (Just TransportUDP)
+          :| [toTurnURI SchemeTurns "localhost" 3479 $ Just TransportTCP]
+  let _expected1 = toTurnURI SchemeTurn "localhost" 3478 (Just TransportUDP) :| []
   liftIO $ turnUpdaterV2 _changes
   _cfg <- getAndValidateTurnConfigurationLimit 2 uid b
   assertConfiguration _cfg _expected2
   _cfg <- getAndValidateTurnConfigurationLimit 1 uid b
   assertConfiguration _cfg _expected1
   -- Revert the config file back to the original
-  let _expected = List1.singleton (toTurnURI SchemeTurn "localhost" 3478 Nothing)
+  let _expected = toTurnURI SchemeTurn "localhost" 3478 Nothing :| []
   modifyAndAssert b uid getTurnConfigurationV2 turnUpdaterV2 "turn:localhost:3478" _expected
 
-assertConfiguration :: HasCallStack => RTCConfiguration -> List1 TurnURI -> Http ()
-assertConfiguration cfg turns =
-  checkIceServers (toList $ cfg ^. rtcConfIceServers) (toList turns)
-  where
-    -- Each turn server should _only_ be in 1 configuration
-    checkIceServers :: [RTCIceServer] -> [TurnURI] -> Http ()
-    checkIceServers [] [] = return ()
-    checkIceServers [] ts = error ("TURN servers not advertised: " ++ show ts)
-    checkIceServers (x : xs) ts = do
-      remaining <- checkIceServer x ts
-      checkIceServers xs remaining
-    checkIceServer :: RTCIceServer -> [TurnURI] -> Http [TurnURI]
-    checkIceServer srv uris = do
-      let iceURIs = toList (srv ^. iceURLs)
-      liftIO $ assertBool (diff iceURIs uris) (all (`elem` uris) iceURIs)
-      return (uris \\ iceURIs)
-      where
-        diff advertised expected =
-          "Some advertised URIs not expected, advertised: "
-            ++ show advertised
-            ++ " expected: "
-            ++ show expected
+-- | This test relies on pre-created public DNS records. Code here:
+-- https://github.com/zinfra/cailleach/blob/fb4caacaca02e6e28d68dc0cdebbbc987f5e31da/targets/misc/wire-server-integration-tests/dns.tf
+testCallsConfigSRV :: Brig -> Opts.Opts -> Http ()
+testCallsConfigSRV b opts = do
+  uid <- userId <$> randomUser b
+  let dnsOpts = Opts.TurnSourceDNS (Opts.TurnDnsOpts "integration-tests.zinfra.io" (Just 0.5))
+  config <-
+    withSettingsOverrides (opts & Opts.turnLens . Opts.serversSourceLens .~ dnsOpts) $
+      responseJsonError
+        =<< ( retryWhileN 10 (\r -> statusCode r /= 200) (getTurnConfiguration "" uid b)
+                <!! const 200 === statusCode
+            )
+  assertConfiguration
+    config
+    ( toTurnURI SchemeTurn "127.0.0.27" 3479 Nothing
+        :| [toTurnURI SchemeTurn "127.0.0.27" 3478 Nothing]
+    )
+
+-- | This test relies on pre-created public DNS records. Code here:
+-- https://github.com/zinfra/cailleach/blob/fb4caacaca02e6e28d68dc0cdebbbc987f5e31da/targets/misc/wire-server-integration-tests/dns.tf
+testCallsConfigV2SRV :: Brig -> Opts.Opts -> Http ()
+testCallsConfigV2SRV b opts = do
+  uid <- userId <$> randomUser b
+  let dnsOpts = Opts.TurnSourceDNS (Opts.TurnDnsOpts "integration-tests.zinfra.io" (Just 0.5))
+  config <-
+    withSettingsOverrides (opts & Opts.turnLens . Opts.serversSourceLens .~ dnsOpts) $
+      responseJsonError
+        =<< ( retryWhileN 10 (\r -> statusCode r /= 200) (getTurnConfiguration "v2" uid b)
+                <!! const 200 === statusCode
+            )
+  assertConfiguration
+    config
+    ( toTurnURI SchemeTurn "turn-udp-5.integration-tests.zinfra.io" 3479 (Just TransportUDP)
+        :| [ toTurnURI SchemeTurn "turn-udp-10.integration-tests.zinfra.io" 3478 (Just TransportUDP),
+             toTurnURI SchemeTurn "turn-tcp-5.integration-tests.zinfra.io" 3479 (Just TransportTCP),
+             toTurnURI SchemeTurn "turn-tcp-10.integration-tests.zinfra.io" 3478 (Just TransportTCP),
+             toTurnURI SchemeTurns "turn-tls-5.integration-tests.zinfra.io" 5350 (Just TransportTCP),
+             toTurnURI SchemeTurns "turn-tls-10.integration-tests.zinfra.io" 5349 (Just TransportTCP)
+           ]
+    )
+
+assertConfiguration :: (HasCallStack) => RTCConfiguration -> NonEmpty TurnURI -> Http ()
+assertConfiguration cfg expected = do
+  let actual = concatMap (toList . view iceURLs) $ toList $ cfg ^. rtcConfIceServers
+  liftIO $ assertEqual "Expected adverstised TURN servers to match actual ones" (sort $ toList expected) (sort actual)
 
 getTurnConfigurationV1 :: UserId -> Brig -> Http RTCConfiguration
 getTurnConfigurationV1 = getAndValidateTurnConfiguration ""
 
-getTurnConfigurationV2 :: HasCallStack => UserId -> Brig -> ((Monad m, MonadHttp m, MonadIO m, MonadCatch m) => m RTCConfiguration)
+getTurnConfigurationV2 :: (HasCallStack) => UserId -> Brig -> ((MonadHttp m, MonadIO m, MonadCatch m) => m RTCConfiguration)
 getTurnConfigurationV2 = getAndValidateTurnConfiguration "v2"
 
-getTurnConfiguration :: ByteString -> UserId -> Brig -> ((MonadHttp m, MonadIO m) => m (Response (Maybe LB.ByteString)))
+getTurnConfiguration :: ByteString -> UserId -> Brig -> ((MonadHttp m) => m (Response (Maybe LB.ByteString)))
 getTurnConfiguration suffix u b =
   get
     ( b
@@ -206,7 +232,7 @@ getTurnConfiguration suffix u b =
         . zConn "conn"
     )
 
-getAndValidateTurnConfiguration :: HasCallStack => ByteString -> UserId -> Brig -> ((Monad m, MonadIO m, MonadHttp m, MonadThrow m, MonadCatch m) => m RTCConfiguration)
+getAndValidateTurnConfiguration :: (HasCallStack) => ByteString -> UserId -> Brig -> ((MonadIO m, MonadHttp m, MonadCatch m) => m RTCConfiguration)
 getAndValidateTurnConfiguration suffix u b =
   responseJsonError =<< (getTurnConfiguration suffix u b <!! const 200 === statusCode)
 
@@ -220,7 +246,7 @@ getTurnConfigurationV2Limit limit u b =
         . queryItem "limit" (toByteString' limit)
     )
 
-getAndValidateTurnConfigurationLimit :: HasCallStack => Int -> UserId -> Brig -> Http RTCConfiguration
+getAndValidateTurnConfigurationLimit :: (HasCallStack) => Int -> UserId -> Brig -> Http RTCConfiguration
 getAndValidateTurnConfigurationLimit limit u b =
   responseJsonError =<< (getTurnConfigurationV2Limit limit u b <!! const 200 === statusCode)
 
@@ -228,7 +254,7 @@ toTurnURILegacy :: ByteString -> Port -> TurnURI
 toTurnURILegacy h p = toTurnURI SchemeTurn h p Nothing
 
 toTurnURI :: Scheme -> ByteString -> Port -> Maybe Transport -> TurnURI
-toTurnURI s h p t = turnURI s ip p t
+toTurnURI s h = turnURI s ip
   where
     ip =
       fromMaybe (error "Failed to parse host address") $

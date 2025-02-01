@@ -10,8 +10,22 @@ cassandra:
   # filterNodesByDatacentre: datacenter1
 
 elasticsearch:
-  url: http://127.0.0.1:9200
+  url: https://localhost:9200
   index: directory_test
+  credentials: test/resources/elasticsearch-credentials.yaml
+  caCert: test/resources/elasticsearch-ca.pem
+  insecureSkipVerifyTls: false
+  additionalCredentials: test/resources/elasticsearch-credentials.yaml
+  additionalCaCert: test/resources/elasticsearch-ca.pem
+  additionalInsecureSkipVerifyTls: false
+
+rabbitmq:
+  host: 127.0.0.1
+  port: 5671
+  vHost: /
+  enableTls: true
+  caCert: test/resources/rabbitmq-ca.pem
+  insecureSkipVerifyTls: false
 
 cargohold:
   host: 127.0.0.1
@@ -21,6 +35,10 @@ galley:
   host: 127.0.0.1
   port: 8085
 
+spar:
+  host: 127.0.0.1
+  port: 8088
+
 gundeck:
   host: 127.0.0.1
   port: 8086
@@ -28,6 +46,8 @@ gundeck:
 federatorInternal:
   host: 127.0.0.1
   port: 8097
+
+multiSFT: false
 
 # You can set up local SQS/Dynamo running e.g. `../../deploy/dockerephemeral/run.sh`
 aws:
@@ -108,6 +128,7 @@ emailSMS:
 
   team:
     tInvitationUrl: http://127.0.0.1:8080/register?team=${team}&team_code=${code}
+    tExistingUserInvitationUrl: http://127.0.0.1:8080/accept-invitation?team-code=${code}
     tActivationUrl: http://127.0.0.1:8080/register?team=${team}&team_code=${code}
     tCreatorWelcomeUrl: http://127.0.0.1:8080/creator-welcome-website
     tMemberWelcomeUrl: http://127.0.0.1:8080/member-welcome-website
@@ -125,19 +146,23 @@ zauth:
     legalHoldAccessTokenTimeout: 30
 
 turn:
+  serversSource: files # files | dns
   servers: test/resources/turn/servers.txt
   serversV2: test/resources/turn/servers-v2.txt
+  # If configured to dns, also configure:
+  # baseDomain: example.com
+  # discoveryIntervalSeconds: 10
+
   # This should be the same secret as used by the TURN servers
   secret: test/resources/turn/secret.txt
   configTTL: 3600
   tokenTTL: 21600
 
 optSettings:
-  setActivationTimeout: 5
-  setTeamInvitationTimeout: 5
+  setActivationTimeout: 4
+  setVerificationTimeout: 4
+  setTeamInvitationTimeout: 4
   setExpiredUserCleanupTimeout: 1
-  setTwilio: test/resources/twilio-credentials.yaml
-  setNexmo: test/resources/nexmo-credentials.yaml
   # setStomp: test/resources/stomp-credentials.yaml
   setUserMaxConnections: 16
   setCookieInsecure: true
@@ -145,14 +170,14 @@ optSettings:
   setUserCookieLimit: 5
   setUserCookieThrottle:
     stdDev: 5
-    retryAfter: 1
+    retryAfter: 3
   setLimitFailedLogins:
-    timeout: 5  # seconds.  if you reach the limit, how long do you have to wait to try again.
-    retryLimit: 5  # how many times can you have a failed login in that timeframe.
-  setSuspendInactiveUsers:  # if this is omitted: never suspend inactive users.
+    timeout: 5 # seconds.  if you reach the limit, how long do you have to wait to try again.
+    retryLimit: 5 # how many times can you have a failed login in that timeframe.
+  setSuspendInactiveUsers: # if this is omitted: never suspend inactive users.
     suspendTimeout: 10
-  setRichInfoLimit: 5000  # should be in sync with Spar
-  setDefaultLocale: en
+  setRichInfoLimit: 5000 # should be in sync with Spar
+  setDefaultUserLocale: en
   setMaxTeamSize: 32
   setMaxConvSize: 16
   setEmailVisibility: visible_to_self
@@ -177,9 +202,42 @@ optSettings:
   #   Once set, DO NOT change it: if you do, existing users may have a broken experience and/or stop working
   #   Remember to keep it the same in Galley.
   setFederationDomain: example.com
-  setFeatureFlags:  # see #RefConfigOptions in `/docs/reference`
+  setFeatureFlags: # see #RefConfigOptions in `/docs/reference`
+    conferenceCalling:
+      defaultForNew:
+        status: disabled
+      defaultForNull:
+        status: disabled
+  setFederationDomainConfigsUpdateFreq: 1
+  setFederationStrategy: allowAll
+  setFederationDomainConfigs:
+    - domain: example.com
+      search_policy: full_search
+  # We explicitly do not disable any API version. Please make sure the configuration value is the same in all these configs:
+  # brig, cannon, cargohold, galley, gundeck, proxy, spar.
+  setDisabledAPIVersions: []
+  set2FACodeGenerationDelaySecs: 5
+  setNonceTtlSecs: 5
+  setDpopMaxSkewSecs: 1
+  setDpopTokenExpirationTimeSecs: 300 # 5 minutes
+  setPublicKeyBundle: test/resources/jwt/ecdsa_secp256r1_sha256_key.pem
+  setEnableMLS: true
+  # To only allow specific email address domains to register, uncomment and update the setting below
+  # setAllowlistEmailDomains:
+  #   - wire.com
+  # needs to be kept in sync with services/nginz/integration-test/resources/oauth/ed25519_public.jwk
+  setOAuthJwkKeyPair: test/resources/oauth/ed25519.jwk
+  setOAuthAuthCodeExpirationTimeSecs: 3 # 3 secs
+  setOAuthAccessTokenExpirationTimeSecs: 3 # 3 secs
+  setOAuthEnabled: true
+  setOAuthRefreshTokenExpirationTimeSecs: 14515200 # 24 weeks
+  setOAuthMaxActiveRefreshTokens: 10
+  setPasswordHashingOptions: # in testing, we want these settings to be faster, not secure against attacks.
+    algorithm: argon2id
+    iterations: 1
+    memory: 128
+    parallelism: 1
+  setChallengeTTL: 172800
 
 logLevel: Warn
-# ^ NOTE: We log too much in brig, if we set this to Info like other services, running tests
-#   produces too many logs, hence this is set to Warn.
 logNetStrings: false

@@ -1,0 +1,7 @@
+{
+    "config": {
+        "domains": []
+    },
+    "status": "enabled",
+    "ttl": "unlimited"
+}

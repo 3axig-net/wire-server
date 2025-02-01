@@ -7,7 +7,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,12 +37,12 @@ where
 
 import Control.Lens hiding (Strict, (.=))
 import qualified Data.ByteString.Base64 as ES
-import Data.Id (ScimTokenId, UserId)
-import Data.String.Conversions (cs)
+import Data.Code as Code
+import Data.Id
+import Data.Misc
+import qualified Data.Text.Encoding as T
+import Data.Text.Encoding.Error
 import Imports
--- FUTUREWORK: these imports are not very handy.  split up Spar.Scim into
--- Spar.Scim.{Core,User,Group} to avoid at least some of the hscim name clashes?
-
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
@@ -51,25 +51,28 @@ import Servant (NoContent (NoContent), ServerT, (:<|>) ((:<|>)))
 import Spar.App (throwSparSem)
 import qualified Spar.Error as E
 import qualified Spar.Intra.BrigApp as Intra.Brig
+import Spar.Options
 import Spar.Sem.BrigAccess (BrigAccess)
 import qualified Spar.Sem.BrigAccess as BrigAccess
 import Spar.Sem.GalleyAccess (GalleyAccess)
-import qualified Spar.Sem.IdP as IdPEffect
-import Spar.Sem.Now (Now)
-import qualified Spar.Sem.Now as Now
-import Spar.Sem.Random (Random)
-import qualified Spar.Sem.Random as Random
+import Spar.Sem.IdPConfigStore (IdPConfigStore)
+import qualified Spar.Sem.IdPConfigStore as IdPConfigStore
 import Spar.Sem.ScimTokenStore (ScimTokenStore)
 import qualified Spar.Sem.ScimTokenStore as ScimTokenStore
 import qualified Web.Scim.Class.Auth as Scim.Class.Auth
 import qualified Web.Scim.Handler as Scim
 import qualified Web.Scim.Schema.Error as Scim
+import Wire.API.Routes.Named
 import Wire.API.Routes.Public.Spar (APIScimToken)
-import Wire.API.User.Saml (Opts, maxScimTokens)
-import Wire.API.User.Scim
+import Wire.API.User as User
+import Wire.API.User.Scim as Api
+import Wire.Sem.Now (Now)
+import qualified Wire.Sem.Now as Now
+import Wire.Sem.Random (Random)
+import qualified Wire.Sem.Random as Random
 
 -- | An instance that tells @hscim@ how authentication should be done for SCIM routes.
-instance Member ScimTokenStore r => Scim.Class.Auth.AuthDB SparTag (Sem r) where
+instance (Member ScimTokenStore r) => Scim.Class.Auth.AuthDB SparTag (Sem r) where
   -- Validate and resolve a given token
   authCheck :: Maybe ScimToken -> Scim.ScimHandler (Sem r) ScimTokenInfo
   authCheck Nothing =
@@ -86,90 +89,162 @@ instance Member ScimTokenStore r => Scim.Class.Auth.AuthDB SparTag (Sem r) where
 -- | API for manipulating SCIM tokens (protected by normal Wire authentication and available
 -- only to team owners).
 apiScimToken ::
-  Members
-    '[ Random,
-       Input Opts,
-       GalleyAccess,
-       BrigAccess,
-       ScimTokenStore,
-       Now,
-       IdPEffect.IdP,
-       Error E.SparError
-     ]
-    r =>
+  ( Member Random r,
+    Member (Input Opts) r,
+    Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member Now r,
+    Member IdPConfigStore r,
+    Member (Error E.SparError) r
+  ) =>
   ServerT APIScimToken (Sem r)
 apiScimToken =
-  createScimToken
-    :<|> deleteScimToken
-    :<|> listScimTokens
+  Named @"auth-tokens-create@v7" createScimTokenV7
+    :<|> Named @"auth-tokens-create" createScimToken
+    :<|> Named @"auth-tokens-put-name" updateScimTokenName
+    :<|> Named @"auth-tokens-delete" deleteScimToken
+    :<|> Named @"auth-tokens-list@v7" listScimTokensV7
+    :<|> Named @"auth-tokens-list" listScimTokens
+
+updateScimTokenName ::
+  ( Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member (Error E.SparError) r,
+    Member GalleyAccess r
+  ) =>
+  UserId ->
+  ScimTokenId ->
+  ScimTokenName ->
+  Sem r ()
+updateScimTokenName lusr tokenId name = do
+  teamid <- Intra.Brig.authorizeScimTokenManagement (Just lusr)
+  ScimTokenStore.updateName teamid tokenId name.fromScimTokenName
 
 -- | > docs/reference/provisioning/scim-token.md {#RefScimTokenCreate}
 --
 -- Create a token for user's team.
+createScimTokenV7 ::
+  forall r.
+  ( Member Random r,
+    Member (Input Opts) r,
+    Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member IdPConfigStore r,
+    Member Now r,
+    Member (Error E.SparError) r
+  ) =>
+  -- | Who is trying to create a token
+  Maybe UserId ->
+  -- | Request body
+  CreateScimToken ->
+  Sem r CreateScimTokenResponseV7
+createScimTokenV7 zusr createTok = do
+  teamid <- guardScimTokenCreation zusr createTok.password createTok.verificationCode
+  idps <- IdPConfigStore.getConfigsByTeam teamid
+  mIdpId <- case idps of
+    [config] -> pure . Just $ config ^. SAML.idpId
+    [] -> pure Nothing
+    -- NB: if we ever were to allow several idps for one scim peer (which we won't),
+    -- 'validateScimUser' would need to be changed.  currently, it relies on the association
+    -- map from scim to saml being n:1.
+    (_ : _ : _) -> throwSparSem $ E.SparProvisioningMoreThanOneIdP E.TwoIdpsAndScimTokenForbidden
+
+  responseToV7 <$> createScimTokenUnchecked teamid Nothing createTok.description mIdpId
+  where
+    responseToV7 :: CreateScimTokenResponse -> CreateScimTokenResponseV7
+    responseToV7 (CreateScimTokenResponse token info) = CreateScimTokenResponseV7 token (infoToV7 info)
+
+    infoToV7 :: ScimTokenInfo -> ScimTokenInfoV7
+    infoToV7 ScimTokenInfo {..} = ScimTokenInfoV7 {..}
+
+-- | Create a token for the user's team.
+--
+-- > docs/reference/provisioning/scim-token.md {#RefScimTokenCreate}
+-- > (on associating scim peers with idps) https://docs.wire.com/understand/single-sign-on/understand/main.html#associating-scim-tokens-with-saml-idps-for-authentication
 createScimToken ::
   forall r.
-  Members
-    '[ Random,
-       Input Opts,
-       GalleyAccess,
-       BrigAccess,
-       ScimTokenStore,
-       IdPEffect.IdP,
-       Now,
-       Error E.SparError
-     ]
-    r =>
+  ( Member Random r,
+    Member (Input Opts) r,
+    Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member IdPConfigStore r,
+    Member Now r,
+    Member (Error E.SparError) r
+  ) =>
   -- | Who is trying to create a token
   Maybe UserId ->
   -- | Request body
   CreateScimToken ->
   Sem r CreateScimTokenResponse
-createScimToken zusr CreateScimToken {..} = do
-  let descr = createScimTokenDescr
+createScimToken zusr Api.CreateScimToken {..} = do
+  teamid <- guardScimTokenCreation zusr password verificationCode
+  mIdPId <- maybe (pure Nothing) (\idpid -> IdPConfigStore.getConfig idpid $> Just idpid) idp
+  createScimTokenUnchecked teamid name description mIdPId
+
+guardScimTokenCreation ::
+  forall r.
+  ( Member (Input Opts) r,
+    Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member (Error E.SparError) r
+  ) =>
+  -- | Who is trying to create a token
+  Maybe UserId ->
+  Maybe PlainTextPassword6 ->
+  Maybe Code.Value ->
+  Sem r TeamId
+guardScimTokenCreation zusr password verificationCode = do
   teamid <- Intra.Brig.authorizeScimTokenManagement zusr
-  BrigAccess.ensureReAuthorised zusr createScimTokenPassword
-  tokenNumber <- fmap length $ ScimTokenStore.getByTeam teamid
+  BrigAccess.ensureReAuthorised zusr password verificationCode (Just User.CreateScimToken)
+  tokenNumber <- length <$> ScimTokenStore.lookupByTeam teamid
   maxTokens <- inputs maxScimTokens
   unless (tokenNumber < maxTokens) $
     throwSparSem E.SparProvisioningTokenLimitReached
-  idps <- IdPEffect.getConfigsByTeam teamid
+  pure teamid
 
-  let caseOneOrNoIdP :: Maybe SAML.IdPId -> Sem r CreateScimTokenResponse
-      caseOneOrNoIdP midpid = do
-        token <- ScimToken . cs . ES.encode <$> Random.bytes 32
-        tokenid <- Random.scimTokenId
-        -- FUTUREWORK(fisx): the fact that we're using @Now.get@
-        -- here means that the 'Now' effect should not contain
-        -- types from saml2-web-sso. We can just use 'UTCTime'
-        -- there, right?
-        now <- Now.get
-        let info =
-              ScimTokenInfo
-                { stiId = tokenid,
-                  stiTeam = teamid,
-                  stiCreatedAt = SAML.fromTime now,
-                  stiIdP = midpid,
-                  stiDescr = descr
-                }
-        ScimTokenStore.insert token info
-        pure $ CreateScimTokenResponse token info
-
-  case idps of
-    [idp] -> caseOneOrNoIdP . Just $ idp ^. SAML.idpId
-    [] -> caseOneOrNoIdP Nothing
-    -- NB: if the following case does not result in errors, 'validateScimUser' needs to
-    -- be changed.  currently, it relies on the fact that there is never more than one IdP.
-    -- https://wearezeta.atlassian.net/browse/SQSERVICES-165
-    _ ->
-      throwSparSem $
-        E.SparProvisioningMoreThanOneIdP
-          "SCIM tokens can only be created for a team with at most one IdP"
+-- Create a token for user's team.
+createScimTokenUnchecked ::
+  forall r.
+  ( Member Random r,
+    Member ScimTokenStore r,
+    Member Now r
+  ) =>
+  TeamId ->
+  Maybe Text ->
+  Text ->
+  Maybe SAML.IdPId ->
+  Sem r CreateScimTokenResponse
+createScimTokenUnchecked teamid mName desc mIdPId = do
+  token <-
+    ScimToken . T.decodeUtf8With lenientDecode . ES.encode
+      <$> Random.bytes 32
+  tokenid <- Random.scimTokenId
+  now <- Now.get
+  let info =
+        ScimTokenInfo
+          { stiId = tokenid,
+            stiTeam = teamid,
+            stiCreatedAt = now,
+            stiIdP = mIdPId,
+            stiDescr = desc,
+            stiName = fromMaybe (idToText tokenid) mName
+          }
+  ScimTokenStore.insert token info
+  pure $ CreateScimTokenResponse token info
 
 -- | > docs/reference/provisioning/scim-token.md {#RefScimTokenDelete}
 --
 -- Delete a token belonging to user's team.
 deleteScimToken ::
-  Members '[GalleyAccess, BrigAccess, ScimTokenStore, Error E.SparError] r =>
+  ( Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member (Error E.SparError) r
+  ) =>
   -- | Who is trying to delete a token
   Maybe UserId ->
   ScimTokenId ->
@@ -179,15 +254,36 @@ deleteScimToken zusr tokenid = do
   ScimTokenStore.delete teamid tokenid
   pure NoContent
 
+listScimTokensV7 ::
+  ( Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member (Error E.SparError) r
+  ) =>
+  -- | Who is trying to list tokens
+  Maybe UserId ->
+  Sem r ScimTokenListV7
+listScimTokensV7 zusr = toV7 <$> listScimTokens zusr
+  where
+    toV7 :: ScimTokenList -> ScimTokenListV7
+    toV7 (ScimTokenList tokens) = ScimTokenListV7 $ map infoToV7 tokens
+
+    infoToV7 :: ScimTokenInfo -> ScimTokenInfoV7
+    infoToV7 ScimTokenInfo {..} = ScimTokenInfoV7 {..}
+
 -- | > docs/reference/provisioning/scim-token.md {#RefScimTokenList}
 --
 -- List all tokens belonging to user's team. Tokens themselves are not available, only
 -- metadata about them.
 listScimTokens ::
-  Members '[GalleyAccess, BrigAccess, ScimTokenStore, Error E.SparError] r =>
+  ( Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimTokenStore r,
+    Member (Error E.SparError) r
+  ) =>
   -- | Who is trying to list tokens
   Maybe UserId ->
   Sem r ScimTokenList
 listScimTokens zusr = do
   teamid <- Intra.Brig.authorizeScimTokenManagement zusr
-  ScimTokenList <$> ScimTokenStore.getByTeam teamid
+  ScimTokenList <$> ScimTokenStore.lookupByTeam teamid

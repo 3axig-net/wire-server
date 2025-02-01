@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,7 +21,7 @@ module Test.Domain
 where
 
 import Data.Domain (DomainText (DomainText), domainText, mkDomain)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Imports
 import Test.Tasty
 import Test.Tasty.HUnit

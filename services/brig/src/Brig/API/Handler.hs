@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,68 +18,59 @@
 module Brig.API.Handler
   ( -- * Handler Monad
     Handler,
-    runHandler,
     toServantHandler,
 
     -- * Utilities
-    JSON,
-    parseJsonBody,
-    checkWhitelist,
+    checkAllowlist,
+    checkAllowlistWithError,
+    isAllowlisted,
+    UserNotAllowedToJoinTeam (..),
   )
 where
 
 import Bilge (RequestId (..))
 import Brig.API.Error
-import qualified Brig.AWS as AWS
-import Brig.App (AppIO, Env, applog, requestId, runAppT, settings)
-import Brig.Email (Email)
-import Brig.Options (setWhitelist)
-import Brig.Phone (Phone, PhoneException (..))
-import qualified Brig.Whitelist as Whitelist
+import Brig.AWS qualified as AWS
+import Brig.App
+import Brig.CanonicalInterpreter (BrigCanonicalEffects, runBrigToIO)
+import Brig.Options (allowlistEmailDomains)
 import Control.Error
-import Control.Lens (set, view)
+import Control.Exception (throwIO)
 import Control.Monad.Catch (catches, throwM)
-import qualified Control.Monad.Catch as Catch
-import Data.Aeson (FromJSON)
-import qualified Data.Aeson as Aeson
-import Data.Default (def)
-import Data.Proxy (Proxy (..))
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified Data.ZAuth.Validation as ZV
+import Control.Monad.Catch qualified as Catch
+import Control.Monad.Except (MonadError, throwError)
+import Data.Aeson qualified as Aeson
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Data.ZAuth.Validation qualified as ZV
 import Imports
-import Network.HTTP.Media.RenderHeader (RenderHeader (..))
-import Network.HTTP.Types (Status (statusCode, statusMessage), hContentType)
-import Network.Wai (Request, ResponseReceived)
-import Network.Wai.Predicate (Media)
-import Network.Wai.Routing (Continue)
-import Network.Wai.Utilities.Error ((!>>))
-import qualified Network.Wai.Utilities.Error as WaiError
-import Network.Wai.Utilities.Request (JsonRequest, lookupRequestId, parseBody)
-import Network.Wai.Utilities.Response (addHeader, json, setStatus)
-import qualified Network.Wai.Utilities.Server as Server
-import qualified Servant
+import Network.HTTP.Types (Status (statusCode, statusMessage))
+import Network.Wai.Utilities.Error qualified as WaiError
+import Network.Wai.Utilities.Server qualified as Server
+import Servant qualified
+import System.Logger qualified as Log
 import System.Logger.Class (Logger)
+import Wire.API.Allowlists qualified as Allowlists
+import Wire.API.Error
+import Wire.API.Error.Brig
+import Wire.API.User
+import Wire.Error
 
 -------------------------------------------------------------------------------
 -- HTTP Handler Monad
 
-type Handler = ExceptT Error AppIO
+type Handler r = ExceptT HttpError (AppT r)
 
-runHandler :: Env -> Request -> Handler ResponseReceived -> Continue IO -> IO ResponseReceived
-runHandler e r h k = do
-  let e' = set requestId (maybe def RequestId (lookupRequestId r)) e
-  a <- runAppT e' (runExceptT h) `catches` brigErrorHandlers
-  either (onError (view applog e') r k) return a
-
-toServantHandler :: Env -> Handler a -> Servant.Handler a
+toServantHandler :: Env -> (Handler BrigCanonicalEffects) a -> Servant.Handler a
 toServantHandler env action = do
-  a <- liftIO $ runAppT env (runExceptT action) `catches` brigErrorHandlers
+  let logger = env.appLogger
+      reqId = unRequestId $ env.requestId
+  a <-
+    liftIO $
+      (runBrigToIO env (runExceptT action))
+        `catches` brigErrorHandlers logger reqId
   case a of
-    Left werr ->
-      let reqId = unRequestId $ view requestId env
-          logger = view applog env
-       in handleWaiErrors logger reqId werr
+    Left werr -> handleWaiErrors logger reqId werr
     Right x -> pure x
   where
     mkCode = statusCode . WaiError.code
@@ -87,63 +78,55 @@ toServantHandler env action = do
 
     handleWaiErrors logger reqId =
       \case
+        -- throw in IO so that the `catchErrors` middleware can turn this error
+        -- into a response and log accordingly
         StdError werr -> do
           Server.logError' logger (Just reqId) werr
-          Servant.throwError $
-            Servant.ServerError (mkCode werr) (mkPhrase (WaiError.code werr)) (Aeson.encode werr) [(hContentType, renderHeader (Servant.contentType (Proxy @Servant.JSON)))]
+          liftIO $ throwIO werr
         RichError werr body headers -> do
-          Server.logError' logger (Just reqId) werr
+          when (statusCode (WaiError.code werr) < 500) $
+            -- 5xx are logged by the middleware, so we only log errors < 500 to avoid duplicated entries
+            Server.logError' logger (Just reqId) werr
           Servant.throwError $
             Servant.ServerError (mkCode werr) (mkPhrase (WaiError.code werr)) (Aeson.encode body) headers
 
-brigErrorHandlers :: [Catch.Handler IO (Either Error a)]
-brigErrorHandlers =
-  [ Catch.Handler $ \(ex :: PhoneException) ->
-      pure (Left (phoneError ex)),
-    Catch.Handler $ \(ex :: ZV.Failure) ->
+newtype UserNotAllowedToJoinTeam = UserNotAllowedToJoinTeam WaiError.Error
+  deriving (Show)
+
+instance Exception UserNotAllowedToJoinTeam
+
+brigErrorHandlers :: Logger -> ByteString -> [Catch.Handler IO (Either HttpError a)]
+brigErrorHandlers logger reqId =
+  [ Catch.Handler $ \(ex :: ZV.Failure) ->
       pure (Left (zauthError ex)),
     Catch.Handler $ \(ex :: AWS.Error) ->
       case ex of
-        AWS.SESInvalidDomain -> pure (Left (StdError invalidEmail))
-        _ -> throwM ex
+        AWS.SESInvalidDomain ->
+          pure (Left (StdError (errorToWai @'InvalidEmail)))
+        _ -> throwM ex,
+    Catch.Handler $ \(e :: HttpError) -> pure $ Left e,
+    Catch.Handler $ \(UserNotAllowedToJoinTeam e) -> pure (Left $ StdError e),
+    Catch.Handler $ \(e :: SomeException) -> do
+      Log.err logger $
+        Log.msg ("IO Exception occurred" :: ByteString)
+          . Log.field "message" (displayException e)
+          . Log.field "request" reqId
+      throwIO e
   ]
-
-onError :: Logger -> Request -> Continue IO -> Error -> IO ResponseReceived
-onError g r k e = do
-  Server.logError g (Just r) we
-  -- This function exists to workaround a problem that existed in nginx 5 years
-  -- ago. Context here:
-  -- https://github.com/zinfra/wai-utilities/commit/3d7e8349d3463e5ee2c3ebe89c717baeef1a8241
-  -- So, this can probably be deleted and is not part of the new servant
-  -- handler.
-  Server.flushRequestBody r
-  k $
-    setStatus (WaiError.code we)
-      . appEndo (foldMap (Endo . uncurry addHeader) hs)
-      $ json e
-  where
-    (we, hs) = case e of
-      StdError x -> (x, [])
-      RichError x _ h -> (x, h)
 
 -------------------------------------------------------------------------------
 -- Utilities
 
--- TODO: move to libs/wai-utilities?
-type JSON = Media "application" "json"
+-- | If an Allowlist is configured, consult it, otherwise a no-op. {#RefActivationAllowlist}
+checkAllowlist :: EmailAddress -> Handler r ()
+checkAllowlist = wrapHttpClientE . checkAllowlistWithError (StdError allowlistError)
 
--- TODO: move to libs/wai-utilities?  there is a parseJson' in "Network.Wai.Utilities.Request",
--- but adjusting its signature to this here would require to move more code out of brig (at least
--- badRequest and probably all the other errors).
-parseJsonBody :: FromJSON a => JsonRequest a -> Handler a
-parseJsonBody req = parseBody req !>> StdError . badRequest
+checkAllowlistWithError :: (MonadReader Env m, MonadError e m) => e -> EmailAddress -> m ()
+checkAllowlistWithError e key = do
+  ok <- isAllowlisted key
+  unless ok (throwError e)
 
--- | If a whitelist is configured, consult it, otherwise a no-op. {#RefActivationWhitelist}
-checkWhitelist :: Either Email Phone -> Handler ()
-checkWhitelist key = do
-  eb <- setWhitelist <$> view settings
-  case eb of
-    Nothing -> return ()
-    Just b -> do
-      ok <- lift $ Whitelist.verify b key
-      unless ok (throwStd whitelistError)
+isAllowlisted :: (MonadReader Env m) => EmailAddress -> m Bool
+isAllowlisted key = do
+  env <- asks (.settings)
+  pure $ Allowlists.verify env.allowlistEmailDomains key

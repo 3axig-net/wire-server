@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,27 +17,41 @@
 
 module Wire.API.Federation.Domain where
 
+import Control.Lens ((?~))
 import Data.Domain (Domain)
 import Data.Metrics.Servant
+import Data.OpenApi (OpenApi)
+import Data.OpenApi qualified as S
 import Data.Proxy (Proxy (..))
 import GHC.TypeLits (Symbol, symbolVal)
 import Imports
 import Servant.API (Header', Required, Strict, (:>))
 import Servant.Client
+import Servant.OpenApi (HasOpenApi (toOpenApi))
 import Servant.Server
 import Servant.Server.Internal (MkContextWithErrorFormatter)
+import Wire.API.Routes.ClientAlgebra
+import Wire.API.Routes.SpecialiseToVersion
 
 type OriginDomainHeaderName = "Wire-Origin-Domain" :: Symbol
 
 data OriginDomainHeader
 
-instance RoutesToPaths api => RoutesToPaths (OriginDomainHeader :> api) where
+instance (RoutesToPaths api) => RoutesToPaths (OriginDomainHeader :> api) where
   getRoutes = getRoutes @api
 
-instance HasClient m api => HasClient m (OriginDomainHeader :> api) where
+type instance
+  SpecialiseToVersion v (OriginDomainHeader :> api) =
+    OriginDomainHeader :> SpecialiseToVersion v api
+
+instance (HasClient m api) => HasClient m (OriginDomainHeader :> api) where
   type Client m (OriginDomainHeader :> api) = Client m api
   clientWithRoute pm _ req = clientWithRoute pm (Proxy @api) req
   hoistClientMonad pm _ = hoistClientMonad pm (Proxy @api)
+
+instance (HasClientAlgebra m api) => HasClientAlgebra m (OriginDomainHeader :> api) where
+  joinClient = joinClient @m @api
+  bindClient = bindClient @m @api
 
 type OriginDomainHeaderHasServer = Header' [Strict, Required] OriginDomainHeaderName Domain
 
@@ -51,5 +65,11 @@ instance
   route _pa = route (Proxy @(OriginDomainHeaderHasServer :> api))
   hoistServerWithContext _ pc nt s = hoistServerWithContext (Proxy :: Proxy api) pc nt . s
 
-originDomainHeaderName :: IsString a => a
+originDomainHeaderName :: (IsString a) => a
 originDomainHeaderName = fromString $ symbolVal (Proxy @OriginDomainHeaderName)
+
+instance (HasOpenApi api) => HasOpenApi (OriginDomainHeader :> api) where
+  toOpenApi _ = desc $ toOpenApi (Proxy @api)
+    where
+      desc :: OpenApi -> OpenApi
+      desc = S.allOperations . S.description ?~ ("All federated endpoints expect origin domain header: `" <> originDomainHeaderName <> "`")

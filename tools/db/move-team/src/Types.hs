@@ -1,7 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -9,7 +8,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,16 +29,14 @@ import Cassandra
 import Data.Aeson (FromJSON (..), ToJSON (..), Value (String), withArray, withText)
 import Data.Aeson.Types (Value (Array))
 import Data.ByteString.Lazy (fromStrict, toStrict)
-import Data.Handle
 import Data.IP (IP (..))
 import Data.Id
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Ascii (AsciiText, Base64, decodeBase64, encodeBase64)
-import qualified Data.Vector as V
+import Data.Vector qualified as V
 import Galley.Cassandra.Instances ()
 import Imports
 import System.Logger (Logger)
-import Wire.API.User.Password (PasswordResetKey (..))
 
 data Env = Env
   { envLogger :: Logger,
@@ -74,10 +71,10 @@ instance Cql AssetIgnoreData where
   toCql _ = error "AssetIgnoreData: you should not have any data of this"
   fromCql _ = pure AssetIgnoreData
 
-instance ToJSON a => ToJSON (Cassandra.Set a) where
+instance (ToJSON a) => ToJSON (Cassandra.Set a) where
   toJSON = toJSON . Cassandra.fromSet
 
-instance FromJSON a => FromJSON (Cassandra.Set a) where
+instance (FromJSON a) => FromJSON (Cassandra.Set a) where
   parseJSON = fmap Cassandra.Set . parseJSON
 
 instance ToJSON Blob where
@@ -99,10 +96,6 @@ instance FromJSON IP where
       Nothing -> fail "not a formatted IP address"
       Just ip -> pure ip
 
-deriving instance Cql Handle
-
-deriving instance Cql PasswordResetKey
-
 deriving instance ToJSON Ascii
 
 deriving instance FromJSON Ascii
@@ -111,8 +104,8 @@ deriving instance ToJSON TimeUuid
 
 deriving instance FromJSON TimeUuid
 
-instance (ToJSON a, ToJSON b, ToJSON c, ToJSON d, ToJSON e, ToJSON f, ToJSON g, ToJSON h, ToJSON i, ToJSON j, ToJSON k, ToJSON l, ToJSON m, ToJSON n, ToJSON o, ToJSON p, ToJSON q, ToJSON r, ToJSON s, ToJSON t, ToJSON u) => ToJSON ((,,,,,,,,,,,,,,,,,,,,) a b c d e f g h i j k l m n o p q r s t u) where
-  toJSON (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u) =
+instance (ToJSON a, ToJSON b, ToJSON c, ToJSON d, ToJSON e, ToJSON f, ToJSON g, ToJSON h, ToJSON i, ToJSON j, ToJSON k, ToJSON l, ToJSON m, ToJSON n, ToJSON o, ToJSON p, ToJSON q, ToJSON r, ToJSON s, ToJSON t) => ToJSON ((,,,,,,,,,,,,,,,,,,,) a b c d e f g h i j k l m n o p q r s t) where
+  toJSON (a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t) =
     Array $
       V.fromList
         [ toJSON a,
@@ -134,14 +127,13 @@ instance (ToJSON a, ToJSON b, ToJSON c, ToJSON d, ToJSON e, ToJSON f, ToJSON g, 
           toJSON q,
           toJSON r,
           toJSON s,
-          toJSON t,
-          toJSON u
+          toJSON t
         ]
 
-instance (FromJSON a, FromJSON b, FromJSON c, FromJSON d, FromJSON e, FromJSON f, FromJSON g, FromJSON h, FromJSON i, FromJSON j, FromJSON k, FromJSON l, FromJSON m, FromJSON n, FromJSON o, FromJSON p, FromJSON q, FromJSON r, FromJSON s, FromJSON t, FromJSON u) => FromJSON ((,,,,,,,,,,,,,,,,,,,,) a b c d e f g h i j k l m n o p q r s t u) where
+instance (FromJSON a, FromJSON b, FromJSON c, FromJSON d, FromJSON e, FromJSON f, FromJSON g, FromJSON h, FromJSON i, FromJSON j, FromJSON k, FromJSON l, FromJSON m, FromJSON n, FromJSON o, FromJSON p, FromJSON q, FromJSON r, FromJSON s, FromJSON t) => FromJSON ((,,,,,,,,,,,,,,,,,,,) a b c d e f g h i j k l m n o p q r s t) where
   parseJSON = withArray "Tuple" $ \case
-    (toList -> [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u]) ->
-      (,,,,,,,,,,,,,,,,,,,,)
+    (toList -> [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t]) ->
+      (,,,,,,,,,,,,,,,,,,,)
         <$> parseJSON a
         <*> parseJSON b
         <*> parseJSON c
@@ -162,5 +154,4 @@ instance (FromJSON a, FromJSON b, FromJSON c, FromJSON d, FromJSON e, FromJSON f
         <*> parseJSON r
         <*> parseJSON s
         <*> parseJSON t
-        <*> parseJSON u
     _ -> fail "Expected array of length 21"

@@ -5,10 +5,9 @@ metadata:
 data:
   {{- with .Values.config }}
   galley.yaml: |
-    logNetStrings: True # log using netstrings encoding:
-                        # http://cr.yp.to/proto/netstrings.txt
-    logLevel: {{ .logLevel }}
     logFormat: {{ .logFormat }}
+    logLevel: {{ .logLevel }}
+    logNetStrings: {{ .logNetStrings }}
 
     galley:
       host: 0.0.0.0
@@ -19,6 +18,12 @@ data:
         host: {{ .cassandra.host }}
         port: 9042
       keyspace: galley
+      {{- if hasKey .cassandra "filterNodesByDatacentre" }}
+      filterNodesByDatacentre: {{ .cassandra.filterNodesByDatacentre }}
+      {{- end }}
+      {{- if eq (include "useCassandraTLS" .) "true" }}
+      tlsCa: /etc/wire/galley/cassandra/{{- (include "tlsSecretRef" . | fromYaml).key }}
+      {{- end }}
 
     brig:
       host: brig
@@ -32,37 +37,134 @@ data:
       host: spar
       port: 8080
 
-    {{- if .enableFederator }}
+    {{- if .enableFederation }}
     federator:
       host: federator
       port: 8080
+
+    {{- with .rabbitmq }}
+    rabbitmq:
+      host: {{ .host }}
+      port: {{ .port }}
+      vHost: {{ .vHost }}
+      enableTls: {{ .enableTls }}
+      insecureSkipVerifyTls: {{ .insecureSkipVerifyTls }}
+      {{- if .tlsCaSecretRef }}
+      caCert: /etc/wire/galley/rabbitmq-ca/{{ .tlsCaSecretRef.key }}
+      {{- end }}
+    {{- end }}
     {{- end }}
 
     {{- if (.journal) }}
     journal:
-      queueName: {{ .journal.queue }}
+      queueName: {{ .journal.queueName }}
       endpoint: {{ .journal.endpoint }}
     {{- end }}
 
     settings:
-      httpPoolSize: 128
-      intraListing: false
+      httpPoolSize: {{ .settings.httpPoolSize }}
+      intraListing: {{ .settings.intraListing }}
       maxTeamSize: {{ .settings.maxTeamSize }}
       maxConvSize: {{ .settings.maxConvSize }}
       {{- if .settings.maxFanoutSize }}
       maxFanoutSize: {{ .settings.maxFanoutSize }}
       {{- end }}
+      {{- if .settings.exposeInvitationURLsTeamAllowlist }}
+      exposeInvitationURLsTeamAllowlist: {{ .settings.exposeInvitationURLsTeamAllowlist }}
+      {{- end }}
+      {{- if .settings.conversationCodeURI }}
       conversationCodeURI: {{ .settings.conversationCodeURI | quote }}
-      {{- if .settings.enableIndexedBillingTeamMembers }}
-      enableIndexedBillingTeamMembers: {{ .settings.enableIndexedBillingTeamMembers }}
+      {{- else if .settings.multiIngress }}
+      multiIngress: {{- toYaml .settings.multiIngress | nindent 8 }}
+      {{- else }}
+      {{ fail "Either settings.conversationCodeURI or settings.multiIngress have to be set"}}
+      {{- end }}
+      {{- if (and .settings.conversationCodeURI .settings.multiIngress) }}
+      {{ fail "settings.conversationCodeURI and settings.multiIngress are mutually exclusive" }}
       {{- end }}
       federationDomain: {{ .settings.federationDomain }}
+      {{- if .settings.federationProtocols }}
+      federationProtocols: {{ .settings.federationProtocols }}
+      {{- end }}
+      {{- if $.Values.secrets.mlsPrivateKeys }}
+      mlsPrivateKeyPaths:
+        removal:
+          ed25519: "/etc/wire/galley/secrets/removal_ed25519.pem"
+          ecdsa_secp256r1_sha256: "/etc/wire/galley/secrets/removal_ecdsa_secp256r1_sha256.pem"
+          ecdsa_secp384r1_sha384: "/etc/wire/galley/secrets/removal_ecdsa_secp384r1_sha384.pem"
+          ecdsa_secp521r1_sha512: "/etc/wire/galley/secrets/removal_ecdsa_secp521r1_sha512.pem"
+      {{- end }}
+      disabledAPIVersions: {{ toJson .settings.disabledAPIVersions }}
       {{- if .settings.featureFlags }}
+      {{- if .settings.guestLinkTTLSeconds }}
+      guestLinkTTLSeconds: {{ .settings.guestLinkTTLSeconds }}
+      {{- end }}
+      passwordHashingOptions: {{ toYaml .settings.passwordHashingOptions | nindent 8 }}
       featureFlags:
         sso: {{ .settings.featureFlags.sso }}
         legalhold: {{ .settings.featureFlags.legalhold }}
         teamSearchVisibility: {{ .settings.featureFlags.teamSearchVisibility }}
         classifiedDomains:
           {{- toYaml .settings.featureFlags.classifiedDomains | nindent 10 }}
+        {{- if .settings.featureFlags.fileSharing }}
+        fileSharing:
+          {{- toYaml .settings.featureFlags.fileSharing | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.enforceFileDownloadLocation }}
+        enforceFileDownloadLocation:
+          {{- toYaml .settings.featureFlags.enforceFileDownloadLocation | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.sndFactorPasswordChallenge }}
+        sndFactorPasswordChallenge:
+          {{- toYaml .settings.featureFlags.sndFactorPasswordChallenge | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.searchVisibilityInbound }}
+        searchVisibilityInbound:
+          {{- toYaml .settings.featureFlags.searchVisibilityInbound | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.validateSAMLEmails }}
+        validateSAMLEmails:
+          {{- toYaml .settings.featureFlags.validateSAMLEmails | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.appLock }}
+        appLock:
+          {{- toYaml .settings.featureFlags.appLock | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.conferenceCalling }}
+        conferenceCalling:
+          {{- toYaml .settings.featureFlags.conferenceCalling | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.selfDeletingMessages }}
+        selfDeletingMessages:
+          {{- toYaml .settings.featureFlags.selfDeletingMessages | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.conversationGuestLinks }}
+        conversationGuestLinks:
+          {{- toYaml .settings.featureFlags.conversationGuestLinks | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.mls }}
+        mls:
+          {{- toYaml .settings.featureFlags.mls | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.outlookCalIntegration }}
+        outlookCalIntegration:
+          {{- toYaml .settings.featureFlags.outlookCalIntegration | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.mlsE2EId }}
+        mlsE2EId:
+          {{- toYaml .settings.featureFlags.mlsE2EId | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.mlsMigration }}
+        mlsMigration:
+          {{- toYaml .settings.featureFlags.mlsMigration | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.limitedEventFanout }}
+        limitedEventFanout:
+          {{- toYaml .settings.featureFlags.limitedEventFanout | nindent 10 }}
+        {{- end }}
+        {{- if .settings.featureFlags.domainRegistration }}
+        domainRegistration:
+          {{- toYaml .settings.featureFlags.domainRegistration | nindent 10 }}
+        {{- end }}
       {{- end }}
   {{- end }}

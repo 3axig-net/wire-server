@@ -1,5 +1,4 @@
 SHELL                 := /usr/bin/env bash
-LANG                  := en_US.UTF-8
 DOCKER_USER           ?= quay.io/wire
 # kubernetes namespace for running integration tests
 NAMESPACE             ?= test-$(USER)
@@ -7,17 +6,24 @@ NAMESPACE             ?= test-$(USER)
 DOCKER_TAG            ?= $(USER)
 # default helm chart version must be 0.0.42 for local development (because 42 is the answer to the universe and everything)
 HELM_SEMVER           ?= 0.0.42
-# The list of helm charts needed for integration tests on kubernetes
-CHARTS_INTEGRATION    := wire-server databases-ephemeral fake-aws nginx-ingress-controller nginx-ingress-services wire-server-metrics fluent-bit kibana
+# The list of helm charts needed on internal kubernetes testing environments
+CHARTS_INTEGRATION    := wire-server databases-ephemeral redis-cluster rabbitmq fake-aws ingress-nginx-controller nginx-ingress-controller nginx-ingress-services fluent-bit kibana restund k8ssandra-test-cluster wire-server-enterprise
 # The list of helm charts to publish on S3
 # FUTUREWORK: after we "inline local subcharts",
 # (e.g. move charts/brig to charts/wire-server/brig)
 # this list could be generated from the folder names under ./charts/ like so:
 # CHARTS_RELEASE := $(shell find charts/ -maxdepth 1 -type d | xargs -n 1 basename | grep -v charts)
-CHARTS_RELEASE        := wire-server redis-ephemeral databases-ephemeral fake-aws fake-aws-s3 fake-aws-sqs aws-ingress  fluent-bit kibana backoffice calling-test demo-smtp elasticsearch-curator elasticsearch-external elasticsearch-ephemeral minio-external cassandra-external nginx-ingress-controller nginx-ingress-services reaper wire-server-metrics sftd
-BUILDAH_PUSH          ?= 0
+CHARTS_RELEASE := wire-server redis-ephemeral redis-cluster rabbitmq rabbitmq-external databases-ephemeral	\
+fake-aws fake-aws-s3 fake-aws-sqs aws-ingress fluent-bit kibana backoffice		\
+calling-test demo-smtp elasticsearch-curator elasticsearch-external				\
+elasticsearch-ephemeral minio-external cassandra-external						\
+nginx-ingress-controller ingress-nginx-controller nginx-ingress-services reaper restund \
+k8ssandra-test-cluster ldap-scim-bridge wire-server-enterprise
 KIND_CLUSTER_NAME     := wire-server
-BUILDAH_KIND_LOAD     ?= 1
+HELM_PARALLELISM      ?= 1 # 1 for sequential tests; 6 for all-parallel tests
+
+package ?= all
+EXE_SCHEMA := ./dist/$(package)-schema
 
 # This ensures that focused unit tests written in hspec fail. This is supposed
 # to help us avoid merging PRs with focused tests. This will not catch focused
@@ -29,9 +35,9 @@ BUILDAH_KIND_LOAD     ?= 1
 # Additionally, if stack is being used with nix, environment variables do not
 # make it into the shell where hspec is run, to tackle that this variable is
 # also exported in stack-deps.nix.
-export HSPEC_OPTIONS = --fail-on-focused
+export HSPEC_OPTIONS ?= --fail-on=focused
 
-default: fast
+default: install
 
 init:
 	mkdir -p dist
@@ -39,66 +45,198 @@ init:
 # Build all Haskell services and executables, run unit tests
 .PHONY: install
 install: init
-ifeq ($(WIRE_BUILD_WITH_CABAL), 1)
 	cabal build all
 	./hack/bin/cabal-run-all-tests.sh
-	./hack/bin/cabal-install-all-artefacts.sh
-else
-	stack install --pedantic --test --bench --no-run-benchmarks --local-bin-path=dist
-endif
+	./hack/bin/cabal-install-artefacts.sh all
 
-# Build all Haskell services and executables with -O0, run unit tests
-.PHONY: fast
-fast: init
-ifeq ($(WIRE_BUILD_WITH_CABAL), 1)
-	make install
-else
-	stack install --pedantic --test --bench --no-run-benchmarks --local-bin-path=dist --fast $(WIRE_STACK_OPTIONS)
-endif
+.PHONY: rabbit-clean
+rabbit-clean:
+	rabbitmqadmin -f pretty_json list queues vhost name \
+		| jq -r '.[] | "rabbitmqadmin delete queue name=\(.name) --vhost=\(.vhost)"' \
+		| bash
+	rabbitmqadmin -f pretty_json list exchanges name vhost \
+		| jq -r '.[] |select(.name | startswith("amq") | not) | select (.name != "") | "rabbitmqadmin delete exchange name=\(.name) --vhost=\(.vhost)"' \
+		| bash
+
+# Clean
+.PHONY: full-clean
+full-clean: clean
+	make rabbit-clean
+	rm -rf ~/.cache/hie-bios
+	rm -rf ./dist-newstyle ./.env
+	direnv reload
+	@echo -e "\n\n*** NOTE: you may want to also 'rm -rf ~/.cabal/store \$$CABAL_DIR/store', not sure.\n"
+
+.PHONY: clean
+clean:
+	cabal clean
+	-rm -rf dist
+	-rm -f "bill-of-materials.$(HELM_SEMVER).json"
+
+.PHONY: clean-hint
+clean-hint:
+	@echo -e "\n\n\n>>> PSA: if you get errors that are hard to explain,"
+	@echo -e ">>> try 'git submodule update --init --recursive' and 'make full-clean' and run your command again."
+	@echo -e ">>> see https://github.com/wireapp/wire-server/blob/develop/docs/developer/building.md#linker-errors-while-compiling"
+	@echo -e ">>> to never have to remember submodules again, try 'git config --global submodule.recurse true'"
+	@echo -e "\n\n\n"
+
+.PHONY: cabal.project.local
+cabal.project.local:
+	cp ./hack/bin/cabal.project.local.template ./cabal.project.local
 
 # Usage: make c package=brig test=1
 .PHONY: c
-c:
-	cabal build $(WIRE_CABAL_BUILD_OPTIONS) $(package)
+c: treefmt c-fast
+
+.PHONY: c
+c-fast:
+	cabal build $(WIRE_CABAL_BUILD_OPTIONS) $(package) || ( make clean-hint; false )
 ifeq ($(test), 1)
 	./hack/bin/cabal-run-tests.sh $(package) $(testargs)
 endif
 	./hack/bin/cabal-install-artefacts.sh $(package)
 
-# ci here doesn't refer to continuous integration, but to cabal-integration
-# Usage: make ci package=brig test=1
-.PHONY: ci
-ci: c
-ifeq ("$(pattern)", "")
-	make -C services/$(package) i
-else
-	make -C services/$(package) i-$(pattern)
+# ci here doesn't refer to continuous integration, but to cabal-run-integration.sh
+# Usage: make ci                        - build & run all tests, excluding integration
+#        make ci package=all            - build & run all tests, including integration
+#        make ci package=brig           - build brig & run "brig-integration"
+#        make ci package=integration    - build & run "integration"
+#
+# You can pass environment variables to all the suites, like so
+# TASTY_PATTERN=".."  make ci package=brig
+#
+# If you want to pass arguments to the test-suite call cabal-run-integration.sh directly.
+.PHONY: ci-fast
+ci-fast: c db-migrate
+ifeq ("$(package)", "all")
+	./hack/bin/cabal-run-integration.sh all
+	./hack/bin/cabal-run-integration.sh integration
 endif
+	./hack/bin/cabal-run-integration.sh $(package)
+
+# variant of `make ci-fast` that compiles the entire project even if `package` is specified.
+.PHONY: ci-safe
+ci-safe:
+	make c package=all
+	make ci-fast
+
+.PHONY: ci
+ci:
+	@echo -en "\n\n\nplease choose between goals ci-fast and ci-safe.\n\n\n"
+
+# Compile and run services
+# Usage: make crun `OR` make crun package=galley
+.PHONY: cr
+cr: c db-migrate
+	./dist/run-services
+
+crm: c db-migrate
+	./dist/run-services -m
+
+# Run integration from new test suite
+# Usage: make devtest
+# Usage: TEST_INCLUDE=test1,test2 make devtest
+.PHONY: devtest
+devtest:
+	ghcid --command 'cabal repl lib:integration' --test='Testlib.Run.mainI []'
+
+.PHONY: sanitize-pr
+sanitize-pr:
+	./hack/bin/check-weed.sh
+	make lint-all-shallow
+	make git-add-cassandra-schema
+	@git diff-files --quiet -- || ( echo "There are unstaged changes, please take a look, consider committing them, and try again."; exit 1 )
+	@git diff-index --quiet --cached HEAD -- || ( echo "There are staged changes, please take a look, consider committing them, and try again."; exit 1 )
+	make list-flaky-tests
+
+list-flaky-tests:
+	@echo -e "\n\nif you want to run these, set RUN_FLAKY_TESTS=1\n\n"
+	@git grep -Hne '\bflakyTestCase \"'
+	@git grep -Hne '[^^]\bflakyTest\b'
+
+# Get a ghci environment running for the given package.
+.PHONY: repl
+repl: treefmt
+	cabal repl $(WIRE_CABAL_BUILD_OPTIONS) $(package)
+
+# Use ghcid to watch a particular package.
+# pass target=package:name to specify which target is watched.
+.PHONY: ghcid
+ghcid:
+	ghcid -l=hlint --command "cabal repl $(target)"
+
+# Used by CI
+.PHONY: lint-all
+lint-all: formatc hlint-check-all lint-common
+
+# For use by local devs.
+#
+# This is not safe for CI because files not changed on the branch may
+# have been pushed to develop, or caused by merging develop into the
+# branch implicitly on github.
+#
+# The extra 'hlint-check-pr' has been witnessed to be necessary due to
+# some bu in `hlint-inplace-pr`.  Details got lost in history.
+.PHONY: lint-all-shallow
+lint-all-shallow: lint-common formatf hlint-inplace-pr hlint-check-pr
+
+.PHONY: lint-common
+lint-common: check-local-nix-derivations treefmt-check # weeder (does not work on CI yet)
+
+.PHONY: weeder
+weeder:
+	weeder -N
+
+.PHONY: hlint-check-all
+hlint-check-all:
+	./tools/hlint.sh -f all -m check
+
+.PHONY: hlint-inplace-all
+hlint-inplace-all:
+	./tools/hlint.sh -f all -m inplace
+
+.PHONY: hlint-check-pr
+hlint-check-pr:
+	./tools/hlint.sh -f pr -m check
+
+.PHONY: hlint-inplace-pr
+hlint-inplace-pr:
+	./tools/hlint.sh -f pr -m inplace
+
+.PHONY: hlint-check
+hlint-check:
+	./tools/hlint.sh -f changeset -m check
+
+.PHONY: hlint-inplace
+hlint-inplace:
+	./tools/hlint.sh -f changeset -m inplace
+
+regen-local-nix-derivations:
+	./hack/bin/generate-local-nix-packages.sh
+
+check-local-nix-derivations: regen-local-nix-derivations
+	git diff --exit-code
 
 # Build everything (Haskell services and nginz)
 .PHONY: services
 services: init install
 	$(MAKE) -C services/nginz
 
-# Build haddocks
-.PHONY: haddock
-haddock:
-	WIRE_STACK_OPTIONS="$(WIRE_STACK_OPTIONS) --haddock --haddock-internal" make fast
-
-# Build haddocks only for wire-server
-.PHONY: haddock-shallow
-haddock-shallow:
-	WIRE_STACK_OPTIONS="$(WIRE_STACK_OPTIONS) --haddock --haddock-internal --no-haddock-deps" make fast
-
 # formats all Haskell files (which don't contain CPP)
 .PHONY: format
 format:
 	./tools/ormolu.sh
 
-# formats all Haskell files even if local changes are not committed to git
+# formats all Haskell files changed in this PR, even if local changes are not committed to git
 .PHONY: formatf
 formatf:
-	./tools/ormolu.sh -f
+	./tools/ormolu.sh -f pr
+
+# formats all Haskell files even if local changes are not committed to git
+.PHONY: formatf-all
+formatf-all:
+	./tools/ormolu.sh -f all
 
 # checks that all Haskell files are formatted; fail if a `make format` run is needed.
 .PHONY: formatc
@@ -115,161 +253,127 @@ add-license:
 	@echo ""
 	@echo "you might want to run 'make formatf' now to make sure ormolu is happy"
 
-# Clean
-.PHONY: clean
-clean:
-	stack clean
-	$(MAKE) -C services/nginz clean
-	-rm -rf dist
-	-rm -f .metadata
-
-#################################
-## running integration tests
-
-# Build services with --fast and run tests
-.PHONY: integration
-integration: fast i
-
-# Run tests without building services
-.PHONY: i
-i:
-	$(MAKE) -C services/cargohold i
-	$(MAKE) -C services/galley i
-	$(MAKE) -C services/brig i
-	$(MAKE) -C services/gundeck i
-	$(MAKE) -C services/spar i
-
-# Build services and run tests using AWS
-.PHONY: integration-aws
-integration-aws: fast i-aws
-
-# Run tests using AWS
-.PHONY: i-aws
-i-aws:
-	$(MAKE) -C services/cargohold i-aws
-	$(MAKE) -C services/galley i-aws
-	$(MAKE) -C services/brig i-aws
-	$(MAKE) -C services/gundeck i-aws
-	$(MAKE) -C services/spar i-aws
-
-# Build services and run tests of one service using AWS
-.PHONY: integration-aws-%
-integration-aws-%: fast
-	$(MAKE) "i-aws-$*"
-
-# Run tests of one service using AWS
-.PHONY: i-aws-%
-i-aws-%:
-	$(MAKE) -C "services/$*" i-aws
-
-# Build services and run tests of one service
-.PHONY: integration-%
-integration-%: fast
-	$(MAKE) "i-$*"
-
-# Run tests of one service
-.PHONY: i-%
-i-%:
-	$(MAKE) -C "services/$*" i
+.PHONY: treefmt
+treefmt:
+	treefmt -u debug --walk=git
+ 
+.PHONY: treefmt-check
+treefmt-check:
+	treefmt --fail-on-change -u debug --walk=git
 
 #################################
 ## docker targets
 
-.PHONY: docker-prebuilder
-docker-prebuilder:
-	# `docker-prebuilder` needs to be built or pulled only once (unless native dependencies change)
-	$(MAKE) -C build/alpine prebuilder
+.PHONY: build-image-%
+build-image-%:
+	nix-build ./nix -A wireServer.imagesNoDocs.$(*) && \
+	./result | docker load | tee /tmp/imageName-$(*) && \
+	imageName=$$(grep quay.io /tmp/imageName-$(*) | awk '{print $$3}') && \
+	echo 'You can run your image locally using' && \
+	echo "  docker run -it --entrypoint bash $$imageName" && \
+	echo 'or upload it using' && \
+	echo "  docker push $$imageName"
 
-.PHONY: docker-deps
-docker-deps:
-	# `docker-deps` needs to be built or pulled only once (unless native dependencies change)
-	$(MAKE) -C build/alpine deps
+.PHONY: upload-images
+upload-images:
+	./hack/bin/upload-images.sh imagesNoDocs
 
-.PHONY: docker-builder
-docker-builder:
-	# `docker-builder` needs to be built or pulled only once (unless native dependencies change)
-	$(MAKE) -C build/alpine builder
+.PHONY: upload-images-dev
+upload-images-dev:
+	./hack/bin/upload-images.sh imagesUnoptimizedNoDocs
 
-.PHONY: docker-intermediate
-docker-intermediate:
-	# `docker-intermediate` needs to be built whenever code changes - this essentially runs `stack clean && stack install` on the whole repo
-	docker build -t $(DOCKER_USER)/alpine-intermediate:$(DOCKER_TAG) -f build/alpine/Dockerfile.intermediate --build-arg builder=$(DOCKER_USER)/alpine-builder:develop --build-arg deps=$(DOCKER_USER)/alpine-deps:develop .;
-	docker tag $(DOCKER_USER)/alpine-intermediate:$(DOCKER_TAG) $(DOCKER_USER)/alpine-intermediate:latest;
-	if test -n "$$DOCKER_PUSH"; then docker login -u $(DOCKER_USERNAME) -p $(DOCKER_PASSWORD); docker push $(DOCKER_USER)/alpine-intermediate:$(DOCKER_TAG); docker push $(DOCKER_USER)/alpine-intermediate:latest; fi;
+upload-hoogle-image:
+	./hack/bin/upload-image.sh wireServer.hoogleImage
 
-.PHONY: docker-exe-%
-docker-exe-%:
-	docker image ls | grep $(DOCKER_USER)/alpine-deps > /dev/null || (echo "'make docker-deps' required.", exit 1)
-	docker image ls | grep $(DOCKER_USER)/alpine-intermediate > /dev/null || (echo "'make docker-intermediate' required."; exit 1)
-	docker build -t $(DOCKER_USER)/"$*":$(DOCKER_TAG) -f build/alpine/Dockerfile.executable --build-arg executable="$*" --build-arg intermediate=$(DOCKER_USER)/alpine-intermediate --build-arg deps=$(DOCKER_USER)/alpine-deps .
-	docker tag $(DOCKER_USER)/"$*":$(DOCKER_TAG) $(DOCKER_USER)/"$*":latest
-	if test -n "$$DOCKER_PUSH"; then docker login -u $(DOCKER_USERNAME) -p $(DOCKER_PASSWORD); docker push $(DOCKER_USER)/"$*":$(DOCKER_TAG); docker push $(DOCKER_USER)/"$*":latest; fi;
+#################################
+## cassandra management
 
-.PHONY: docker-services
-docker-services:
-	# make docker-services doesn't compile, only makes small images out of the `docker-intermediate` image
-	# to recompile, run `docker-intermediate` first.
-	docker image ls | grep $(DOCKER_USER)/alpine-deps > /dev/null || (echo "'make docker-deps' required.", exit 1)
-	docker image ls | grep $(DOCKER_USER)/alpine-intermediate > /dev/null || (echo "'make docker-intermediate' required."; exit 1)
-	# `make -C services/brig docker` == `make docker-exe-brig docker-exe-brig-integration docker-exe-brig-schema docker-exe-brig-index`
-	$(MAKE) -C services/brig docker
-	$(MAKE) -C services/gundeck docker
-	$(MAKE) -C services/galley docker
-	$(MAKE) -C services/cannon docker
-	$(MAKE) -C services/proxy docker
-	$(MAKE) -C services/spar docker
-	$(MAKE) -C tools/stern docker
-	$(MAKE) docker-exe-zauth
-	$(MAKE) -C services/nginz docker
-
-DOCKER_DEV_NETWORK := --net=host
-DOCKER_DEV_VOLUMES := -v `pwd`:/wire-server
-DOCKER_DEV_IMAGE   := quay.io/wire/alpine-builder:$(DOCKER_TAG)
-.PHONY: run-docker-builder
-run-docker-builder:
-	@echo "if this does not work, consider 'docker pull', 'docker tag', or 'make -C build-alpine builder'."
-	docker run --workdir /wire-server -it $(DOCKER_DEV_NETWORK) $(DOCKER_DEV_VOLUMES) --rm $(DOCKER_DEV_IMAGE) /bin/bash
-
-CASSANDRA_CONTAINER := $(shell docker ps | grep '/cassandra:' | perl -ne '/^(\S+)\s/ && print $$1')
 .PHONY: git-add-cassandra-schema
-git-add-cassandra-schema: db-reset
-	( echo '-- automatically generated with `make git-add-cassandra-schema`' ; docker exec -i $(CASSANDRA_CONTAINER) /usr/bin/cqlsh -e "DESCRIBE schema;" ) > ./docs/reference/cassandra-schema.cql
-	git add ./docs/reference/cassandra-schema.cql
+git-add-cassandra-schema: db-migrate git-add-cassandra-schema-impl
+
+.PHONY: git-add-cassandra-schema-impl
+git-add-cassandra-schema-impl:
+	./hack/bin/cassandra_dump_schema > ./cassandra-schema.cql
+	git add ./cassandra-schema.cql
 
 .PHONY: cqlsh
 cqlsh:
+	$(eval CASSANDRA_CONTAINER := $(shell docker ps | grep '/cassandra:' | perl -ne '/^(\S+)\s/ && print $$1'))
 	@echo "make sure you have ./deploy/dockerephemeral/run.sh running in another window!"
 	docker exec -it $(CASSANDRA_CONTAINER) /usr/bin/cqlsh
 
+.PHONY: db-reset-package
+db-reset-package:
+	@echo "Deprecated! Please use 'db-reset' instead"
+	$(MAKE) db-reset package=$(package)
+
+.PHONY: db-migrate-package
+db-migrate-package:
+	@echo "Deprecated! Please use 'db-migrate' instead"
+	$(MAKE) db-migrate package=$(package)
+
+# Reset all keyspaces and reset the ES index
 .PHONY: db-reset
-db-reset:
-	@echo "make sure you have ./deploy/dockerephemeral/run.sh running in another window!"
-	make -C services/brig db-reset
-	make -C services/galley db-reset
-	make -C services/gundeck db-reset
-	make -C services/spar db-reset
+db-reset: c
+	@echo "Make sure you have ./deploy/dockerephemeral/run.sh running in another window!"
+	./dist/brig-schema --keyspace brig_test --replication-factor 1 --reset
+	./dist/galley-schema --keyspace galley_test --replication-factor 1 --reset
+	./dist/gundeck-schema --keyspace gundeck_test --replication-factor 1 --reset
+	./dist/spar-schema --keyspace spar_test --replication-factor 1 --reset
+	./dist/brig-schema --keyspace brig_test2 --replication-factor 1 --reset
+	./dist/galley-schema --keyspace galley_test2 --replication-factor 1 --reset
+	./dist/gundeck-schema --keyspace gundeck_test2 --replication-factor 1 --reset
+	./dist/spar-schema --keyspace spar_test2 --replication-factor 1 --reset
+	./integration/scripts/integration-dynamic-backends-db-schemas.sh --replication-factor 1 --reset
+	./dist/brig-index reset \
+		--elasticsearch-index-prefix directory \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
+	./dist/brig-index reset \
+		--elasticsearch-index-prefix directory2 \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
+	./integration/scripts/integration-dynamic-backends-brig-index.sh \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
+
+
+
+# Migrate all keyspaces and reset the ES index
+.PHONY: db-migrate
+db-migrate: c
+	./dist/brig-schema --keyspace brig_test --replication-factor 1 > /dev/null
+	./dist/galley-schema --keyspace galley_test --replication-factor 1 > /dev/null
+	./dist/gundeck-schema --keyspace gundeck_test --replication-factor 1 > /dev/null
+	./dist/spar-schema --keyspace spar_test --replication-factor 1 > /dev/null
+	./dist/brig-schema --keyspace brig_test2 --replication-factor 1 > /dev/null
+	./dist/galley-schema --keyspace galley_test2 --replication-factor 1 > /dev/null
+	./dist/gundeck-schema --keyspace gundeck_test2 --replication-factor 1 > /dev/null
+	./dist/spar-schema --keyspace spar_test2 --replication-factor 1 > /dev/null
+	./integration/scripts/integration-dynamic-backends-db-schemas.sh --replication-factor 1 > /dev/null
+	./dist/brig-index reset \
+		--elasticsearch-index-prefix directory \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
+	./dist/brig-index reset \
+		--elasticsearch-index-prefix directory2 \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
+	./integration/scripts/integration-dynamic-backends-brig-index.sh \
+		--elasticsearch-server https://localhost:9200 \
+	  --elasticsearch-ca-cert ./services/brig/test/resources/elasticsearch-ca.pem \
+		--elasticsearch-credentials ./services/brig/test/resources/elasticsearch-credentials.yaml > /dev/null
 
 #################################
 ## dependencies
 
 libzauth:
 	$(MAKE) -C libs/libzauth install
-
-#################################
-# Useful when using Haskell IDE Engine
-# https://github.com/haskell/haskell-ide-engine
-#
-# Run this again after changes to libraries or dependencies.
-.PHONY: hie.yaml
-hie.yaml:
-ifeq ($(WIRE_BUILD_WITH_CABAL), 1)
-	echo -e 'cradle:\n  cabal: {}' > hie.yaml
-else
-	cp stack.yaml stack-dev.yaml
-	echo -e '\n\nghc-options:\n "$$locals": -O0 -Wall -Werror' >> stack-dev.yaml
-	stack build implicit-hie
-	stack exec gen-hie | yq "{cradle: {stack: {stackYaml: \"./stack-dev.yaml\", components: .cradle.stack}}}" > hie.yaml
-endif
 
 #####################################
 # Today we pretend to be CI and run integration tests on kubernetes
@@ -297,34 +401,28 @@ kube-integration:  kube-integration-setup kube-integration-test
 
 .PHONY: kube-integration-setup
 kube-integration-setup: charts-integration
-	export NAMESPACE=$(NAMESPACE); ./hack/bin/integration-setup-federation.sh
+	export NAMESPACE=$(NAMESPACE); export HELM_PARALLELISM=$(HELM_PARALLELISM); ./hack/bin/integration-setup-federation.sh
 
 .PHONY: kube-integration-test
 kube-integration-test:
-	export NAMESPACE=$(NAMESPACE); ./hack/bin/integration-test.sh
+	export NAMESPACE=$(NAMESPACE); \
+	export HELM_PARALLELISM=$(HELM_PARALLELISM); \
+	export VERSION=${DOCKER_TAG}; \
+	export UPLOAD_LOGS=${UPLOAD_LOGS}; \
+	./hack/bin/integration-test.sh
 
 .PHONY: kube-integration-teardown
 kube-integration-teardown:
-	export NAMESPACE=$(NAMESPACE); ./hack/bin/integration-teardown-federation.sh
+	export NAMESPACE=$(NAMESPACE); export HELM_PARALLELISM=$(HELM_PARALLELISM); ./hack/bin/integration-teardown-federation.sh
 
 .PHONY: kube-integration-e2e-telepresence
 kube-integration-e2e-telepresence:
 	./services/brig/federation-tests.sh $(NAMESPACE)
 
-.PHONY: kube-integration-setup-sans-federation
-kube-integration-setup-sans-federation: guard-tag charts-integration
-	# by default "test-<your computer username> is used as namespace
-	# you can override the default by setting the NAMESPACE environment variable
-	export NAMESPACE=$(NAMESPACE); ./hack/bin/integration-setup.sh
-
-.PHONY: kube-integration-teardown-sans-federation
-kube-integration-teardown-sans-federation:
-	export NAMESPACE=$(NAMESPACE); ./hack/bin/integration-teardown.sh
-
 .PHONY: kube-restart-%
 kube-restart-%:
-	kubectl delete pod -n $(NAMESPACE) -l wireService=$(*)
-	kubectl delete pod -n $(NAMESPACE)-fed2 -l wireService=$(*)
+	kubectl delete pod -n $(NAMESPACE) -l app=$(*)
+	kubectl delete pod -n $(NAMESPACE)-fed2 -l app=$(*)
 
 .PHONY: latest-tag
 latest-tag:
@@ -372,6 +470,10 @@ charts-integration: $(foreach chartName,$(CHARTS_INTEGRATION),chart-$(chartName)
 charts-serve: charts-integration
 	./hack/bin/serve-charts.sh $(CHARTS_INTEGRATION)
 
+.PHONY: charts-serve-all
+charts-serve-all: $(foreach chartName,$(CHARTS_RELEASE),chart-$(chartName))
+	./hack/bin/serve-charts.sh $(CHARTS_RELEASE)
+
 # Usecase for this make target:
 # 1. for releases of helm charts
 # 2. for testing helm charts more generally
@@ -404,24 +506,6 @@ upload-charts: charts-release
 echo-release-charts:
 	@echo ${CHARTS_RELEASE}
 
-.PHONY: buildah-docker
-buildah-docker: buildah-docker-nginz
-	./hack/bin/buildah-compile.sh
-	BUILDAH_PUSH=${BUILDAH_PUSH} KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME} BUILDAH_KIND_LOAD=${BUILDAH_KIND_LOAD}  ./hack/bin/buildah-make-images.sh
-
-.PHONY: buildah-docker-nginz
-buildah-docker-nginz:
-	BUILDAH_PUSH=${BUILDAH_PUSH} KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME} BUILDAH_KIND_LOAD=${BUILDAH_KIND_LOAD}  ./hack/bin/buildah-make-images-nginz.sh
-
-.PHONY: buildah-docker-%
-buildah-docker-%:
-	./hack/bin/buildah-compile.sh $(*)
-	BUILDAH_PUSH=${BUILDAH_PUSH} EXECUTABLES=$(*) KIND_CLUSTER_NAME=${KIND_CLUSTER_NAME} BUILDAH_KIND_LOAD=${BUILDAH_KIND_LOAD} ./hack/bin/buildah-make-images.sh
-
-.PHONY: buildah-clean
-buildah-clean:
-	./hack/bin/buildah-clean.sh
-
 .PHONY: kind-cluster
 kind-cluster:
 	kind create cluster --name $(KIND_CLUSTER_NAME)
@@ -433,6 +517,14 @@ kind-delete:
 
 .PHONY: kind-reset
 kind-reset: kind-delete kind-cluster
+
+.PHONY: kind-upload-images
+kind-upload-images:
+	DOCKER_TAG=$(DOCKER_TAG) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) ./hack/bin/kind-upload-images.sh
+
+.PHONY: kind-upload-image
+kind-upload-image-%:
+	DOCKER_TAG=$(DOCKER_TAG) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) ./hack/bin/kind-upload-image.sh wireServer.imagesUnoptimizedNoDocs.$(*)
 
 .local/kind-kubeconfig:
 	mkdir -p $(CURDIR)/.local
@@ -464,6 +556,7 @@ guard-inotify:
 
 .PHONY: kind-integration-setup
 kind-integration-setup: guard-inotify .local/kind-kubeconfig
+	KUBECONFIG=$(CURDIR)/.local/kind-kubeconfig helmfile sync -f $(CURDIR)/hack/helmfile-federation-v0.yaml
 	HELMFILE_ENV="kind" KUBECONFIG=$(CURDIR)/.local/kind-kubeconfig make kube-integration-setup
 
 .PHONY: kind-integration-test
@@ -476,7 +569,7 @@ kind-integration-e2e: .local/kind-kubeconfig
 kind-restart-all: .local/kind-kubeconfig
 	export KUBECONFIG=$(CURDIR)/.local/kind-kubeconfig && \
 	kubectl delete pod -n $(NAMESPACE) -l release=$(NAMESPACE)-wire-server && \
-	kubectl delete pod -n $(NAMESPACE)-fed2 -l release=$(NAMESPACE)-fed2-wire-server
+	kubectl delete pod -n $(NAMESPACE)-fed2 -l release=$(NAMESPACE)-wire-server-2
 
 kind-restart-nginx-ingress: .local/kind-kubeconfig
 	export KUBECONFIG=$(CURDIR)/.local/kind-kubeconfig && \
@@ -485,8 +578,8 @@ kind-restart-nginx-ingress: .local/kind-kubeconfig
 
 kind-restart-%: .local/kind-kubeconfig
 	export KUBECONFIG=$(CURDIR)/.local/kind-kubeconfig && \
-	kubectl delete pod -n $(NAMESPACE) -l wireService=$(*) && \
-	kubectl delete pod -n $(NAMESPACE)-fed2 -l wireService=$(*)
+	kubectl delete pod -n $(NAMESPACE) -l app=$(*) && \
+	kubectl delete pod -n $(NAMESPACE)-fed2 -l app=$(*)
 
 # This target can be used to template a helm chart with values filled in from
 # hack/helm_vars (what CI uses) as overrrides, if available. This allows debugging helm
@@ -496,3 +589,24 @@ kind-restart-%: .local/kind-kubeconfig
 helm-template-%: clean-charts charts-integration
 	./hack/bin/helm-template.sh $(*)
 
+# Ask the security team for the `DEPENDENCY_TRACK_API_KEY` (if you need it)
+# changing the directory is necessary because of some quirkiness of how
+# runhaskell / ghci behaves (it doesn't find modules that aren't in the same
+# directory as the script that is being executed)
+.PHONY: upload-bombon
+upload-bombon:
+	cd ./hack/bin && ./bombon.hs -- \
+		--project-version $(HELM_SEMVER) \
+		--api-key $(DEPENDENCY_TRACK_API_KEY) \
+		--auto-create
+
+.PHONY: openapi-validate
+openapi-validate:
+	@echo -e "Make sure you are running the backend in another terminal (make cr)\n"
+	vacuum lint -a -d -e <(curl http://localhost:8082/v7/api/swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/cannon-swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/cargohold-swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/spar-swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/gundeck-swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/brig-swagger.json)
+	vacuum lint -a -d -e <(curl http://localhost:8082/api-internal/swagger-ui/galley-swagger.json)

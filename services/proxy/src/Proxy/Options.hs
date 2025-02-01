@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,7 +27,7 @@ module Proxy.Options
     logLevel,
     logNetStrings,
     logFormat,
-    mockOpts,
+    disabledAPIVersions,
   )
 where
 
@@ -33,7 +35,8 @@ import Control.Lens hiding (Level)
 import Data.Aeson
 import Data.Aeson.TH
 import Imports
-import System.Logger.Extended (Level (Debug), LogFormat)
+import System.Logger.Extended (Level, LogFormat)
+import Wire.API.Routes.Version
 
 data Opts = Opts
   { -- | Host to listen on
@@ -52,24 +55,11 @@ data Opts = Opts
     -- | Use netstrings encoding
     _logNetStrings :: !(Maybe (Last Bool)),
     -- | choose Encoding
-    _logFormat :: !(Maybe (Last LogFormat))
+    _logFormat :: !(Maybe (Last LogFormat)),
+    _disabledAPIVersions :: !(Set VersionExp)
   }
   deriving (Show, Generic)
 
 makeLenses ''Opts
 
 deriveJSON defaultOptions {fieldLabelModifier = drop 1} ''Opts
-
--- | for testing.
-mockOpts :: FilePath -> Opts
-mockOpts secrets =
-  Opts
-    { _host = mempty,
-      _port = 0,
-      _secretsConfig = secrets,
-      _httpPoolSize = 0,
-      _maxConns = 0,
-      _logLevel = Debug,
-      _logNetStrings = pure $ pure $ True,
-      _logFormat = mempty
-    }

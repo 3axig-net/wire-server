@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,10 +27,10 @@ module Galley.Effects.TeamMemberStore
 where
 
 import Data.Id
-import Galley.Effects.Paging
-import Galley.Types.Teams
 import Imports
 import Polysemy
+import Wire.API.Team.Member
+import Wire.Sem.Paging
 
 data TeamMemberStore p m a where
   ListTeamMembers ::

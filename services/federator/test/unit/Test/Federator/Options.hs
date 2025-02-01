@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,15 +22,10 @@
 module Test.Federator.Options where
 
 import Control.Exception (try)
-import Control.Lens
 import Data.Aeson (FromJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Char8 as B8
-import Data.ByteString.Lazy (toStrict)
-import Data.Domain (Domain (..), mkDomain)
+import Data.ByteString.Char8 qualified as B8
 import Data.String.Interpolate as QQ
-import qualified Data.Yaml as Yaml
-import Federator.Env
+import Data.Yaml qualified as Yaml
 import Federator.Options
 import Federator.Run
 import Imports
@@ -40,11 +35,11 @@ import Test.Tasty.HUnit
 defRunSettings :: FilePath -> FilePath -> RunSettings
 defRunSettings client key =
   RunSettings
-    { federationStrategy = AllowAll,
-      useSystemCAStore = True,
+    { useSystemCAStore = True,
       remoteCAStore = Nothing,
       clientCertificate = client,
       clientPrivateKey = key,
+      tcpConnectionTimeout = 1000,
       dnsHost = Nothing,
       dnsPort = Nothing
     }
@@ -56,36 +51,8 @@ tests :: TestTree
 tests =
   testGroup
     "Options"
-    [ parseFederationStrategy,
-      testSettings
+    [ testSettings
     ]
-
-parseFederationStrategy :: TestTree
-parseFederationStrategy =
-  testCase "parse FederationStrategy examples" $ do
-    assertParsesAs AllowAll $
-      "allowAll: null"
-    assertParsesAs (withAllowList []) $
-      "allowedDomains: []"
-    assertParsesAs (withAllowList ["test.org"]) . B8.pack $
-      [QQ.i|
-      allowedDomains:
-        - test.org|]
-    assertParsesAs (withAllowList ["example.com", "wire.com"]) . B8.pack $
-      [QQ.i|
-      allowedDomains:
-        - example.com
-        - wire.com|]
-    -- manual roundtrip example AllowAll
-    let allowA = toStrict $ Aeson.encode AllowAll
-    assertParsesAs AllowAll $ allowA
-    -- manual roundtrip example AllowList
-    let allowWire = (withAllowList ["wire.com"])
-    let allowedDom = toStrict $ Aeson.encode allowWire
-    assertParsesAs allowWire $ allowedDom
-  where
-    withAllowList =
-      AllowList . AllowedDomains . map (either error id . mkDomain)
 
 testSettings :: TestTree
 testSettings =
@@ -100,16 +67,13 @@ testSettings =
                   allowAll:
                 clientCertificate: client.pem
                 clientPrivateKey: client-key.pem
+                tcpConnectionTimeout: 1000
                 useSystemCAStore: true|]
           ),
       testCase "parse configuration example (closed federation)" $ do
         let settings =
               (defRunSettings "client.pem" "client-key.pem")
-                { federationStrategy =
-                    AllowList
-                      ( AllowedDomains [Domain "server2.example.com"]
-                      ),
-                  useSystemCAStore = False
+                { useSystemCAStore = False
                 }
         assertParsesAs settings . B8.pack $
           [QQ.i|
@@ -117,6 +81,7 @@ testSettings =
             allowedDomains:
               - server2.example.com
           useSystemCAStore: false
+          tcpConnectionTimeout: 1000
           clientCertificate: client.pem
           clientPrivateKey: client-key.pem|],
       testCase "succefully read client credentials" $ do
@@ -127,6 +92,7 @@ testSettings =
         assertParsesAs settings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null
           clientCertificate: test/resources/unit/localhost.pem
@@ -136,12 +102,14 @@ testSettings =
         assertParseFailure @RunSettings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null|],
       testCase "fail on missing client private key" $ do
         assertParseFailure @RunSettings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null
           clientCertificate: test/resources/unit/localhost.pem|],
@@ -149,6 +117,7 @@ testSettings =
         assertParseFailure @RunSettings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null
           clientPrivateKey: test/resources/unit/localhost-key.pem|],
@@ -157,6 +126,7 @@ testSettings =
         assertParsesAs settings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null
           clientCertificate: non-existent
@@ -167,32 +137,9 @@ testSettings =
             assertFailure $
               "expected invalid client certificate exception, got: "
                 <> show e
-          Right tlsSettings ->
-            assertFailure $
-              "expected failure for non-existing client certificate, got: "
-                <> show (tlsSettings ^. creds),
-      testCase "fail on invalid certificate" $ do
-        let settings =
-              defRunSettings
-                "test/resources/unit/invalid.pem"
-                "test/resources/unit/localhost-key.pem"
-        assertParsesAs settings . B8.pack $
-          [QQ.i|
-          useSystemCAStore: true
-          federationStrategy:
-            allowAll: null
-          clientCertificate: test/resources/unit/invalid.pem
-          clientPrivateKey: test/resources/unit/localhost-key.pem|]
-        try @FederationSetupError (mkTLSSettingsOrThrow settings) >>= \case
-          Left (InvalidClientCertificate _) -> pure ()
-          Left e ->
-            assertFailure $
-              "expected invalid client certificate exception, got: "
-                <> show e
-          Right tlsSettings ->
-            assertFailure $
-              "expected failure for invalid client certificate, got: "
-                <> show (tlsSettings ^. creds),
+          Right _ ->
+            assertFailure "expected failure for non-existing client certificate, got success",
+      testCase "failToStartWithInvalidServerCredentials" failToStartWithInvalidServerCredentials,
       testCase "fail on invalid private key" $ do
         let settings =
               defRunSettings
@@ -201,21 +148,47 @@ testSettings =
         assertParsesAs settings . B8.pack $
           [QQ.i|
           useSystemCAStore: true
+          tcpConnectionTimeout: 1000
           federationStrategy:
             allowAll: null
           clientCertificate: test/resources/unit/localhost.pem
           clientPrivateKey: test/resources/unit/invalid.pem|]
         try @FederationSetupError (mkTLSSettingsOrThrow settings) >>= \case
-          Left (InvalidClientCertificate _) -> pure ()
+          Left (InvalidClientPrivateKey _) -> pure ()
           Left e ->
             assertFailure $
               "expected invalid client certificate exception, got: "
                 <> show e
-          Right tlsSettings ->
-            assertFailure $
-              "expected failure for invalid private key, got: "
-                <> show (tlsSettings ^. creds)
+          Right _ ->
+            assertFailure "expected failure for invalid private key, got success"
     ]
+
+-- @SF.Federation @TSFI.Federate @S3 @S7
+--
+failToStartWithInvalidServerCredentials :: IO ()
+failToStartWithInvalidServerCredentials = do
+  let settings =
+        defRunSettings
+          "test/resources/unit/invalid.pem"
+          "test/resources/unit/localhost-key.pem"
+  assertParsesAs settings . B8.pack $
+    [QQ.i|
+          useSystemCAStore: true
+          tcpConnectionTimeout: 1000
+          federationStrategy:
+            allowAll: null
+          clientCertificate: test/resources/unit/invalid.pem
+          clientPrivateKey: test/resources/unit/localhost-key.pem|]
+  try @FederationSetupError (mkTLSSettingsOrThrow settings) >>= \case
+    Left (InvalidClientCertificate _) -> pure ()
+    Left e ->
+      assertFailure $
+        "expected invalid client certificate exception, got: "
+          <> show e
+    Right _ ->
+      assertFailure "expected failure for invalid client certificate, got success"
+
+-- @END
 
 assertParsesAs :: (HasCallStack, Eq a, FromJSON a, Show a) => a -> ByteString -> Assertion
 assertParsesAs v bs =

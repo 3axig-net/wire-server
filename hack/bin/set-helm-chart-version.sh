@@ -12,7 +12,7 @@ tempfile=$(mktemp)
 
 function update_chart(){
     chart_file=$1
-    sed -e "s/version: .*/version: $target_version/g" "$chart_file" > "$tempfile" && mv "$tempfile" "$chart_file"
+    sed -e "s/^version: .*/version: $target_version/g" "$chart_file" > "$tempfile" && mv "$tempfile" "$chart_file"
 }
 
 function write_versions() {
@@ -24,8 +24,7 @@ function write_versions() {
     # update all dependencies, if any
     if [ -a requirements.yaml ]; then
         sed -e "s/  version: \".*\"/  version: \"$target_version\"/g" requirements.yaml > "$tempfile" && mv "$tempfile" requirements.yaml
-        deps=( $(helm dependency list | grep -v NAME | awk '{print $1}') )
-        for dep in "${deps[@]}"; do
+        for dep in $(helm dependency list | grep -v NAME | awk '{print $1}'); do
             if [ -d "$CHARTS_DIR/$dep" ] && [ "$chart" != "$dep" ]; then
                 (cd "$CHARTS_DIR/$dep" && write_versions "$target_version")
             fi

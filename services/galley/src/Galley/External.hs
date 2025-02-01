@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,34 +25,46 @@ import Data.ByteString.Conversion.To
 import Data.Id
 import Data.Misc
 import Galley.Cassandra.Services
+import Galley.Cassandra.Util
 import Galley.Data.Services (BotMember, botMemId, botMemService)
 import Galley.Effects
 import Galley.Effects.ExternalAccess (ExternalAccess (..))
 import Galley.Env
 import Galley.Intra.User
 import Galley.Monad
-import Galley.Types (Event)
-import Galley.Types.Bot
 import Imports
-import qualified Network.HTTP.Client as Http
+import Network.HTTP.Client qualified as Http
 import Network.HTTP.Types.Method
 import Network.HTTP.Types.Status (status410)
 import Polysemy
 import Polysemy.Input
+import Polysemy.TinyLog
 import Ssl.Util (withVerifiedSslConnection)
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 import System.Logger.Message (field, msg, val, (~~))
 import URI.ByteString
 import UnliftIO (Async, async, waitCatch)
+import Wire.API.Bot.Service
+import Wire.API.Event.Conversation (Event)
+import Wire.API.Provider.Service (serviceRefId, serviceRefProvider)
 
 interpretExternalAccess ::
-  Members '[Embed IO, Input Env] r =>
+  ( Member (Embed IO) r,
+    Member (Input Env) r,
+    Member TinyLog r
+  ) =>
   Sem (ExternalAccess ': r) a ->
   Sem r a
 interpretExternalAccess = interpret $ \case
-  Deliver pp -> embedApp $ deliver (toList pp)
-  DeliverAsync pp -> embedApp $ deliverAsync (toList pp)
-  DeliverAndDeleteAsync cid pp -> embedApp $ deliverAndDeleteAsync cid (toList pp)
+  Deliver pp -> do
+    logEffect "ExternalAccess.Deliver"
+    embedApp $ deliver (toList pp)
+  DeliverAsync pp -> do
+    logEffect "ExternalAccess.DeliverAsync"
+    embedApp $ deliverAsync (toList pp)
+  DeliverAndDeleteAsync cid pp -> do
+    logEffect "ExternalAccess.DeliverAndDeleteAsync"
+    embedApp $ deliverAndDeleteAsync cid (toList pp)
 
 -- | Like deliver, but ignore orphaned bots and return immediately.
 --
@@ -72,10 +84,10 @@ deliver pp = mapM (async . exec) pp >>= foldM eval [] . zip (map fst pp)
     exec :: (BotMember, Event) -> App Bool
     exec (b, e) =
       lookupService (botMemService b) >>= \case
-        Nothing -> return False
+        Nothing -> pure False
         Just s -> do
           deliver1 s b e
-          return True
+          pure True
     eval :: [BotMember] -> (BotMember, Async Bool) -> App [BotMember]
     eval gone (b, a) = do
       let s = botMemService b
@@ -87,23 +99,23 @@ deliver pp = mapM (async . exec) pp >>= foldM eval [] . zip (map fst pp)
               ~~ field "service" (toByteString (s ^. serviceRefId))
               ~~ field "bot" (toByteString (botMemId b))
               ~~ msg (val "External delivery success")
-          return gone
+          pure gone
         Right False -> do
           Log.debug $
             field "provider" (toByteString (s ^. serviceRefProvider))
               ~~ field "service" (toByteString (s ^. serviceRefId))
               ~~ field "bot" (toByteString (botMemId b))
               ~~ msg (val "External service gone")
-          return (b : gone)
+          pure (b : gone)
         Left ex
           | Just (Http.HttpExceptionRequest _ (Http.StatusCodeException rs _)) <- fromException ex,
             Http.responseStatus rs == status410 -> do
-            Log.debug $
-              field "provider" (toByteString (s ^. serviceRefProvider))
-                ~~ field "service" (toByteString (s ^. serviceRefId))
-                ~~ field "bot" (toByteString (botMemId b))
-                ~~ msg (val "External bot gone")
-            return (b : gone)
+              Log.debug $
+                field "provider" (toByteString (s ^. serviceRefProvider))
+                  ~~ field "service" (toByteString (s ^. serviceRefId))
+                  ~~ field "bot" (toByteString (botMemId b))
+                  ~~ msg (val "External bot gone")
+              pure (b : gone)
         Left ex -> do
           Log.info $
             field "provider" (toByteString (s ^. serviceRefProvider))
@@ -111,30 +123,30 @@ deliver pp = mapM (async . exec) pp >>= foldM eval [] . zip (map fst pp)
               ~~ field "bot" (toByteString (botMemId b))
               ~~ field "error" (show ex)
               ~~ msg (val "External delivery failure")
-          return gone
+          pure gone
 
 -- Internal -------------------------------------------------------------------
 
 deliver1 :: Service -> BotMember -> Event -> App ()
 deliver1 s bm e
   | s ^. serviceEnabled = do
-    let t = toByteString' (s ^. serviceToken)
-    let u = s ^. serviceUrl
-    let b = botMemId bm
-    let HttpsUrl url = u
-    recovering x3 httpHandlers $
-      const $
-        sendMessage (s ^. serviceFingerprints) $
-          method POST
-            . maybe id host (urlHost u)
-            . maybe (port 443) port (urlPort u)
-            . paths [url ^. pathL, "bots", toByteString' b, "messages"]
-            . header "Authorization" ("Bearer " <> t)
-            . json e
-            . timeout 5000
-            . secure
-            . expect2xx
-  | otherwise = return ()
+      let t = toByteString' (s ^. serviceToken)
+      let u = s ^. serviceUrl
+      let b = botMemId bm
+      let HttpsUrl url = u
+      recovering x3 httpHandlers $
+        const $
+          sendMessage (s ^. serviceFingerprints) $
+            method POST
+              . maybe id host (urlHost u)
+              . maybe (port 443) port (urlPort u)
+              . paths [url ^. pathL, "bots", toByteString' b, "messages"]
+              . header "Authorization" ("Bearer " <> t)
+              . json e
+              . timeout 5000
+              . secure
+              . expect2xx
+  | otherwise = pure ()
 
 urlHost :: HttpsUrl -> Maybe ByteString
 urlHost (HttpsUrl u) = u ^. authorityL <&> view (authorityHostL . hostBSL)
@@ -143,13 +155,13 @@ urlPort :: HttpsUrl -> Maybe Word16
 urlPort (HttpsUrl u) = do
   a <- u ^. authorityL
   p <- a ^. authorityPortL
-  return (fromIntegral (p ^. portNumberL))
+  pure (fromIntegral (p ^. portNumberL))
 
 sendMessage :: [Fingerprint Rsa] -> (Request -> Request) -> App ()
 sendMessage fprs reqBuilder = do
   (man, verifyFingerprints) <- view (extEnv . extGetManager)
   liftIO . withVerifiedSslConnection (verifyFingerprints fprs) man reqBuilder $ \req ->
-    Http.withResponse req man (const $ return ())
+    Http.withResponse req man (const $ pure ())
 
 x3 :: RetryPolicy
 x3 = limitRetries 3 <> constantDelay 1000000

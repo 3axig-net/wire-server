@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,7 +18,7 @@
 module Test.Wire.API.Golden.Protobuf where
 
 import Imports
-import qualified Proto.Otr
+import Proto.Otr qualified
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Wire.API.Golden.Generated.QualifiedNewOtrMessage_user
@@ -56,6 +56,9 @@ tests =
             ),
             ( testObject_QualifiedNewOtrMessage_user_9,
               "testObject_QualifiedNewOtrMessage_user_9.protobuf"
+            ),
+            ( testObject_QualifiedNewOtrMessage_user_10,
+              "testObject_QualifiedNewOtrMessage_user_10.protobuf"
             ),
             ( testObject_QualifiedNewOtrMessage_user_11,
               "testObject_QualifiedNewOtrMessage_user_11.protobuf"

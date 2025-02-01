@@ -9,7 +9,7 @@ kind: StatefulSet
 metadata:
   name: cannon
   labels:
-    wireService: cannon
+    app: cannon
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -17,7 +17,7 @@ spec:
   serviceName: {{ .Values.service.name }}
   selector:
     matchLabels:
-      wireService: cannon
+      app: cannon
   replicas: {{ .Values.replicaCount }}
   updateStrategy:
     type: RollingUpdate
@@ -25,27 +25,103 @@ spec:
   template:
     metadata:
       labels:
-        wireService: cannon
+        app: cannon
         release: {{ .Release.Name }}
       annotations:
         checksum/configmap: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if .Values.service.nginz.enabled }}
+        checksum/nginz-configmap: {{ include (print .Template.BasePath "/nginz-configmap.yaml") . | sha256sum }}
+        {{- end }}
+        checksum/cassandra-secret: {{ include (print .Template.BasePath "/cassandra-secret.yaml") . | sha256sum }}
     spec:
-      terminationGracePeriodSeconds: {{ .Values.drainTimeout }} # should be higher than the sleep duration of preStop
+      terminationGracePeriodSeconds: {{ add .Values.config.drainOpts.gracePeriodSeconds 5 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cannon
       containers:
-      - name: cannon
-        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+      {{- if .Values.service.nginz.enabled }}
+      - name: nginz
+        image: "{{ .Values.nginzImage.repository }}:{{ .Values.nginzImage.tag }}"
+        imagePullPolicy: "{{ .Values.nginzImage.pullPolicy }}"
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+        securityContext:
+          {{- toYaml .Values.podSecurityContext | nindent 10 }}
+        {{- end }}
+        env:
+        # Any file changes to this path causes nginx to reload configs without
+        # restarting or breaking any connections.
+        - name: WATCH_PATHS
+          value: "/etc/wire/nginz/tls"
+        volumeMounts:
+        - name: nginz-config
+          mountPath: /etc/wire/nginz/conf
+          readOnly: true
+        - name: nginz-secrets
+          mountPath: /etc/wire/nginz/secrets
+          readOnly: true
+        - name: certificate
+          mountPath: /etc/wire/nginz/tls
+          readOnly: true
+        ports:
+        - name: https
+          containerPort: {{ .Values.service.nginz.internalPort }}
+        readinessProbe:
+          httpGet:
+            path: /status
+            port: {{ .Values.service.nginz.internalPort }}
+            scheme: HTTPS
+        livenessProbe:
+          initialDelaySeconds: 30
+          timeoutSeconds: 1
+          httpGet:
+            path: /status
+            port: {{ .Values.service.nginz.internalPort }}
+            scheme: HTTPS
         lifecycle:
           preStop:
-            # kubernetes by default immediately sends a SIGTERM to the container,
-            # which would cause cannon to exit, breaking existing websocket connections.
-            # Instead we sleep for a day. (SIGTERM is still sent, but after the preStop completes)
             exec:
-              command: ["sleep", {{ .Values.drainTimeout | quote }} ]
+              # kubernetes by default sends a SIGTERM to the container,
+              # which would cause nginz to exit, breaking existing websocket connections.
+              # Instead we terminate gracefully and sleep given grace period + 5 seconds.
+              # (SIGTERM is still sent, but afterwards)
+              command: ["sh", "-c", "nginx -c /etc/wire/nginz/conf/nginx.conf -s quit && sleep {{ add .Values.config.drainOpts.gracePeriodSeconds 5 }}"]
+        resources:
+{{ toYaml .Values.resources | indent 12 }}
+      {{- end }}
+      - name: cannon
+        env:
+        - name: RABBITMQ_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: cannon
+              key: rabbitmqUsername
+        - name: RABBITMQ_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cannon
+              key: rabbitmqPassword
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+        securityContext:
+          {{- toYaml .Values.podSecurityContext | nindent 10 }}
+        {{- end }}
         volumeMounts:
         - name: empty
           mountPath: /etc/wire/cannon/externalHost
         - name: cannon-config
           mountPath: /etc/wire/cannon/conf
+        {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+        - name: rabbitmq-ca
+          mountPath: "/etc/wire/cannon/rabbitmq-ca/"
+        {{- end }}
+        {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+        - name: "cannon-cassandra"
+          mountPath: "/etc/wire/cannon/cassandra"
+        {{- end }}
         ports:
         - name: http
           containerPort: {{ .Values.service.internalPort }}
@@ -65,7 +141,12 @@ spec:
 {{ toYaml .Values.resources | indent 12 }}
       initContainers:
       - name: cannon-configurator
-        image: alpine:3.13.1
+        image: alpine:3.18.2
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+        securityContext:
+          {{- toYaml .Values.podSecurityContext | nindent 10 }}
+          runAsUser: 65534
+        {{- end }}
         command:
         - /bin/sh
         args:
@@ -83,3 +164,24 @@ spec:
           name: cannon
       - name: empty
         emptyDir: {}
+      {{- if .Values.service.nginz.enabled }}
+      - name: nginz-config
+        configMap:
+          name: cannon-nginz
+      - name: nginz-secrets
+        secret:
+          secretName: cannon-nginz
+      - name: certificate
+        secret:
+          secretName: {{ .Values.service.nginz.tls.secretName }}
+      {{- end }}
+      {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+      - name: rabbitmq-ca
+        secret:
+          secretName: {{ .Values.config.rabbitmq.tlsCaSecretRef.name }}
+      {{- end }}
+      {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+      - name: "cannon-cassandra"
+        secret:
+          secretName: {{ (include "tlsSecretRef" .Values.config | fromYaml).name }}
+      {{- end }}

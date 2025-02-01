@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,62 +17,27 @@
 
 -- | See also: 'DomainsBlockedForRegistration'.
 module Galley.API.CustomBackend
-  ( getCustomBackendByDomainH,
-    internalPutCustomBackendByDomainH,
-    internalDeleteCustomBackendByDomainH,
+  ( getCustomBackendByDomain,
   )
 where
 
 import Data.Domain (Domain)
-import Galley.API.Error
-import Galley.API.Util
 import Galley.Effects.CustomBackendStore
-import Galley.Effects.WaiRoutes
-import Galley.Types
 import Imports hiding ((\\))
-import Network.HTTP.Types
-import Network.Wai
-import Network.Wai.Predicate hiding (Error, setStatus)
-import Network.Wai.Utilities hiding (Error)
 import Polysemy
-import Polysemy.Error
-import qualified Wire.API.CustomBackend as Public
+import Wire.API.CustomBackend qualified as Public
+import Wire.API.Error
+import Wire.API.Error.Galley
 
 -- PUBLIC ---------------------------------------------------------------------
 
-getCustomBackendByDomainH ::
-  Members
-    '[ CustomBackendStore,
-       Error CustomBackendError
-     ]
-    r =>
-  Domain ::: JSON ->
-  Sem r Response
-getCustomBackendByDomainH (domain ::: _) =
-  json <$> getCustomBackendByDomain domain
-
 getCustomBackendByDomain ::
-  Members '[CustomBackendStore, Error CustomBackendError] r =>
+  ( Member CustomBackendStore r,
+    Member (ErrorS 'CustomBackendNotFound) r
+  ) =>
   Domain ->
   Sem r Public.CustomBackend
 getCustomBackendByDomain domain =
   getCustomBackend domain >>= \case
-    Nothing -> throw (CustomBackendNotFound domain)
+    Nothing -> throwS @'CustomBackendNotFound
     Just customBackend -> pure customBackend
-
--- INTERNAL -------------------------------------------------------------------
-
-internalPutCustomBackendByDomainH ::
-  Members '[CustomBackendStore, WaiRoutes] r =>
-  Domain ::: JsonRequest CustomBackend ->
-  Sem r Response
-internalPutCustomBackendByDomainH (domain ::: req) = do
-  customBackend <- fromJsonBody req
-  -- simple enough to not need a separate function
-  setCustomBackend domain customBackend
-  pure (empty & setStatus status201)
-
-internalDeleteCustomBackendByDomainH :: Member CustomBackendStore r => Domain ::: JSON -> Sem r Response
-internalDeleteCustomBackendByDomainH (domain ::: _) = do
-  deleteCustomBackend domain
-  pure (empty & setStatus status200)

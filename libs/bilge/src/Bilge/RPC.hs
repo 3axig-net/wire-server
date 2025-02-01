@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,7 +23,6 @@ module Bilge.RPC
     RPCException (..),
     rpc,
     rpc',
-    statusCheck,
     parseResponse,
     rpcExceptionMsg,
   )
@@ -34,18 +33,19 @@ import Bilge.Request
 import Bilge.Response
 import Control.Error hiding (err)
 import Control.Monad.Catch (MonadCatch, MonadThrow (..), try)
-import Control.Monad.Except
 import Data.Aeson (FromJSON, eitherDecode')
 import Data.CaseInsensitive (original)
 import Data.Text.Lazy (pack)
+import Data.Text.Lazy qualified as T
 import Imports hiding (log)
-import qualified Network.HTTP.Client as HTTP
+import Network.HTTP.Client qualified as HTTP
 import System.Logger.Class
+import Wire.OpenTelemetry (withClientInstrumentation)
 
 class HasRequestId m where
   getRequestId :: m RequestId
 
-instance Monad m => HasRequestId (ReaderT RequestId m) where
+instance (Monad m) => HasRequestId (ReaderT RequestId m) where
   getRequestId = ask
 
 data RPCException = RPCException
@@ -71,7 +71,7 @@ instance Show RPCException where
       . showString "}"
 
 rpc ::
-  (MonadIO m, MonadCatch m, MonadHttp m, HasRequestId m) =>
+  (MonadUnliftIO m, MonadCatch m, MonadHttp m, HasRequestId m) =>
   LText ->
   (Request -> Request) ->
   m (Response (Maybe LByteString))
@@ -83,7 +83,7 @@ rpc sys = rpc' sys empty
 -- Note: 'syncIO' is wrapped around the IO action performing the request
 --       and any exceptions caught are re-thrown in an 'RPCException'.
 rpc' ::
-  (MonadIO m, MonadCatch m, MonadHttp m, HasRequestId m) =>
+  (MonadUnliftIO m, MonadCatch m, MonadHttp m, HasRequestId m) =>
   -- | A label for the remote system in case of 'RPCException's.
   LText ->
   Request ->
@@ -91,11 +91,12 @@ rpc' ::
   m (Response (Maybe LByteString))
 rpc' sys r f = do
   rId <- getRequestId
-  let rq = f . requestId rId $ r
-  res <- try $ httpLbs rq id
+  let rq = f $ requestId rId r
+  res <- try $ withClientInstrumentation ("intra-call-to-" <> T.toStrict sys) \k -> do
+    k rq \r' -> httpLbs r' id
   case res of
     Left x -> throwM $ RPCException sys rq x
-    Right x -> return x
+    Right x -> pure x
 
 rpcExceptionMsg :: RPCException -> Msg -> Msg
 rpcExceptionMsg (RPCException sys req ex) =
@@ -104,22 +105,11 @@ rpcExceptionMsg (RPCException sys req ex) =
     headers = foldr hdr id (HTTP.requestHeaders req)
     hdr (k, v) x = x ~~ original k .= v
 
-statusCheck ::
-  (MonadError e m, MonadIO m) =>
-  Int ->
-  (LText -> e) ->
-  Response (Maybe LByteString) ->
-  m ()
-statusCheck c f r =
-  unless (statusCode r == c) $
-    throwError $
-      f ("unexpected status code: " <> pack (show $ statusCode r))
-
 parseResponse ::
-  (Exception e, MonadThrow m, Monad m, FromJSON a) =>
+  (Exception e, MonadThrow m, FromJSON a) =>
   (LText -> e) ->
   Response (Maybe LByteString) ->
   m a
-parseResponse f r = either throwM return $ do
+parseResponse f r = either throwM pure $ do
   b <- note (f "no response body") (responseBody r)
   fmapL (f . pack) (eitherDecode' b)

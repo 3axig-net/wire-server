@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,27 +21,27 @@ module Main
 where
 
 import Imports
-import qualified Test.Federator.Client
-import qualified Test.Federator.ExternalServer
-import qualified Test.Federator.InternalServer
-import qualified Test.Federator.Monitor
-import qualified Test.Federator.Options
-import qualified Test.Federator.Remote
-import qualified Test.Federator.Response
-import qualified Test.Federator.Validation
+import OpenSSL (withOpenSSL)
+import Test.Federator.Client qualified
+import Test.Federator.ExternalServer qualified
+import Test.Federator.InternalServer qualified
+import Test.Federator.Monitor qualified
+import Test.Federator.Options qualified
+import Test.Federator.Remote qualified
+import Test.Federator.Validation qualified
 import Test.Tasty
 
 main :: IO ()
 main =
-  defaultMain $
-    testGroup
-      "Tests"
-      [ Test.Federator.Options.tests,
-        Test.Federator.Validation.tests,
-        Test.Federator.Client.tests,
-        Test.Federator.InternalServer.tests,
-        Test.Federator.ExternalServer.tests,
-        Test.Federator.Monitor.tests,
-        Test.Federator.Remote.tests,
-        Test.Federator.Response.tests
-      ]
+  withOpenSSL $
+    defaultMain $
+      testGroup
+        "Tests"
+        [ Test.Federator.Options.tests,
+          Test.Federator.Validation.tests,
+          Test.Federator.Client.tests,
+          Test.Federator.InternalServer.tests,
+          Test.Federator.ExternalServer.tests,
+          Test.Federator.Monitor.tests,
+          Test.Federator.Remote.tests
+        ]

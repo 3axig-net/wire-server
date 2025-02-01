@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,5 +30,5 @@ instance Cql Scope where
 
   toCql ReusableCode = CqlInt 1
 
-  fromCql (CqlInt 1) = return ReusableCode
+  fromCql (CqlInt 1) = pure ReusableCode
   fromCql _ = Left "unknown Scope"

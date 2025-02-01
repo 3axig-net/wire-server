@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,14 +27,15 @@ import Data.Id
 import Data.Qualified
 import Data.Range
 import Galley.Cassandra.Instances ()
-import Galley.Cassandra.Paging
-import qualified Galley.Cassandra.Queries as Cql
-import Galley.Cassandra.ResultSet
+import Galley.Cassandra.Queries qualified as Cql
 import Galley.Cassandra.Store
+import Galley.Cassandra.Util
 import Galley.Effects.ListItems
 import Imports hiding (max)
 import Polysemy
 import Polysemy.Input
+import Polysemy.TinyLog
+import Wire.Sem.Paging.Cassandra
 
 -- | Deprecated, use 'localConversationIdsPageFrom'
 conversationIdsFrom ::
@@ -66,22 +67,37 @@ remoteConversationIdsPageFrom usr pagingState max =
   uncurry toRemoteUnsafe <$$> paginateWithState Cql.selectUserRemoteConvs (paramsPagingState LocalQuorum (Identity usr) max pagingState)
 
 interpretConversationListToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (ListItems CassandraPaging ConvId ': r) a ->
   Sem r a
 interpretConversationListToCassandra = interpret $ \case
-  ListItems uid ps max -> embedClient $ localConversationIdsPageFrom uid ps max
+  ListItems uid ps max -> do
+    logEffect "ConversationList.ListItems"
+    embedClient $ localConversationIdsPageFrom uid ps max
 
 interpretRemoteConversationListToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (ListItems CassandraPaging (Remote ConvId) ': r) a ->
   Sem r a
 interpretRemoteConversationListToCassandra = interpret $ \case
-  ListItems uid ps max -> embedClient $ remoteConversationIdsPageFrom uid ps (fromRange max)
+  ListItems uid ps max -> do
+    logEffect "RemoteConversationList.ListItems"
+    embedClient $ remoteConversationIdsPageFrom uid ps (fromRange max)
 
 interpretLegacyConversationListToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (ListItems LegacyPaging ConvId ': r) a ->
   Sem r a
 interpretLegacyConversationListToCassandra = interpret $ \case
-  ListItems uid ps max -> embedClient $ conversationIdsFrom uid ps max
+  ListItems uid ps max -> do
+    logEffect "LegacyConversationList.ListItems"
+    embedClient $ conversationIdsFrom uid ps max

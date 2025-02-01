@@ -1,9 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,23 +33,28 @@ module Wire.API.Conversation.Role
     RoleName,
     fromRoleName,
     parseRoleName,
-    wireConvRoleNames,
     roleNameWireAdmin,
     roleNameWireMember,
 
     -- * Action
     Action (..),
+    SAction (..),
     Actions (..),
+    ActionName,
+    AddConversationMemberSym0,
+    RemoveConversationMemberSym0,
+    ModifyConversationNameSym0,
+    ModifyConversationMessageTimerSym0,
+    ModifyConversationReceiptModeSym0,
+    ModifyConversationAccessSym0,
+    ModifyOtherConversationMemberSym0,
+    LeaveConversationSym0,
+    DeleteConversationSym0,
 
     -- * helpers
     isValidRoleName,
     roleActions,
     toConvRole,
-
-    -- * Swagger
-    modelConversationRole,
-    modelConversationRolesList,
-    typeConversationRoleAction,
   )
 where
 
@@ -56,21 +62,64 @@ import Cassandra.CQL hiding (Set)
 import Control.Applicative (optional)
 import Control.Lens (at, (?~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
-import qualified Data.Aeson.TH as A
+import Data.Aeson qualified as A
+import Data.Aeson.TH qualified as A
 import Data.Attoparsec.Text
 import Data.ByteString.Conversion
 import Data.Hashable
-import Data.Proxy (Proxy (..))
+import Data.OpenApi qualified as S
 import Data.Range (fromRange, genRangeText)
 import Data.Schema
-import qualified Data.Set as Set
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
-import qualified Deriving.Swagger as S
+import Data.Set qualified as Set
+import Data.Singletons.TH
+import Deriving.Swagger qualified as S
+import GHC.TypeLits
 import Imports
-import qualified Test.QuickCheck as QC
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+import Test.QuickCheck qualified as QC
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+
+--------------------------------------------------------------------------------
+-- Action
+
+newtype Actions = Actions
+  { allowedActions :: Set Action
+  }
+  deriving stock (Eq, Show, Generic)
+  deriving newtype (Arbitrary)
+
+allActions :: Actions
+allActions = Actions $ Set.fromList [minBound .. maxBound]
+
+-- | These conversation-level permissions.  Analogous to the team-level permissions called
+-- 'Perm' (or 'Permissions').
+data Action
+  = AddConversationMember
+  | RemoveConversationMember
+  | ModifyConversationName
+  | ModifyConversationMessageTimer
+  | ModifyConversationReceiptMode
+  | ModifyConversationAccess
+  | ModifyOtherConversationMember
+  | LeaveConversation
+  | DeleteConversation
+  deriving stock (Eq, Ord, Show, Enum, Bounded, Generic)
+  deriving (Arbitrary) via (GenericUniform Action)
+  deriving (S.ToSchema) via (S.CustomSwagger '[S.ConstructorTagModifier S.CamelToSnake] Action)
+
+type family ActionName (a :: Action) :: Symbol where
+  ActionName 'AddConversationMember = "add_conversation_member"
+  ActionName 'RemoveConversationMember = "remove_conversation_member"
+  ActionName 'ModifyConversationName = "modify_conversation_name"
+  ActionName 'ModifyConversationMessageTimer = "modify_conversation_message_timer"
+  ActionName 'ModifyConversationReceiptMode = "modify_conversation_receipt_mode"
+  ActionName 'ModifyConversationAccess = "modify_conversation_access"
+  ActionName 'ModifyOtherConversationMember = "modify_other_conversation_member"
+  ActionName 'LeaveConversation = "leave_conversation"
+  ActionName 'DeleteConversation = "delete_conversation"
+
+A.deriveJSON A.defaultOptions {A.constructorTagModifier = A.camelTo2 '_'} ''Action
+
+$(genSingletons [''Action])
 
 --------------------------------------------------------------------------------
 -- Role
@@ -86,17 +135,6 @@ data ConversationRole
   | ConvRoleCustom RoleName Actions
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ConversationRole)
-
-modelConversationRole :: Doc.Model
-modelConversationRole = Doc.defineModel "ConversationRole" $ do
-  Doc.description "Conversation role"
-  Doc.property "conversation_role" Doc.string' $
-    Doc.description
-      "role name, between 2 and 128 chars, 'wire_' prefix \
-      \is reserved for roles designed by Wire (i.e., no \
-      \custom roles can have the same prefix)"
-  Doc.property "actions" (Doc.array typeConversationRoleAction) $
-    Doc.description "The set of actions allowed for this role"
 
 instance S.ToSchema ConversationRole where
   declareNamedSchema _ = do
@@ -137,8 +175,8 @@ instance FromJSON ConversationRole where
   parseJSON = A.withObject "conversationRole" $ \o -> do
     role <- o A..: "conversation_role"
     actions <- o A..: "actions"
-    case (toConvRole role (Just $ Actions actions)) of
-      Just cr -> return cr
+    case toConvRole role (Just $ Actions actions) of
+      Just cr -> pure cr
       Nothing -> fail ("Failed to parse: " ++ show o)
 
 toConvRole :: RoleName -> Maybe Actions -> Maybe ConversationRole
@@ -162,12 +200,6 @@ data ConversationRolesList = ConversationRolesList
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ConversationRolesList)
   deriving (S.ToSchema) via (S.CustomSwagger '[S.FieldLabelModifier (S.LabelMappings '["convRolesList" 'S.:-> "conversation_roles"])] ConversationRolesList)
-
-modelConversationRolesList :: Doc.Model
-modelConversationRolesList = Doc.defineModel "ConversationRolesList" $ do
-  Doc.description "list of roles allowed in the given conversation"
-  Doc.property "conversation_roles" (Doc.unique $ Doc.array (Doc.ref modelConversationRole)) $
-    Doc.description "the array of conversation roles"
 
 instance ToJSON ConversationRolesList where
   toJSON (ConversationRolesList r) =
@@ -202,7 +234,7 @@ instance ToSchema RoleName where
         \custom roles can have the same prefix)"
 
 instance FromByteString RoleName where
-  parser = parser >>= maybe (fail "Invalid RoleName") return . parseRoleName
+  parser = parser >>= maybe (fail "Invalid RoleName") pure . parseRoleName
 
 deriving instance Cql RoleName
 
@@ -212,9 +244,6 @@ instance Arbitrary RoleName where
       <$> genRangeText @2 @128 genChar
     where
       genChar = QC.elements $ ['a' .. 'z'] <> ['0' .. '9'] <> ['_']
-
-wireConvRoleNames :: [RoleName]
-wireConvRoleNames = [roleNameWireAdmin, roleNameWireMember]
 
 roleNameWireAdmin :: RoleName
 roleNameWireAdmin = RoleName "wire_admin"
@@ -238,48 +267,3 @@ isValidRoleName =
         *> count 126 (optional (satisfy chars))
         *> endOfInput
     chars = inClass "a-z0-9_"
-
---------------------------------------------------------------------------------
--- Action
-
-newtype Actions = Actions
-  { allowedActions :: Set Action
-  }
-  deriving stock (Eq, Show, Generic)
-  deriving newtype (Arbitrary)
-
-allActions :: Actions
-allActions = Actions $ Set.fromList [minBound .. maxBound]
-
--- | These conversation-level permissions.  Analogous to the team-level permissions called
--- 'Perm' (or 'Permissions').
-data Action
-  = AddConversationMember
-  | RemoveConversationMember
-  | ModifyConversationName
-  | ModifyConversationMessageTimer
-  | ModifyConversationReceiptMode
-  | ModifyConversationAccess
-  | ModifyOtherConversationMember
-  | LeaveConversation
-  | DeleteConversation
-  deriving stock (Eq, Ord, Show, Enum, Bounded, Generic)
-  deriving (Arbitrary) via (GenericUniform Action)
-  deriving (S.ToSchema) via (S.CustomSwagger '[S.ConstructorTagModifier S.CamelToSnake] Action)
-
-typeConversationRoleAction :: Doc.DataType
-typeConversationRoleAction =
-  Doc.string $
-    Doc.enum
-      [ "add_conversation_member",
-        "remove_conversation_member",
-        "modify_conversation_name",
-        "modify_conversation_message_timer",
-        "modify_conversation_receipt_mode",
-        "modify_conversation_access",
-        "modify_other_conversation_member",
-        "leave_conversation",
-        "delete_conversation"
-      ]
-
-A.deriveJSON A.defaultOptions {A.constructorTagModifier = A.camelTo2 '_'} ''Action

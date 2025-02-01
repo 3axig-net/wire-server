@@ -31,7 +31,7 @@ on a single type parameter).
 Although schemas cannot be composed as functions (i.e. they do not
 form a `Category`), they still admit a number of important and
 useful instances, such as `Profunctor` (and specifically `Choice`),
-which makes it possible to use prism quite effectively to build
+which makes it possible to use prisms quite effectively to build
 schema values.
 
 Using type variables to represent JSON types might seem like
@@ -45,8 +45,8 @@ structure of lists when using the `Applicative` interface of
 
 ## Tutorial
 
-To learn how to use `SchemaP` in practice, let us walk through two
-basic examples, one for a record, and one for a sum type.
+To learn how to use `SchemaP` in practice, let us walk through some
+basic examples, including records and sum types.
 
 ### Records
 
@@ -203,6 +203,56 @@ Finally, we add a name to the schema using the `named`
 combinator. This does nothing to the JSON encoding-decoding part of
 the schema, and only affects the documentation.
 
+### Bespoke instances (Untagged sum type with overlapping values)
+
+Sometimes we have specific types handled in very specific ways, requiring
+a highly customised instance.
+
+Here's an example of such a type. We can have either Seconds or Unlimited,
+with a caveat: 0 ~ Unlimited.
+
+(This examples has problems: it (a) breaks the law that `decode
+. encode == Just . id`, and (b) allows you to construct a value
+`FeatureTTLSeconds 0` to mean unlimited, which will probably break
+your application code.  So consider this a suggestion what
+schema-profunctor *allows* you to do, not what you *should* be doing.)
+
+``` haskell
+data FeatureTTL
+  = FeatureTTLSeconds Word
+  | FeatureTTLUnlimited
+  deriving stock (Eq, Show)
+
+instance ToSchema FeatureTTL where
+  schema = mkSchema ttlDoc toTTL fromTTL
+    where
+      ttlDoc :: NamedSwaggerDoc
+      ttlDoc = swaggerDoc @Word & S.schema . S.example ?~ "unlimited"
+
+      toTTL :: A.Value -> A.Parser FeatureTTL
+      toTTL v = parseUnlimited v <|> parseSeconds v
+
+      parseUnlimited :: A.Value -> A.Parser FeatureTTL
+      parseUnlimited =
+        A.withText "FeatureTTL" $
+          \t ->
+            if t == "unlimited"
+              then pure FeatureTTLUnlimited
+              else A.parseFail "Expected ''unlimited' or '0'."
+
+      parseSeconds :: A.Value -> A.Parser FeatureTTL
+      parseSeconds = A.withScientific "FeatureTTL" $
+        \s -> case toBoundedInteger s of
+          Just 0 -> pure FeatureTTLUnlimited
+          Just i -> pure $ FeatureTTLSeconds i
+          Nothing -> A.parseFail "Expected an integer."
+
+      fromTTL :: FeatureTTL -> Maybe A.Value
+      fromTTL FeatureTTLUnlimited = Just "unlimited"
+      fromTTL (FeatureTTLSeconds 0) = Just "unlimited"
+      fromTTL (FeatureTTLSeconds s) = Just $ A.toJSON s
+```
+
 ### Enumerations
 
 As a special case of sum types, we have *enumerations*, where every
@@ -345,9 +395,8 @@ represented on the Haskell side.
 
 ### Optional fields and default values
 
-To define a schema for a JSON object, there are multiple ways to deal
-with the serialisation of optional fields, which we will illustrate
-here.
+To define a schema for a JSON object, there are multiple ways to deal with the
+serialisation of optional fields, which we will illustrate here.
 
 The simplest (and most common) scenario is an optional field represented by a
 `Maybe` type, that is simply omitted from the generated JSON if it happens to
@@ -365,42 +414,48 @@ data User = User
 userSchema = object "User" $
   User
     <$> userName .= field "name" schema
-    <*> userHandle .= opt (field "handle" schema)
-    <*> userExpire .= opt (field "expire" schema)
+    <*> userHandle .= maybe_ (optField "handle" schema)
+    <*> userExpire .= maybe_ (optField "expire" schema)
 ```
 
-Here we apply the `opt` combinator to the optional field, to turn it from a
-schema for `Text` into a schema for `Maybe Text`. The parser for `userHandle`
-will return `Nothing` when the field is missing (or is `null`), and
-correspondingly the serialiser will not produce the field at all when its value
-is `Nothing`.
+Here we use `optField` to define schemas for optional fields, and apply the
+`maybe_` combinator to the result, which has the effect of making the
+serialiser omit the field when the corresponding value is `Nothing`.
+
+In detail, `optField "handle" schema` returns a schema from `Text` to `Maybe
+Text`, i.e. a schema that is able to parse an optional text value, but does not
+know how to serialise `Nothing`. Wrapping it in `maybe_` changes the first type
+to `Maybe Text`, and gives the serialiser the ability to serialise `Nothing` as
+well.
 
 Another possibility is a field that, when missing, is assumed to have a given
 default value. Most likely, in this case we do not want the field to be omitted
-when serialising. The schema can then be defined simply by using the
-`Alternative` instance of `SchemaP` to provide the default value:
+when serialising. Such a schema can be defined simply by omitting the call to
+`maybe_`, and instead converting a `Nothing` value coming from the parser into
+the desired default value.
 
 ```haskell
 userSchemaWithDefaultName :: ValueSchema NamedSwaggerDoc User
 userSchemaWithDefaultName =
   object "User" $
     User
-      <$> userName .= (field "name" schema <|> pure "")
-      <*> userHandle .= opt (field "handle" schema)
-      <*> userExpire .= opt (field "expire" schema)
+      <$> userName .= (fromMaybe "" <$> optField "name" schema)
+      <*> userHandle .= maybe_ (optField "handle" schema)
+      <*> userExpire .= maybe_ (optField "expire" schema)
 ```
 
-Now the `name` field is optional, and it is set to the empty string when missing.
-However, the field will still be present in the generated JSON when its value
-is the empty string. If we want the field to be omitted in that case, we can
-use the previous approach, and then convert back and forth from `Maybe Text`:
+Now the `name` field is optional, and it is set to the empty string when
+missing.  However, the field will still be present in the generated JSON when
+its value is the empty string. If we want the field to be omitted in that case,
+we can instead use the first approach, and manually convert back and forth from
+`Maybe Text`.
 
 ```haskell
 userSchemaWithDefaultName' :: ValueSchema NamedSwaggerDoc User
 userSchemaWithDefaultName' =
   object "User" $
     User
-      <$> (getOptText . userName) .= (fromMaybe "" <$> opt (field "name" schema))
+      <$> (getOptText . userName) .= maybe_ (fromMaybe "" <$> field "name" schema)
       <*> userHandle .= opt (field "handle" schema)
       <*> userExpire .= opt (field "expire" schema)
   where
@@ -416,60 +471,100 @@ techniques of the previous two examples:
 ```haskell
 userSchema' :: ValueSchema NamedSwaggerDoc User
 userSchema' = object "User" $ User
-  <$> field "name" schema
-  <*> lax (field "handle" (optWithDefault Aeson.null schema))
-  <*> opt (field "expire" schema)
+  <$> userName .= field "name" schema
+  <*> userHandle .= optField "handle" (maybeWithDefault Aeson.Null schema)
+  <*> userExpire .= opt (field "expire" schema)
 ```
 
 Two things to note here:
 
- - the `optWithDefault` combinator is applied to the schema value *inside*
- `field`, because the value to use if the value is `Nothing` (`Aeson.null` in
- this case) applies to the value of the field, and not the containing object.
- - we have wrapped the whole field inside a call to the `lax` combinator. All
- this does is to add a `pure Nothing` alternative for the field, which ensures
- we get a `Nothing` value (as opposed to a failure) when the field is not
- present at all in the JSON object.
+ - we are now using `maybeWithDefault` instead of `maybe_`. This is a more
+ general version of `maybe_` that takes as an argument the value to use when
+ serialising `Nothing`. Not that `maybe_` is simply `maybeWithDefault mempty`.
+ - the `maybeWithDefault` combinator is applied to the schema value *inside*
+ `field`, because the value to use when serialising `Nothing` (`Aeson.null` in
+ this case) applies to the value of the field, and not the containing
+ (one-field) object, as in the previous examples.
 
-One might wonder why we are using the special combinator `optWithDefault` here
+One might wonder why we are using the special combinator `optField` here
 instead of simply using the `Alternative` instance (via `optional` or
-directly). The reason is that the `Alternative` instance only really affects
-the parser (and its return type), whereas here we also want to encode the fact
-that the serialiser should output the default when the value of the field is
-`Nothing`. That means we need to also change the input type to a `Maybe`, which
-is what `opt` and `optWithDefault` do.
+directly), on the schema returned by the `field` combinator. The reason is that
+the `Alternative` instance would result in a slightly surprising behaviour in
+case of errors in the JSON value contained in a field.
 
-There is a subtlety here related to error messages, which can sometimes result
-in surprising behaviour when parsing optional fields with default values.
-Namely, given a field of the form
+For example, given a field of the form
 
 ```haskell
-opt (field "name" schema)
+optional (field "name" schema)
 ```
 
 the corresponding parser will return `Nothing` not only in the case where the
 `"name"` field is missing, but also if it is fails to parse correctly (for
 example, if it has an unexpected type).  This behaviour is caused by the fact
-that `opt` (and the `optWithDefault` / `lax` combo described above) are
-implemented in terms of the `Alternative` instance for `Aeson.Parser`, which
-cannot distinguish between "recoverable" and "unrecoverable" failures.
+that `optional` is implemented in terms of the `Alternative` instance for
+`Aeson.Parser`, which cannot distinguish between "recoverable" and
+"unrecoverable" failures.
 
-There are plans to improve on this behaviour in the future by directly changing
-the `Alternative` instance that `SchemaP` relies on, but for the moment, if
-this behaviour is not desirable, then one can use the ad-hoc `optField`
-combinator to introduce optional fields.
-
-For example, the above schema can be implemented using `optField` as follow:
+In some cases, this behaviour can be acceptable (or even desired), but in most
+circumstances, it is better to define the above schema using the dedicated
+`optField` combinator, as in:
 
 ```haskell
-userSchema'' :: ValueSchema NamedSwaggerDoc User
-userSchema'' = object "User" $ User
-  <$> field "name" schema
-  <*> optField "handle" (Just Aeson.Null) schema
-  <*> optField "expire" Nothing schema
+optField "name" schema
 ```
 
-The argument after the field name determines how the `Nothing` case is rendered in the generated JSON. If it is itself `Nothing`, that means that the field is completely omitted in that case.
+### Asymmetric types
+
+There might be a case where an asymmetry between the haskell type
+and the serialised type exists. In those cases, the following example might
+clarify usage.
+
+```haskell
+data AssocList
+  = AssocList { unList :: [Text] }
+
+instance ToSchema AssocList where
+  schema =
+    object "AssocList" $
+      AssocList
+        <$> unList .= field "elements" (array schema)
+        <* const (1 :: Int) .= field "version" schema
+```
+
+As you can see, we use a different name for our field between the two domains,
+but we also have a field that only exists in the serialised structure.
+
+For these cases we can take advantage of Applicative and use the
+left-side `<*` or right-side `*>` biased operators, depending in which direction
+we want the value to be added.
+
+### Transformations on intermediate values
+
+Sometimes a type on the Haskell side doesn't neatly translate to a type
+in the serialised side. For those cases, some transformations need apply.
+
+Transformations can be applied on either or both sides of the Schema.
+
+``` haskell
+
+data RecordField
+  = RecordField
+      { rfType :: SomeTypeOf Text
+      , rfValue :: Text
+      }
+
+instance ToSchema RecordField where
+  schema =
+    object "RecordField" $
+      RichField
+        <$> rfType .= field "type" (SomeTypeOf.unwrap .= (SomeTypeOf.wrap <$> schema))
+        <*> rfValue .= field "value" schema
+```
+
+Here a transformation is applied on the left side, `SomeTypeOf.unwrap` and on the
+right side as well, `SomeTimeOf.wrap`. If we remember that Schema is a profuctor,
+and as such, is contravariant on the first term but covariant on the second, by
+using `fmap` on one, and `lmap` (`.=`) on the other, we can compose it.
 
 ### Redundant fields
 

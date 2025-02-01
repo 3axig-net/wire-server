@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,9 +16,10 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.NewOtrMessage_user where
 
-import Data.Id (ClientId (ClientId, client))
+import Data.Id
 import GHC.Exts (IsList (fromList))
 import Imports (Bool (False, True), Maybe (Just, Nothing))
 import Wire.API.Message
@@ -31,7 +32,7 @@ import Wire.API.Message
 testObject_NewOtrMessage_user_1 :: NewOtrMessage
 testObject_NewOtrMessage_user_1 =
   NewOtrMessage
-    { newOtrSender = ClientId {client = "6"},
+    { newOtrSender = ClientId 6,
       newOtrRecipients = OtrRecipients {otrRecipientsMap = UserClientMap {userClientMap = fromList []}},
       newOtrNativePush = True,
       newOtrTransient = False,
@@ -43,7 +44,7 @@ testObject_NewOtrMessage_user_1 =
 testObject_NewOtrMessage_user_2 :: NewOtrMessage
 testObject_NewOtrMessage_user_2 =
   NewOtrMessage
-    { newOtrSender = ClientId {client = "6"},
+    { newOtrSender = ClientId 6,
       newOtrRecipients = OtrRecipients {otrRecipientsMap = UserClientMap {userClientMap = fromList []}},
       newOtrNativePush = True,
       newOtrTransient = False,

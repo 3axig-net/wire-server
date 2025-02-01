@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,12 +20,11 @@ module API.CustomBackend
   )
 where
 
+import API.Util
 import Bilge hiding (timeout)
 import Bilge.Assert
-import Control.Lens (view)
 import Data.Aeson hiding (json)
 import Data.Aeson.QQ (aesonQQ)
-import Data.String.Conversions (cs)
 import Imports
 import Test.Tasty
 import TestHelpers
@@ -35,8 +34,8 @@ tests :: IO TestSetup -> TestTree
 tests s =
   testGroup
     "Custom Backends"
-    [ test s "GET by-domain (404)" getByDomainNotFound,
-      test s "GET by-domain (400)" getByDomainInvalidDomain,
+    [ test s "GET by-domain - domain does not exist (404)" getByDomainNotFound,
+      test s "GET by-domain - domain invalid (404)" getByDomainInvalidDomain,
       test s "PUT, GET by-domain (200)" getByDomainFound,
       test s "PUT, DELETE, GET by-domain (404)" getByDomainDeleted,
       test s "domain is case-insensitive" getByDomainIsCaseInsensitive
@@ -44,22 +43,23 @@ tests s =
 
 getByDomainNotFound :: TestM ()
 getByDomainNotFound = do
-  galley <- view tsGalley
+  galley <- viewGalley
   get (galley . path "/custom-backend/by-domain/domain.no1") !!! do
     const 404 === statusCode
-    const ("domain.no1" :: ByteString) =~= (cs . fold . responseBody)
 
 getByDomainInvalidDomain :: TestM ()
 getByDomainInvalidDomain = do
-  galley <- view tsGalley
+  galley <- viewGalley
   -- contains invalid character '+'
+  -- this used to respond with '400 bad request'
+  -- but after servantification it returns '404 not found'
+  -- because the domain parameter is invalid and therefore the endpoint is invalid, too
   get (galley . path "/custom-backend/by-domain/invalid%2Bdomain") !!! do
-    const 400 === statusCode
-    const ("client-error" :: ByteString) =~= (cs . fold . responseBody)
+    const 404 === statusCode
 
 getByDomainFound :: TestM ()
 getByDomainFound = do
-  galley <- view tsGalley
+  galley <- viewGalley
   let jsonBody :: Value
       jsonBody =
         [aesonQQ|{
@@ -74,7 +74,7 @@ getByDomainFound = do
 
 getByDomainDeleted :: TestM ()
 getByDomainDeleted = do
-  galley <- view tsGalley
+  galley <- viewGalley
   let jsonBody :: Value
       jsonBody =
         [aesonQQ|{
@@ -87,11 +87,10 @@ getByDomainDeleted = do
     !!! const 200 === statusCode
   get (galley . path "/custom-backend/by-domain/domain.no3") !!! do
     const 404 === statusCode
-    const ("domain.no3" :: ByteString) =~= (cs . fold . responseBody)
 
 getByDomainIsCaseInsensitive :: TestM ()
 getByDomainIsCaseInsensitive = do
-  galley <- view tsGalley
+  galley <- viewGalley
   let jsonBody :: Value
       jsonBody =
         [aesonQQ|{

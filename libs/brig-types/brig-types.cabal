@@ -1,103 +1,156 @@
 cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 42d648b07cd5a5d45e2ca36fd4631c37047fc74aea88fce77073a3efa99327a2
-
-name:           brig-types
-version:        1.35.0
-synopsis:       User Service
-category:       Network
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2017 Wire Swiss GmbH
-license:        AGPL-3
-license-file:   LICENSE
-build-type:     Simple
+name:          brig-types
+version:       1.35.0
+synopsis:      User Service
+category:      Network
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2017 Wire Swiss GmbH
+license:       AGPL-3
+license-file:  LICENSE
+build-type:    Simple
 
 library
   exposed-modules:
-      Brig.Types
-      Brig.Types.Activation
-      Brig.Types.Calling
-      Brig.Types.Client
-      Brig.Types.Client.Prekey
-      Brig.Types.Code
-      Brig.Types.Common
-      Brig.Types.Connection
-      Brig.Types.Instances
-      Brig.Types.Intra
-      Brig.Types.Properties
-      Brig.Types.Provider
-      Brig.Types.Provider.External
-      Brig.Types.Provider.Tag
-      Brig.Types.Search
-      Brig.Types.Team
-      Brig.Types.Team.Invitation
-      Brig.Types.Team.LegalHold
-      Brig.Types.Test.Arbitrary
-      Brig.Types.User
-      Brig.Types.User.Auth
-      Brig.Types.User.Event
-  other-modules:
-      Paths_brig_types
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -funbox-strict-fields
+    Brig.Types.Activation
+    Brig.Types.Connection
+    Brig.Types.Instances
+    Brig.Types.Intra
+    Brig.Types.Provider.Tag
+    Brig.Types.Team
+    Brig.Types.Team.LegalHold
+    Brig.Types.Test.Arbitrary
+    Brig.Types.User
+
+  other-modules:      Paths_brig_types
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -funbox-strict-fields -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      QuickCheck >=2.9
-    , aeson >=0.11
-    , attoparsec >=0.10
-    , base ==4.*
-    , bytestring-conversion >=0.2
+      base                   >=4    && <5
+    , bytestring-conversion  >=0.2
     , cassandra-util
-    , containers >=0.5
-    , deriving-swagger2 >=0.1.0
+    , containers             >=0.5
     , imports
-    , servant-server >=0.18.2
-    , servant-swagger >=1.1.11
-    , string-conversions
-    , swagger2 >=2.5
-    , text >=0.11
-    , time >=1.1
-    , tinylog
-    , types-common >=0.16
-    , unordered-containers >=0.2
+    , QuickCheck             >=2.9
+    , types-common           >=0.16
     , wire-api
-  default-language: Haskell2010
+
+  default-language:   GHC2021
 
 test-suite brig-types-tests
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
   other-modules:
-      Test.Brig.Roundtrip
-      Test.Brig.Types.Common
-      Test.Brig.Types.Team
-      Test.Brig.Types.User
-      Paths_brig_types
-  hs-source-dirs:
-      test/unit
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -with-rtsopts=-N
+    Paths_brig_types
+    Test.Brig.Roundtrip
+    Test.Brig.Types.Common
+    Test.Brig.Types.Team
+    Test.Brig.Types.User
+
+  hs-source-dirs:     test/unit
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -with-rtsopts=-N -Wredundant-constraints
+    -Wunused-packages
+
   build-depends:
-      QuickCheck >=2.9
-    , aeson >=0.11
-    , attoparsec >=0.10
-    , base ==4.*
+      aeson             >=2.0.1.0
+    , base              >=4       && <5
     , brig-types
-    , bytestring-conversion >=0.3.1
-    , containers >=0.5
     , imports
-    , swagger2 >=2.5
+    , openapi3
+    , QuickCheck        >=2.9
     , tasty
     , tasty-quickcheck
-    , text >=0.11
-    , time >=1.1
-    , tinylog
-    , types-common >=0.16
-    , unordered-containers >=0.2
     , wire-api
-  default-language: Haskell2010
+
+  default-language:   GHC2021

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,12 +18,12 @@
 module Test.Wire.API.Call.Config where
 
 import Data.Aeson
-import qualified Data.HashMap.Strict as HM
+import Data.Aeson.KeyMap qualified as KeyMap
 import Imports
 import Test.Tasty
 import Test.Tasty.QuickCheck hiding (total)
-import Wire.API.Arbitrary ()
 import Wire.API.Call.Config (RTCConfiguration, TurnURI, isTcp, isTls, isUdp, limitServers)
+import Wire.Arbitrary ()
 
 tests :: TestTree
 tests =
@@ -54,21 +54,17 @@ fairnessProp predicate (ZeroToTen len, uris) = do
   let total = length (filter predicate uris)
       returned = length (filter predicate (limitServers uris len))
       expected_min = len `div` 3 -- 3 possible predicates
-  if total >= expected_min
-    then returned >= expected_min
-    else True
+  total < expected_min || returned >= expected_min
 
 udpPriority :: [TurnURI] -> Bool
 udpPriority uris = do
   let totalUdp = length (filter isUdp uris)
       returnedUdp = length (filter isUdp (limitServers uris 4))
-  if totalUdp >= 2
-    then returnedUdp >= 2
-    else True
+  totalUdp < 2 || returnedUdp >= 2
 
 sftServersAreNeverNull :: RTCConfiguration -> Bool
 sftServersAreNeverNull cfg = case toJSON cfg of
-  Object o -> HM.lookup "sft_servers" o /= Just Null
+  Object o -> KeyMap.lookup "sft_servers" o /= Just Null
   v -> error . show $ "type mismatch, expected RTCConfiguration to be Object, but got: " <> encode v
 
 newtype ZeroToTen = ZeroToTen Int

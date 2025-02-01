@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,7 +23,6 @@ module Network.Wai.Utilities.Error
     ErrorData (..),
     mkError,
     (!>>),
-    byteStringError,
   )
 where
 
@@ -31,7 +30,6 @@ import Control.Error
 import Data.Aeson hiding (Error)
 import Data.Aeson.Types (Pair)
 import Data.Domain
-import Data.Text.Lazy.Encoding (decodeUtf8)
 import Imports
 import Network.HTTP.Types
 
@@ -39,12 +37,13 @@ data Error = Error
   { code :: !Status,
     label :: !LText,
     message :: !LText,
-    errorData :: Maybe ErrorData
+    errorData :: Maybe ErrorData,
+    innerError :: Maybe Error
   }
-  deriving (Show, Typeable)
+  deriving (Eq, Show, Typeable)
 
 mkError :: Status -> LText -> LText -> Error
-mkError c l m = Error c l m Nothing
+mkError c l m = Error c l m Nothing Nothing
 
 instance Exception Error
 
@@ -52,11 +51,11 @@ data ErrorData = FederationErrorData
   { federrDomain :: !Domain,
     federrPath :: !Text
   }
-  deriving (Show, Typeable)
+  deriving (Eq, Show, Typeable)
 
 instance ToJSON ErrorData where
   toJSON (FederationErrorData d p) =
-    object
+    object $
       [ "type" .= ("federation" :: Text),
         "domain" .= d,
         "path" .= p
@@ -68,31 +67,30 @@ instance FromJSON ErrorData where
       <$> o .: "domain"
       <*> o .: "path"
 
--- | Assumes UTF-8 encoding.
-byteStringError :: Status -> LByteString -> LByteString -> Error
-byteStringError s l m = Error s (decodeUtf8 l) (decodeUtf8 m) Nothing
-
 instance ToJSON Error where
-  toJSON (Error c l m md) =
+  toJSON (Error c l m md inner) =
     object $
       [ "code" .= statusCode c,
         "label" .= l,
         "message" .= m
       ]
-        ++ fromMaybe [] (fmap dataFields md)
+        ++ maybe [] dataFields md
+        ++ ["inner" .= e | e <- toList inner]
     where
       dataFields :: ErrorData -> [Pair]
       dataFields d = ["data" .= d]
 
 instance FromJSON Error where
   parseJSON = withObject "Error" $ \o ->
-    Error <$> (toEnum <$> o .: "code")
+    Error
+      <$> (toEnum <$> o .: "code")
       <*> o .: "label"
       <*> o .: "message"
       <*> o .:? "data"
+      <*> o .:? "inner"
 
 -- FIXME: This should not live here.
 infixl 5 !>>
 
-(!>>) :: Monad m => ExceptT a m r -> (a -> b) -> ExceptT b m r
+(!>>) :: (Monad m) => ExceptT a m r -> (a -> b) -> ExceptT b m r
 (!>>) = flip fmapLT

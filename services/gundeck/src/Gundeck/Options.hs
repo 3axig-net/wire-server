@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,9 +25,11 @@ import Data.Aeson.TH
 import Data.Yaml (FromJSON)
 import Gundeck.Aws.Arn
 import Imports
+import Network.AMQP.Extended
 import System.Logger.Extended (Level, LogFormat)
 import Util.Options
 import Util.Options.Common
+import Wire.API.Routes.Version
 
 newtype NotificationTTL = NotificationTTL
   {notificationTTLSeconds :: Word32}
@@ -34,15 +37,15 @@ newtype NotificationTTL = NotificationTTL
 
 data AWSOpts = AWSOpts
   { -- | AWS account
-    _awsAccount :: !Account,
+    _account :: !Account,
     -- | AWS region name
-    _awsRegion :: !Region,
+    _region :: !Region,
     -- | Environment name to scope ARNs to
-    _awsArnEnv :: !ArnEnv,
+    _arnEnv :: !ArnEnv,
     -- | SQS queue name
-    _awsQueueName :: !Text,
-    _awsSqsEndpoint :: !AWSEndpoint,
-    _awsSnsEndpoint :: !AWSEndpoint
+    _queueName :: !Text,
+    _sqsEndpoint :: !AWSEndpoint,
+    _snsEndpoint :: !AWSEndpoint
   }
   deriving (Show, Generic)
 
@@ -52,18 +55,15 @@ makeLenses ''AWSOpts
 
 data Settings = Settings
   { -- | Number of connections to keep open in the http-client pool
-    _setHttpPoolSize :: !Int,
+    _httpPoolSize :: !Int,
     -- | TTL (seconds) of stored notifications
-    _setNotificationTTL :: !NotificationTTL,
-    -- | Use this option to group push notifications and send them in bulk to Cannon, instead
-    -- of in individual requests
-    _setBulkPush :: !Bool,
+    _notificationTTL :: !NotificationTTL,
     -- | Maximum number of concurrent threads calling SNS.
-    _setMaxConcurrentNativePushes :: !(Maybe MaxConcurrentNativePushes),
+    _maxConcurrentNativePushes :: !(Maybe MaxConcurrentNativePushes),
     -- | Maximum number of parallel requests to SNS and cassandra
     -- during native push processing (per incoming push request)
     -- defaults to unbounded, if unset.
-    _setPerNativePushConcurrency :: !(Maybe Int),
+    _perNativePushConcurrency :: !(Maybe Int),
     -- | The amount of time in milliseconds to wait after reading from an SQS queue
     -- returns no message, before asking for messages from SQS again.
     -- defaults to 'defSqsThrottleMillis'.
@@ -72,42 +72,79 @@ data Settings = Settings
     -- ensures that there is only one request every 20 seconds.
     -- However, that parameter is not honoured when using fake-sqs
     -- (where throttling can thus make sense)
-    _setSqsThrottleMillis :: !(Maybe Int)
+    _sqsThrottleMillis :: !(Maybe Int),
+    _disabledAPIVersions :: !(Set VersionExp),
+    -- | Maximum number of bytes loaded into memory when fetching (referenced) payloads.
+    -- Gundeck will return a truncated page if the whole page's payload sizes would exceed this limit in total.
+    -- Inlined payloads can cause greater payload sizes to be loaded into memory regardless of this setting.
+    _maxPayloadLoadSize :: Maybe Int32,
+    -- | Cassandra page size for fetching notifications. Does not directly
+    -- effect the page size request in the client API. A lower number will
+    -- reduce the amount by which setMaxPayloadLoadSize is exceeded when loading
+    -- notifications from the database if notifications have inlined payloads.
+    _internalPageSize :: Maybe Int32
   }
   deriving (Show, Generic)
 
 data MaxConcurrentNativePushes = MaxConcurrentNativePushes
   { -- | more than this number of threads will not be allowed
-    _limitHard :: !(Maybe Int),
+    _hard :: !(Maybe Int),
     -- | more than this number of threads will be warned about
-    _limitSoft :: !(Maybe Int)
+    _soft :: !(Maybe Int)
   }
   deriving (Show, Generic)
-
-deriveFromJSON toOptionFieldName ''Settings
-
-makeLenses ''Settings
 
 deriveFromJSON toOptionFieldName ''MaxConcurrentNativePushes
 
 makeLenses ''MaxConcurrentNativePushes
 
+data RedisConnectionMode
+  = Master
+  | Cluster
+  deriving (Show, Generic)
+
+deriveJSON defaultOptions {constructorTagModifier = map toLower} ''RedisConnectionMode
+
+data RedisEndpoint = RedisEndpoint
+  { _host :: !Text,
+    _port :: !Word16,
+    _connectionMode :: !RedisConnectionMode,
+    _enableTls :: !Bool,
+    -- | When not specified, use system CA bundle
+    _tlsCa :: !(Maybe FilePath),
+    -- | When 'True', uses TLS but does not verify hostname or CA or validity of
+    -- the cert. Not recommended to set to 'True'.
+    _insecureSkipVerifyTls :: !Bool
+  }
+  deriving (Show, Generic)
+
+deriveFromJSON toOptionFieldName ''RedisEndpoint
+
+makeLenses ''RedisEndpoint
+
+makeLenses ''Settings
+
+deriveFromJSON toOptionFieldName ''Settings
+
 data Opts = Opts
   { -- | Hostname and port to bind to
-    _optGundeck :: !Endpoint,
-    _optCassandra :: !CassandraOpts,
-    _optRedis :: !Endpoint,
-    _optAws :: !AWSOpts,
-    _optDiscoUrl :: !(Maybe Text),
-    _optSettings :: !Settings,
+    _gundeck :: !Endpoint,
+    _brig :: !Endpoint,
+    _cassandra :: !CassandraOpts,
+    _redis :: !RedisEndpoint,
+    _redisAdditionalWrite :: !(Maybe RedisEndpoint),
+    _aws :: !AWSOpts,
+    _rabbitmq :: !AmqpEndpoint,
+    _discoUrl :: !(Maybe Text),
+    _settings :: !Settings,
     -- Logging
 
     -- | Log level (Debug, Info, etc)
-    _optLogLevel :: !Level,
+    _logLevel :: !Level,
     -- | Use netstrings encoding:
     --   <http://cr.yp.to/proto/netstrings.txt>
-    _optLogNetStrings :: !(Maybe (Last Bool)),
-    _optLogFormat :: !(Maybe (Last LogFormat))
+    _logNetStrings :: !(Maybe (Last Bool)),
+    _logFormat :: !(Maybe (Last LogFormat))
   }
   deriving (Show, Generic)
 

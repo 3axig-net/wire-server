@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,6 +23,7 @@ module Wire.API.Conversation.Member
 
     -- * Member
     Member (..),
+    defMember,
     MutedStatus (..),
     OtherMember (..),
 
@@ -30,30 +31,23 @@ module Wire.API.Conversation.Member
     MemberUpdate (..),
     memberUpdate,
     OtherMemberUpdate (..),
-
-    -- * Swagger
-    modelConversationMembers,
-    modelOtherMember,
-    modelMember,
-    modelMemberUpdate,
-    modelOtherMemberUpdate,
   )
 where
 
 import Control.Applicative
 import Control.Lens ((?~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Id
+import Data.OpenApi (deprecated)
+import Data.OpenApi qualified as S
 import Data.Qualified
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
 import Imports
-import qualified Test.QuickCheck as QC
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+import Test.QuickCheck qualified as QC
 import Wire.API.Conversation.Role
-import Wire.API.Provider.Service (ServiceRef, modelServiceRef)
+import Wire.API.Provider.Service (ServiceRef)
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 data ConvMembers = ConvMembers
   { cmSelf :: Member,
@@ -78,14 +72,6 @@ instance ToSchema ConvMembers where
             (description ?~ "All other current users of this conversation")
             (array schema)
 
-modelConversationMembers :: Doc.Model
-modelConversationMembers = Doc.defineModel "ConversationMembers" $ do
-  Doc.description "Object representing users of a conversation."
-  Doc.property "self" (Doc.ref modelMember) $
-    Doc.description "The user ID of the requestor"
-  Doc.property "others" (Doc.unique (Doc.array (Doc.ref modelOtherMember))) $
-    Doc.description "All other current users of this conversation"
-
 --------------------------------------------------------------------------------
 -- Members
 
@@ -104,6 +90,20 @@ data Member = Member
   deriving (Arbitrary) via (GenericUniform Member)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema Member
 
+defMember :: Qualified UserId -> Member
+defMember uid =
+  Member
+    { memId = uid,
+      memService = Nothing,
+      memOtrMutedStatus = Nothing,
+      memOtrMutedRef = Nothing,
+      memOtrArchived = False,
+      memOtrArchivedRef = Nothing,
+      memHidden = False,
+      memHiddenRef = Nothing,
+      memConvRoleName = roleNameWireMember
+    }
+
 instance ToSchema Member where
   schema =
     object "Member" $
@@ -111,7 +111,7 @@ instance ToSchema Member where
         <$> memId .= field "qualified_id" schema
         <* (qUnqualified . memId)
           .= optional (field "id" (deprecatedSchema "qualified_id" schema))
-        <*> memService .= lax (field "service" (optWithDefault A.Null schema))
+        <*> memService .= optField "service" (maybeWithDefault A.Null schema)
         --  Remove ...
         <* const () .= optional (field "status" (c (0 :: Int)))
         <* const () .= optional (field "status_ref" (c ("0.0" :: Text)))
@@ -122,39 +122,16 @@ instance ToSchema Member where
                 (c ("1970-01-01T00:00:00.000Z" :: Text))
             )
         -- ... until here
-        <*> memOtrMutedStatus .= lax (field "otr_muted_status" (optWithDefault A.Null schema))
-        <*> memOtrMutedRef .= lax (field "otr_muted_ref" (optWithDefault A.Null schema))
-        <*> memOtrArchived .= (field "otr_archived" schema <|> pure False)
-        <*> memOtrArchivedRef .= lax (field "otr_archived_ref" (optWithDefault A.Null schema))
+        <*> memOtrMutedStatus .= optField "otr_muted_status" (maybeWithDefault A.Null schema)
+        <*> memOtrMutedRef .= optField "otr_muted_ref" (maybeWithDefault A.Null schema)
+        <*> memOtrArchived .= (fromMaybe False <$> optField "otr_archived" schema)
+        <*> memOtrArchivedRef .= optField "otr_archived_ref" (maybeWithDefault A.Null schema)
         <*> memHidden .= (field "hidden" schema <|> pure False)
-        <*> memHiddenRef .= lax (field "hidden_ref" (optWithDefault A.Null schema))
-        <*> memConvRoleName .= (field "conversation_role" schema <|> pure roleNameWireAdmin)
+        <*> memHiddenRef .= optField "hidden_ref" (maybeWithDefault A.Null schema)
+        <*> memConvRoleName .= (fromMaybe roleNameWireAdmin <$> optField "conversation_role" schema)
     where
-      c :: ToJSON a => a -> ValueSchema SwaggerDoc ()
+      c :: (ToJSON a) => a -> ValueSchema SwaggerDoc ()
       c val = mkSchema mempty (const (pure ())) (const (pure (toJSON val)))
-
-modelMember :: Doc.Model
-modelMember = Doc.defineModel "Member" $ do
-  Doc.property "id" Doc.bytes' $
-    Doc.description "User ID"
-  Doc.property "otr_muted_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)muting"
-    Doc.optional
-  Doc.property "otr_archived" Doc.bool' $ do
-    Doc.description "Whether the conversation is archived"
-    Doc.optional
-  Doc.property "otr_archived_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)archiving"
-    Doc.optional
-  Doc.property "hidden" Doc.bool' $ do
-    Doc.description "Whether the conversation is hidden"
-    Doc.optional
-  Doc.property "hidden_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)hiding"
-    Doc.optional
-  Doc.property "service" (Doc.ref modelServiceRef) $ do
-    Doc.description "The reference to the owning service, if the member is a 'bot'."
-    Doc.optional
 
 -- | The semantics of the possible different values is entirely up to clients,
 -- the server will not interpret this value in any way.
@@ -178,22 +155,14 @@ instance ToSchema OtherMember where
       OtherMember
         <$> omQualifiedId .= field "qualified_id" schema
         <* (qUnqualified . omQualifiedId) .= optional (field "id" schema)
-        <*> omService .= opt (fieldWithDocModifier "service" (description ?~ desc) schema)
+        <*> omService .= maybe_ (optFieldWithDocModifier "service" (description ?~ desc) schema)
         <*> omConvRoleName .= (field "conversation_role" schema <|> pure roleNameWireAdmin)
-        <* const (0 :: Int) .= optional (fieldWithDocModifier "status" (description ?~ "deprecated") schema) -- TODO: remove
+        <* const (0 :: Int) .= optional (fieldWithDocModifier "status" ((deprecated ?~ True) . (description ?~ "deprecated")) schema) -- TODO: remove
     where
       desc = "The reference to the owning service, if the member is a 'bot'."
 
 instance Ord OtherMember where
   compare a b = compare (omQualifiedId a) (omQualifiedId b)
-
-modelOtherMember :: Doc.Model
-modelOtherMember = Doc.defineModel "OtherMember" $ do
-  Doc.property "id" Doc.bytes' $
-    Doc.description "User ID"
-  Doc.property "service" (Doc.ref modelServiceRef) $ do
-    Doc.description "The reference to the owning service, if the member is a 'bot'."
-    Doc.optional
 
 --------------------------------------------------------------------------------
 -- Member Updates
@@ -214,36 +183,17 @@ data MemberUpdate = MemberUpdate
 memberUpdate :: MemberUpdate
 memberUpdate = MemberUpdate Nothing Nothing Nothing Nothing Nothing Nothing
 
-modelMemberUpdate :: Doc.Model
-modelMemberUpdate = Doc.defineModel "MemberUpdate" $ do
-  Doc.description "Update user properties relative to a conversation"
-  Doc.property "otr_muted_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)muting"
-    Doc.optional
-  Doc.property "otr_archived" Doc.bool' $ do
-    Doc.description "Whether to notify on conversation updates"
-    Doc.optional
-  Doc.property "otr_archived_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)archiving"
-    Doc.optional
-  Doc.property "hidden" Doc.bool' $ do
-    Doc.description "Whether the conversation is hidden"
-    Doc.optional
-  Doc.property "hidden_ref" Doc.bytes' $ do
-    Doc.description "A reference point for (un)hiding"
-    Doc.optional
-
 instance ToSchema MemberUpdate where
   schema =
     (`withParser` (either fail pure . validateMemberUpdate))
       . object "MemberUpdate"
       $ MemberUpdate
-        <$> mupOtrMuteStatus .= opt (field "otr_muted_status" schema)
-        <*> mupOtrMuteRef .= opt (field "otr_muted_ref" schema)
-        <*> mupOtrArchive .= opt (field "otr_archived" schema)
-        <*> mupOtrArchiveRef .= opt (field "otr_archived_ref" schema)
-        <*> mupHidden .= opt (field "hidden" schema)
-        <*> mupHiddenRef .= opt (field "hidden_ref" schema)
+        <$> mupOtrMuteStatus .= maybe_ (optField "otr_muted_status" schema)
+        <*> mupOtrMuteRef .= maybe_ (optField "otr_muted_ref" schema)
+        <*> mupOtrArchive .= maybe_ (optField "otr_archived" schema)
+        <*> mupOtrArchiveRef .= maybe_ (optField "otr_archived_ref" schema)
+        <*> mupHidden .= maybe_ (optField "hidden" schema)
+        <*> mupHiddenRef .= maybe_ (optField "hidden_ref" schema)
 
 instance Arbitrary MemberUpdate where
   arbitrary =
@@ -252,13 +202,12 @@ instance Arbitrary MemberUpdate where
 
 validateMemberUpdate :: MemberUpdate -> Either String MemberUpdate
 validateMemberUpdate u =
-  if ( isJust (mupOtrMuteStatus u)
-         || isJust (mupOtrMuteRef u)
-         || isJust (mupOtrArchive u)
-         || isJust (mupOtrArchiveRef u)
-         || isJust (mupHidden u)
-         || isJust (mupHiddenRef u)
-     )
+  if isJust (mupOtrMuteStatus u)
+    || isJust (mupOtrMuteRef u)
+    || isJust (mupOtrArchive u)
+    || isJust (mupOtrArchiveRef u)
+    || isJust (mupHidden u)
+    || isJust (mupHiddenRef u)
     then Right u
     else
       Left
@@ -273,13 +222,6 @@ data OtherMemberUpdate = OtherMemberUpdate
   deriving stock (Eq, Show, Generic)
   deriving (FromJSON, ToJSON, S.ToSchema) via (Schema OtherMemberUpdate)
 
-modelOtherMemberUpdate :: Doc.Model
-modelOtherMemberUpdate = Doc.defineModel "otherMemberUpdate" $ do
-  Doc.description "Update user properties of other members relative to a conversation"
-  Doc.property "conversation_role" Doc.string' $ do
-    Doc.description "Name of the conversation role updated to"
-    Doc.optional
-
 instance Arbitrary OtherMemberUpdate where
   arbitrary = OtherMemberUpdate . Just <$> arbitrary
 
@@ -290,7 +232,7 @@ instance ToSchema OtherMemberUpdate where
         "OtherMemberUpdate"
         (description ?~ "Update user properties of other members relative to a conversation")
       $ OtherMemberUpdate
-        <$> omuConvRoleName .= optField "conversation_role" Nothing schema
+        <$> omuConvRoleName .= maybe_ (optField "conversation_role" schema)
 
 validateOtherMemberUpdate :: OtherMemberUpdate -> Either String OtherMemberUpdate
 validateOtherMemberUpdate u

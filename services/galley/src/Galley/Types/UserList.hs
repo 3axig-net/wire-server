@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,6 +20,9 @@ module Galley.Types.UserList
     toUserList,
     ulAddLocal,
     ulAll,
+    ulFromLocals,
+    ulFromRemotes,
+    ulDiff,
   )
 where
 
@@ -31,7 +34,7 @@ data UserList a = UserList
   { ulLocals :: [a],
     ulRemotes :: [Remote a]
   }
-  deriving (Functor, Foldable, Traversable)
+  deriving (Show, Functor, Foldable, Traversable)
 
 instance Semigroup (UserList a) where
   UserList locals1 remotes1 <> UserList locals2 remotes2 =
@@ -40,11 +43,24 @@ instance Semigroup (UserList a) where
 instance Monoid (UserList a) where
   mempty = UserList mempty mempty
 
-toUserList :: Foldable f => Local x -> f (Qualified a) -> UserList a
+toUserList :: (Foldable f) => Local x -> f (Qualified a) -> UserList a
 toUserList loc = uncurry UserList . partitionQualified loc
 
 ulAddLocal :: a -> UserList a -> UserList a
 ulAddLocal x ul = ul {ulLocals = x : ulLocals ul}
 
 ulAll :: Local x -> UserList a -> [Qualified a]
-ulAll loc ul = map (qUntagged . qualifyAs loc) (ulLocals ul) <> map qUntagged (ulRemotes ul)
+ulAll loc ul = map (tUntagged . qualifyAs loc) (ulLocals ul) <> map tUntagged (ulRemotes ul)
+
+ulFromLocals :: [a] -> UserList a
+ulFromLocals = flip UserList []
+
+ulFromRemotes :: [Remote a] -> UserList a
+ulFromRemotes = UserList []
+
+-- | Remove from the first list all the users that are in the second list.
+ulDiff :: (Eq a) => UserList a -> UserList a -> UserList a
+ulDiff (UserList lA rA) (UserList lB rB) =
+  UserList
+    (filter (`notElem` lB) lA)
+    (filter (`notElem` rB) rA)

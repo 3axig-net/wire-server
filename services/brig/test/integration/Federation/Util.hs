@@ -1,12 +1,11 @@
 {-# LANGUAGE PartialTypeSignatures #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,35 +24,37 @@ module Federation.Util where
 
 import Bilge
 import Bilge.Assert ((!!!), (<!!), (===))
-import qualified Brig.Options as Opt
-import Brig.Types
-import qualified Control.Concurrent.Async as Async
+import Brig.Options qualified as Opt
+import Control.Concurrent.Async qualified as Async
 import Control.Exception (finally, throwIO)
 import Control.Lens ((.~), (?~), (^.))
 import Control.Monad.Catch (MonadCatch, MonadThrow, bracket, try)
 import Control.Monad.Trans.Except
 import Control.Retry
 import Data.Aeson (FromJSON, Value, decode, (.=))
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
+import Data.ByteString qualified as BS
 import Data.ByteString.Conversion (toByteString')
+import Data.Default
 import Data.Domain (Domain (Domain))
 import Data.Handle (fromHandle)
 import Data.Id
-import qualified Data.Map.Strict as Map
+import Data.Map.Strict qualified as Map
 import Data.Qualified (Qualified (..))
-import Data.String.Conversions (cs)
-import qualified Data.Text as Text
-import qualified Database.Bloodhound as ES
-import qualified Federator.MockServer as Mock
+import Data.Text qualified as T
+import Data.Text qualified as Text
+import Database.Bloodhound qualified as ES
+import Federator.MockServer qualified as Mock
 import Foreign.C.Error (Errno (..), eCONNREFUSED)
 import GHC.IO.Exception (IOException (ioe_errno))
-import qualified Galley.Types.Teams.SearchVisibility as Team
 import Imports
-import qualified Network.HTTP.Client as HTTP
+import Network.HTTP.Client qualified as HTTP
+import Network.HTTP.Media
 import Network.Socket
 import Network.Wai.Handler.Warp (Port)
 import Network.Wai.Test (Session)
-import qualified Network.Wai.Test as WaiTest
+import Network.Wai.Test qualified as WaiTest
+import System.FilePath
 import Test.QuickCheck (Arbitrary (arbitrary), generate)
 import Test.Tasty
 import Test.Tasty.HUnit
@@ -61,10 +62,17 @@ import Text.RawString.QQ (r)
 import UnliftIO (Concurrently (..), runConcurrently)
 import Util
 import Util.Options (Endpoint (Endpoint))
+import Wire.API.Connection
 import Wire.API.Conversation (Conversation (cnvMembers))
 import Wire.API.Conversation.Member (OtherMember (OtherMember), cmOthers)
 import Wire.API.Conversation.Role (roleNameWireAdmin)
-import Wire.API.Team.Feature (TeamFeatureStatusValue (..))
+import Wire.API.MLS.CommitBundle
+import Wire.API.MLS.Message
+import Wire.API.MLS.Serialisation
+import Wire.API.Team.Feature (FeatureStatus (..))
+import Wire.API.User
+import Wire.API.User.Client
+import Wire.API.User.Client.Prekey
 
 -- | Starts a server which will return the bytestring passed to this
 -- function, and makes the action passed to this function run in a modified brig
@@ -72,8 +80,7 @@ import Wire.API.Team.Feature (TeamFeatureStatusValue (..))
 withTempMockFederator :: Opt.Opts -> LByteString -> Session a -> IO (a, [Mock.FederatedRequest])
 withTempMockFederator opts resp action =
   Mock.withTempMockFederator
-    [("Content-Type", "application/json")]
-    (const (pure resp))
+    def {Mock.handler = const (pure ("application" // "json", resp))}
     $ \mockPort -> do
       let opts' =
             opts
@@ -90,9 +97,6 @@ generateClientPrekeys brig prekeys = do
       mkClientPrekey (pk, _) c = ClientPrekey (clientId c) pk
   clients <- traverse (responseJsonError <=< addClient brig (qUnqualified quser)) nclients
   pure (quser, zipWith mkClientPrekey prekeys clients)
-
-assertRightT :: (MonadIO m, Show a, HasCallStack) => ExceptT a m b -> m b
-assertRightT = assertRight <=< runExceptT
 
 getConvQualified :: Galley -> UserId -> Qualified ConvId -> Http ResponseLBS
 getConvQualified g u (Qualified cnvId domain) =

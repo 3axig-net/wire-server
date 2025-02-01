@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,23 +21,15 @@
 module Wire.API.User.Profile
   ( Name (..),
     mkName,
+    TextStatus,
+    mkTextStatus,
+    fromTextStatus,
     ColourId (..),
     defaultAccentId,
 
     -- * Asset
     Asset (..),
     AssetSize (..),
-
-    -- * Locale
-    Locale (..),
-    locToText,
-    parseLocale,
-    Language (..),
-    lan2Text,
-    parseLanguage,
-    Country (..),
-    con2Text,
-    parseCountry,
 
     -- * ManagedBy
     ManagedBy (..),
@@ -46,38 +38,27 @@ module Wire.API.User.Profile
     -- * Deprecated
     Pict (..),
     noPict,
-
-    -- * Swagger
-    modelUserDisplayName,
-    modelAsset,
-    typeManagedBy,
   )
 where
 
-import Control.Applicative (optional)
-import Control.Error (hush, note)
+import Cassandra qualified as C
+import Control.Error (note)
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
+import Data.Aeson qualified as A
 import Data.Attoparsec.ByteString.Char8 (takeByteString)
-import Data.Attoparsec.Text
 import Data.ByteString.Conversion
-import Data.ISO3166_CountryCodes
-import Data.LanguageCodes
+import Data.OpenApi qualified as S
 import Data.Range
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
-import qualified Data.Text as Text
-import Deriving.Swagger (CamelToSnake, ConstructorTagModifier, CustomSwagger, StripPrefix)
 import Imports
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+import Wire.API.Asset (AssetKey (..))
 import Wire.API.User.Orphans ()
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- Name
 
 -- | Usually called display name.
---
 -- Length is between 1 and 128 characters.
 newtype Name = Name
   {fromName :: Text}
@@ -89,14 +70,29 @@ newtype Name = Name
 mkName :: Text -> Either String Name
 mkName txt = Name . fromRange <$> checkedEitherMsg @_ @1 @128 "Name" txt
 
-modelUserDisplayName :: Doc.Model
-modelUserDisplayName = Doc.defineModel "UserDisplayName" $ do
-  Doc.description "User name"
-  Doc.property "name" Doc.string' $
-    Doc.description "User name"
-
 instance ToSchema Name where
   schema = Name <$> fromName .= untypedRangedSchema 1 128 schema
+
+deriving instance C.Cql Name
+
+--------------------------------------------------------------------------------
+-- TextStatus
+
+-- Length is between 1 and 256 characters.
+newtype TextStatus = TextStatus
+  {fromTextStatus :: Text}
+  deriving stock (Eq, Ord, Show, Generic)
+  deriving newtype (FromByteString, ToByteString)
+  deriving (Arbitrary) via (Ranged 1 256 Text)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema TextStatus
+
+mkTextStatus :: Text -> Either String TextStatus
+mkTextStatus txt = TextStatus . fromRange <$> checkedEitherMsg @_ @1 @256 "TextStatus" txt
+
+instance ToSchema TextStatus where
+  schema = TextStatus <$> fromTextStatus .= untypedRangedSchema 1 256 schema
+
+deriving instance C.Cql TextStatus
 
 --------------------------------------------------------------------------------
 -- Colour
@@ -109,15 +105,17 @@ newtype ColourId = ColourId {fromColourId :: Int32}
 defaultAccentId :: ColourId
 defaultAccentId = ColourId 0
 
+deriving instance C.Cql ColourId
+
 --------------------------------------------------------------------------------
 -- Asset
 
 -- Note: Intended to be turned into a sum type to add further asset types.
 data Asset = ImageAsset
-  { assetKey :: Text,
+  { assetKey :: AssetKey,
     assetSize :: Maybe AssetSize
   }
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving (Arbitrary) via (GenericUniform Asset)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema Asset
 
@@ -126,7 +124,7 @@ instance ToSchema Asset where
     object "UserAsset" $
       ImageAsset
         <$> assetKey .= field "key" schema
-        <*> assetSize .= opt (field "size" schema)
+        <*> assetSize .= maybe_ (optField "size" schema)
         <* const () .= field "type" typeSchema
     where
       typeSchema :: ValueSchema NamedSwaggerDoc ()
@@ -134,35 +132,49 @@ instance ToSchema Asset where
         enum @Text @NamedSwaggerDoc "AssetType" $
           element "image" ()
 
-modelAsset :: Doc.Model
-modelAsset = Doc.defineModel "UserAsset" $ do
-  Doc.description "User profile asset"
-  Doc.property "key" Doc.string' $
-    Doc.description "The unique asset key"
-  Doc.property "type" typeAssetType $
-    Doc.description "The asset type"
-  Doc.property "size" typeAssetSize $
-    Doc.description "The asset size / format"
+instance C.Cql Asset where
+  -- Note: Type name and column names and types must match up with the
+  --       Cassandra schema definition. New fields may only be added
+  --       (appended) but no fields may be removed.
+  ctype =
+    C.Tagged
+      ( C.UdtColumn
+          "asset"
+          [ ("typ", C.IntColumn),
+            ("key", C.TextColumn),
+            ("size", C.MaybeColumn C.IntColumn)
+          ]
+      )
 
-typeAssetType :: Doc.DataType
-typeAssetType =
-  Doc.string $
-    Doc.enum
-      [ "image"
+  fromCql (C.CqlUdt fs) = do
+    t <- required "typ"
+    k <- required "key"
+    s <- notrequired "size"
+    case (t :: Int32) of
+      0 -> pure $! ImageAsset k s
+      _ -> Left $ "unexpected user asset type: " ++ show t
+    where
+      required :: (C.Cql r) => Text -> Either String r
+      required f =
+        maybe
+          (Left ("Asset: Missing required field '" ++ show f ++ "'"))
+          C.fromCql
+          (lookup f fs)
+      notrequired f = maybe (Right Nothing) C.fromCql (lookup f fs)
+  fromCql _ = Left "UserAsset: UDT expected"
+
+  -- Note: Order must match up with the 'ctype' definition.
+  toCql (ImageAsset k s) =
+    C.CqlUdt
+      [ ("typ", C.CqlInt 0),
+        ("key", C.toCql k),
+        ("size", C.toCql s)
       ]
 
 data AssetSize = AssetComplete | AssetPreview
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving (Arbitrary) via (GenericUniform AssetSize)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema AssetSize
-
-typeAssetSize :: Doc.DataType
-typeAssetSize =
-  Doc.string $
-    Doc.enum
-      [ "preview",
-        "complete"
-      ]
 
 instance ToSchema AssetSize where
   schema =
@@ -172,67 +184,15 @@ instance ToSchema AssetSize where
           element "complete" AssetComplete
         ]
 
---------------------------------------------------------------------------------
--- Locale
+instance C.Cql AssetSize where
+  ctype = C.Tagged C.IntColumn
 
-data Locale = Locale
-  { lLanguage :: Language,
-    lCountry :: Maybe Country
-  }
-  deriving stock (Eq, Ord, Generic)
-  deriving (Arbitrary) via (GenericUniform Locale)
-  deriving (FromJSON, ToJSON, S.ToSchema) via Schema Locale
+  fromCql (C.CqlInt 0) = pure AssetPreview
+  fromCql (C.CqlInt 1) = pure AssetComplete
+  fromCql n = Left $ "Unexpected asset size: " ++ show n
 
-instance ToSchema Locale where
-  schema = locToText .= parsedText "Locale" (note err . parseLocale)
-    where
-      err = "Invalid locale. Expected <ISO 639-1>(-<ISO 3166-1-alpha2>)? format"
-
-instance Show Locale where
-  show = Text.unpack . locToText
-
-locToText :: Locale -> Text
-locToText (Locale l c) = lan2Text l <> maybe mempty (("-" <>) . con2Text) c
-
-parseLocale :: Text -> Maybe Locale
-parseLocale = hush . parseOnly localeParser
-  where
-    localeParser :: Parser Locale
-    localeParser =
-      Locale <$> (languageParser <?> "Language code")
-        <*> (optional (char '-' *> countryParser) <?> "Country code")
-
---------------------------------------------------------------------------------
--- Language
-
-newtype Language = Language {fromLanguage :: ISO639_1}
-  deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (Arbitrary, S.ToSchema)
-
-languageParser :: Parser Language
-languageParser = codeParser "language" $ fmap Language . checkAndConvert isLower
-
-lan2Text :: Language -> Text
-lan2Text = Text.toLower . Text.pack . show . fromLanguage
-
-parseLanguage :: Text -> Maybe Language
-parseLanguage = hush . parseOnly languageParser
-
---------------------------------------------------------------------------------
--- Country
-
-newtype Country = Country {fromCountry :: CountryCode}
-  deriving stock (Eq, Ord, Show, Generic)
-  deriving newtype (Arbitrary, S.ToSchema)
-
-countryParser :: Parser Country
-countryParser = codeParser "country" $ fmap Country . checkAndConvert isUpper
-
-con2Text :: Country -> Text
-con2Text = Text.pack . show . fromCountry
-
-parseCountry :: Text -> Maybe Country
-parseCountry = hush . parseOnly countryParser
+  toCql AssetPreview = C.CqlInt 0
+  toCql AssetComplete = C.CqlInt 1
 
 --------------------------------------------------------------------------------
 -- ManagedBy
@@ -257,29 +217,17 @@ data ManagedBy
     -- There are some other things that SCIM can't do yet, like setting accent IDs, but they
     -- are not essential, unlike e.g. passwords.
     ManagedByScim
-  deriving stock (Eq, Bounded, Enum, Show, Generic)
+  deriving stock (Eq, Ord, Bounded, Enum, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ManagedBy)
-  deriving (S.ToSchema) via (CustomSwagger '[ConstructorTagModifier (StripPrefix "ManagedBy", CamelToSnake)] ManagedBy)
+  deriving (ToJSON, FromJSON, S.ToSchema) via (Schema ManagedBy)
 
-typeManagedBy :: Doc.DataType
-typeManagedBy =
-  Doc.string $
-    Doc.enum
-      [ "wire",
-        "scim"
-      ]
-
-instance ToJSON ManagedBy where
-  toJSON =
-    A.String . \case
-      ManagedByWire -> "wire"
-      ManagedByScim -> "scim"
-
-instance FromJSON ManagedBy where
-  parseJSON = A.withText "ManagedBy" $ \case
-    "wire" -> pure ManagedByWire
-    "scim" -> pure ManagedByScim
-    other -> fail $ "Invalid ManagedBy: " ++ show other
+instance ToSchema ManagedBy where
+  schema =
+    enum @Text "ManagedBy" $
+      mconcat
+        [ element "wire" ManagedByWire,
+          element "scim" ManagedByScim
+        ]
 
 instance ToByteString ManagedBy where
   builder ManagedByWire = "wire"
@@ -292,6 +240,16 @@ instance FromByteString ManagedBy where
       "scim" -> pure ManagedByScim
       x -> fail $ "Invalid ManagedBy value: " <> show x
 
+instance C.Cql ManagedBy where
+  ctype = C.Tagged C.IntColumn
+
+  fromCql (C.CqlInt 0) = pure ManagedByWire
+  fromCql (C.CqlInt 1) = pure ManagedByScim
+  fromCql n = Left $ "Unexpected ManagedBy: " ++ show n
+
+  toCql ManagedByWire = C.CqlInt 0
+  toCql ManagedByScim = C.CqlInt 1
+
 defaultManagedBy :: ManagedBy
 defaultManagedBy = ManagedByWire
 
@@ -300,7 +258,7 @@ defaultManagedBy = ManagedByWire
 
 -- | DEPRECATED
 newtype Pict = Pict {fromPict :: [A.Object]}
-  deriving stock (Eq, Show, Generic)
+  deriving stock (Eq, Ord, Show, Generic)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema Pict
 
 instance ToSchema Pict where
@@ -311,20 +269,16 @@ instance ToSchema Pict where
 instance Arbitrary Pict where
   arbitrary = pure $ Pict []
 
+instance C.Cql Pict where
+  ctype = C.Tagged (C.ListColumn C.BlobColumn)
+
+  fromCql (C.CqlList l) = do
+    vs <- map (\(C.Blob lbs) -> lbs) <$> mapM C.fromCql l
+    as <- mapM (note "Failed to read asset" . A.decode) vs
+    pure $ Pict as
+  fromCql _ = pure noPict
+
+  toCql = C.toCql . map (C.Blob . A.encode) . fromPict
+
 noPict :: Pict
 noPict = Pict []
-
---------------------------------------------------------------------------------
--- helpers
-
--- Common language / country functions
-checkAndConvert :: (Read a) => (Char -> Bool) -> String -> Maybe a
-checkAndConvert f t =
-  if all f t
-    then readMaybe (map toUpper t)
-    else fail "Format not supported."
-
-codeParser :: String -> (String -> Maybe a) -> Parser a
-codeParser err conv = do
-  code <- count 2 anyChar
-  maybe (fail err) return (conv code)

@@ -3,11 +3,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -72,10 +71,11 @@ module Web.Scim.Schema.User
   )
 where
 
+import Control.Monad
 import Control.Monad.Except
 import Data.Aeson
-import qualified Data.CaseInsensitive as CI
-import qualified Data.HashMap.Strict as HM
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.List ((\\))
 import Data.Text (Text, pack)
 import qualified Data.Text as Text
@@ -96,7 +96,7 @@ import Web.Scim.Schema.User.Phone (Phone)
 import Web.Scim.Schema.User.Photo (Photo)
 import Web.Scim.Schema.UserTypes
 
--- | SCIM user record, parametrized with type-level tag @t@ (see 'UserTypes').
+-- | SCIM user record, parametrized with type-level @tag@ (see 'UserTypes').
 data User tag = User
   { schemas :: [Schema],
     -- Mandatory fields
@@ -140,9 +140,9 @@ data User tag = User
   }
   deriving (Generic)
 
-deriving instance Show (UserExtra tag) => Show (User tag)
+deriving instance (Show (UserExtra tag)) => Show (User tag)
 
-deriving instance Eq (UserExtra tag) => Eq (User tag)
+deriving instance (Eq (UserExtra tag)) => Eq (User tag)
 
 empty ::
   -- | Schemas
@@ -178,10 +178,10 @@ empty schemas userName extra =
       extra = extra
     }
 
-instance FromJSON (UserExtra tag) => FromJSON (User tag) where
+instance (FromJSON (UserExtra tag)) => FromJSON (User tag) where
   parseJSON = withObject "User" $ \obj -> do
     -- Lowercase all fields
-    let o = HM.fromList . map (over _1 CI.foldCase) . HM.toList $ obj
+    let o = KeyMap.fromList . map (over _1 lowerKey) . KeyMap.toList $ obj
     schemas <-
       o .:? "schemas" <&> \case
         Nothing -> [User20]
@@ -209,10 +209,10 @@ instance FromJSON (UserExtra tag) => FromJSON (User tag) where
     extra <- parseJSON (Object obj)
     pure User {..}
 
-instance ToJSON (UserExtra tag) => ToJSON (User tag) where
+instance (ToJSON (UserExtra tag)) => ToJSON (User tag) where
   toJSON User {..} =
     let mainObject =
-          HM.fromList $
+          KeyMap.fromList $
             concat
               [ ["schemas" .= schemas],
                 ["userName" .= userName],
@@ -239,8 +239,8 @@ instance ToJSON (UserExtra tag) => ToJSON (User tag) where
         extraObject = case toJSON extra of
           Null -> mempty
           Object x -> x
-          other -> HM.fromList ["extra" .= other]
-     in Object (HM.union mainObject extraObject)
+          other -> KeyMap.fromList ["extra" .= other]
+     in Object (KeyMap.union mainObject extraObject)
     where
       -- Omit a field if it's Nothing
       optionalField fname = \case
@@ -316,12 +316,14 @@ applyUserOperation user (Operation Replace (Just (NormalPath (AttrPath _schema a
       (\x -> user {externalId = x}) <$> resultToScimError (fromJSON value)
     "active" ->
       (\x -> user {active = x}) <$> resultToScimError (fromJSON value)
-    _ -> throwError (badRequest InvalidPath (Just "we only support attributes username, displayname, externalid, active"))
+    "roles" ->
+      (\x -> user {roles = x}) <$> resultToScimError (fromJSON value)
+    _ -> throwError (badRequest InvalidPath (Just "we only support attributes username, displayname, externalid, active, roles"))
 applyUserOperation _ (Operation Replace (Just (IntoValuePath _ _)) _) = do
   throwError (badRequest InvalidPath (Just "can not lens into multi-valued attributes yet"))
 applyUserOperation user (Operation Replace Nothing (Just value)) = do
   case value of
-    Object hm | null ((AttrName <$> HM.keys hm) \\ ["username", "displayname", "externalid", "active"]) -> do
+    Object hm | null ((AttrName . Key.toText <$> KeyMap.keys hm) \\ ["username", "displayname", "externalid", "active", "roles"]) -> do
       (u :: User tag) <- resultToScimError $ fromJSON value
       pure $
         user
@@ -330,7 +332,7 @@ applyUserOperation user (Operation Replace Nothing (Just value)) = do
             externalId = externalId u,
             active = active u
           }
-    _ -> throwError (badRequest InvalidPath (Just "we only support attributes username, displayname, externalid, active"))
+    _ -> throwError (badRequest InvalidPath (Just "we only support attributes username, displayname, externalid, active, roles"))
 applyUserOperation _ (Operation Replace _ Nothing) =
   throwError (badRequest InvalidValue (Just "No value was provided"))
 applyUserOperation _ (Operation Remove Nothing _) = throwError (badRequest NoTarget Nothing)
@@ -340,6 +342,7 @@ applyUserOperation user (Operation Remove (Just (NormalPath (AttrPath _schema at
     "displayname" -> pure $ user {displayName = Nothing}
     "externalid" -> pure $ user {externalId = Nothing}
     "active" -> pure $ user {active = Nothing}
+    "roles" -> pure $ user {roles = []}
     _ -> pure user
 applyUserOperation _ (Operation Remove (Just (IntoValuePath _ _)) _) = do
   throwError (badRequest InvalidPath (Just "can not lens into multi-valued attributes yet"))
@@ -349,7 +352,7 @@ instance (UserTypes tag, FromJSON (User tag), Patchable (UserExtra tag)) => Patc
     | isUserSchema schema = applyUserOperation user op
     | isSupportedCustomSchema schema = (\x -> user {extra = x}) <$> applyOperation (extra user) op
     | otherwise =
-      throwError $ badRequest InvalidPath $ Just $ "we only support these schemas: " <> (Text.intercalate ", " $ map getSchemaUri (supportedSchemas @tag))
+        throwError $ badRequest InvalidPath $ Just $ "we only support these schemas: " <> Text.intercalate ", " (map getSchemaUri (supportedSchemas @tag))
     where
       isSupportedCustomSchema = maybe False (`elem` supportedSchemas @tag)
   applyOperation user op = applyUserOperation user op

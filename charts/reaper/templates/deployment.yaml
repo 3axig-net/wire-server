@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: reaper
   labels:
-    wireService: reaper
+    app: reaper
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -11,18 +11,25 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      wireService: reaper
+      app: reaper
       release: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        wireService: reaper
+        app: reaper
         release: {{ .Release.Name }}
     spec:
       serviceAccountName: reaper-role
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: reaper
       containers:
       - name: reaper
-        image: bitnami/kubectl:1.19.7
+        image: bitnami/kubectl:1.24.12
         command: ["bash"]
         args:
         - -c

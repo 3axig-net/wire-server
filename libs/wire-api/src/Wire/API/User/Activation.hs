@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -33,57 +33,76 @@ module Wire.API.User.Activation
     -- * SendActivationCode
     SendActivationCode (..),
 
-    -- * Swagger
-    modelActivate,
-    modelSendActivationCode,
-    modelActivationResponse,
+    -- * Activation
+    Activation (..),
   )
 where
 
-import Data.Aeson
+import Cassandra qualified as C
+import Control.Lens ((?~))
+import Data.Aeson qualified as A
+import Data.Aeson.Types (Parser)
 import Data.ByteString.Conversion
-import Data.Json.Util ((#))
-import qualified Data.Swagger.Build.Api as Doc
+import Data.Data (Proxy (Proxy))
+import Data.OpenApi (ToParamSchema)
+import Data.OpenApi qualified as S
+import Data.Schema
 import Data.Text.Ascii
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
+import Servant (FromHttpApiData (..))
+import Wire.API.Locale
 import Wire.API.User.Identity
-import Wire.API.User.Profile
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- ActivationTarget
 
 -- | The target of an activation request.
 data ActivationTarget
-  = -- | An opaque key for some email or phone number awaiting activation.
+  = -- | An opaque key for some email awaiting activation.
     ActivateKey ActivationKey
-  | -- | A known phone number awaiting activation.
-    ActivatePhone Phone
   | -- | A known email address awaiting activation.
-    ActivateEmail Email
+    ActivateEmail EmailAddress
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ActivationTarget)
 
 instance ToByteString ActivationTarget where
   builder (ActivateKey k) = builder k
   builder (ActivateEmail e) = builder e
-  builder (ActivatePhone p) = builder p
 
 -- | An opaque identifier of a 'UserKey' awaiting activation.
 newtype ActivationKey = ActivationKey
   {fromActivationKey :: AsciiBase64Url}
   deriving stock (Eq, Show, Generic)
-  deriving newtype (ToByteString, FromByteString, ToJSON, FromJSON, Arbitrary)
+  deriving newtype (ToSchema, ToByteString, FromByteString, A.ToJSON, A.FromJSON, Arbitrary)
+
+instance ToParamSchema ActivationKey where
+  toParamSchema _ = S.toParamSchema (Proxy @Text)
+
+instance FromHttpApiData ActivationKey where
+  parseUrlPiece = fmap ActivationKey . parseUrlPiece
+
+deriving instance C.Cql ActivationKey
 
 --------------------------------------------------------------------------------
 -- ActivationCode
 
 -- | A random code for use with an 'ActivationKey' that is usually transmitted
 -- out-of-band, e.g. via email or sms.
+-- FUTUREWORK(leif): rename to VerificationCode
 newtype ActivationCode = ActivationCode
   {fromActivationCode :: AsciiBase64Url}
   deriving stock (Eq, Show, Generic)
-  deriving newtype (ToByteString, FromByteString, ToJSON, FromJSON, Arbitrary)
+  deriving newtype (ToByteString, FromByteString, ToSchema, Arbitrary)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema ActivationCode
+
+instance ToParamSchema ActivationCode where
+  toParamSchema _ = S.toParamSchema (Proxy @Text)
+
+instance FromHttpApiData ActivationCode where
+  parseQueryParam = fmap ActivationCode . parseUrlPiece
+
+deriving instance C.Cql ActivationCode
 
 --------------------------------------------------------------------------------
 -- Activate
@@ -96,54 +115,55 @@ data Activate = Activate
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform Activate)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema Activate
 
-modelActivate :: Doc.Model
-modelActivate = Doc.defineModel "Activate" $ do
-  Doc.description "Data for an activation request."
-  Doc.property "key" Doc.string' $ do
-    Doc.description "An opaque key to activate, as it was sent by the API."
-    Doc.optional
-  Doc.property "email" Doc.string' $ do
-    Doc.description "A known email address to activate."
-    Doc.optional
-  Doc.property "phone" Doc.string' $ do
-    Doc.description "A known phone number to activate."
-    Doc.optional
-  Doc.property "code" Doc.string' $
-    Doc.description "The activation code."
-  Doc.property "label" Doc.string' $ do
-    Doc.description
-      "An optional label to associate with the access cookie, \
-      \if one is granted during account activation."
-    Doc.optional
-  Doc.property "dryrun" Doc.bool' $ do
-    Doc.description
-      "Whether to perform a dryrun, i.e. to only check whether \
-      \activation would succeed. Dry-runs never issue access \
-      \cookies or tokens on success but failures still count \
-      \towards the maximum failure count."
-    Doc.optional
-
-instance ToJSON Activate where
-  toJSON (Activate k c d) =
-    object
-      [key k, "code" .= c, "dryrun" .= d]
+instance ToSchema Activate where
+  schema =
+    objectWithDocModifier "Activate" objectDocs $
+      Activate
+        <$> (maybeActivationTargetToTuple . activateTarget) .= maybeActivationTargetObjectSchema
+        <*> activateCode .= fieldWithDocModifier "code" codeDocs schema
+        <*> activateDryrun .= fieldWithDocModifier "dryrun" dryRunDocs schema
     where
-      key (ActivateKey ak) = "key" .= ak
-      key (ActivateEmail e) = "email" .= e
-      key (ActivatePhone p) = "phone" .= p
+      objectDocs :: NamedSwaggerDoc -> NamedSwaggerDoc
+      objectDocs = description ?~ "Data for an activation request."
 
-instance FromJSON Activate where
-  parseJSON = withObject "Activation" $ \o ->
-    Activate
-      <$> key o
-      <*> o .: "code"
-      <*> o .:? "dryrun" .!= False
-    where
-      key o =
-        (ActivateKey <$> o .: "key")
-          <|> (ActivateEmail <$> o .: "email")
-          <|> (ActivatePhone <$> o .: "phone")
+      codeDocs :: NamedSwaggerDoc -> NamedSwaggerDoc
+      codeDocs = description ?~ "The activation code."
+
+      dryRunDocs :: NamedSwaggerDoc -> NamedSwaggerDoc
+      dryRunDocs =
+        description
+          ?~ "At least one of key, email, or phone has to be present \
+             \while key takes precedence over email, and email takes precedence over phone. \
+             \Whether to perform a dryrun, i.e. to only check whether \
+             \activation would succeed. Dry-runs never issue access \
+             \cookies or tokens on success but failures still count \
+             \towards the maximum failure count."
+
+      maybeActivationTargetObjectSchema :: ObjectSchemaP SwaggerDoc (Maybe ActivationKey, Maybe EmailAddress) ActivationTarget
+      maybeActivationTargetObjectSchema =
+        withParser activationTargetTupleObjectSchema maybeActivationTargetTargetFromTuple
+        where
+          activationTargetTupleObjectSchema :: ObjectSchema SwaggerDoc (Maybe ActivationKey, Maybe EmailAddress)
+          activationTargetTupleObjectSchema =
+            (,)
+              <$> fst .= maybe_ (optFieldWithDocModifier "key" keyDocs schema)
+              <*> snd .= maybe_ (optFieldWithDocModifier "email" emailDocs schema)
+            where
+              keyDocs = description ?~ "An opaque key to activate, as it was sent by the API."
+              emailDocs = description ?~ "A known email address to activate."
+
+          maybeActivationTargetTargetFromTuple :: (Maybe ActivationKey, Maybe EmailAddress) -> Parser ActivationTarget
+          maybeActivationTargetTargetFromTuple = \case
+            (Just key, _) -> pure $ ActivateKey key
+            (_, Just email) -> pure $ ActivateEmail email
+            _ -> fail "key or email must be present"
+
+      maybeActivationTargetToTuple :: ActivationTarget -> (Maybe ActivationKey, Maybe EmailAddress)
+      maybeActivationTargetToTuple = \case
+        ActivateKey key -> (Just key, Nothing)
+        ActivateEmail email -> (Nothing, Just email)
 
 -- | Information returned as part of a successful activation.
 data ActivationResponse = ActivationResponse
@@ -154,85 +174,52 @@ data ActivationResponse = ActivationResponse
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform ActivationResponse)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema ActivationResponse
 
-modelActivationResponse :: Doc.Model
-modelActivationResponse = Doc.defineModel "ActivationResponse" $ do
-  Doc.description "Response body of a successful activation request"
-  Doc.property "email" Doc.string' $ do
-    Doc.description "The email address that was activated."
-    Doc.optional
-  Doc.property "phone" Doc.string' $ do
-    Doc.description "The phone number that was activated."
-    Doc.optional
-  Doc.property "first" Doc.bool' $
-    Doc.description "Whether this is the first successful activation (i.e. account activation)."
-
--- FUTUREWORK: de-deduplicate work with JSON instance for 'UserIdentity'?
-instance ToJSON ActivationResponse where
-  toJSON (ActivationResponse ident first) =
-    object $
-      "email" .= emailIdentity ident
-        # "phone" .= phoneIdentity ident
-        # "sso_id" .= ssoIdentity ident
-        # "first" .= first
-        # []
-
-instance FromJSON ActivationResponse where
-  parseJSON = withObject "ActivationResponse" $ \o ->
-    ActivationResponse
-      <$> parseJSON (Object o)
-      <*> o .:? "first" .!= False
+instance ToSchema ActivationResponse where
+  schema =
+    objectWithDocModifier "ActivationResponse" (description ?~ "Response body of a successful activation request") $
+      ActivationResponse
+        <$> activatedIdentity .= userIdentityObjectSchema
+        <*> activatedFirst .= (fromMaybe False <$> optFieldWithDocModifier "first" (description ?~ "Whether this is the first successful activation (i.e. account activation).") schema)
 
 --------------------------------------------------------------------------------
 -- SendActivationCode
 
--- | Payload for a request to (re-)send an activation code
--- for a phone number or e-mail address. If a phone is used,
--- one can also request a call instead of SMS.
+-- | Payload for a request to (re-)send an activation code for an e-mail
+-- address.
 data SendActivationCode = SendActivationCode
-  { saUserKey :: Either Email Phone,
-    saLocale :: Maybe Locale,
-    saCall :: Bool
+  { emailKey :: EmailAddress,
+    locale :: Maybe Locale
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform SendActivationCode)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema SendActivationCode
 
-modelSendActivationCode :: Doc.Model
-modelSendActivationCode = Doc.defineModel "SendActivationCode" $ do
-  Doc.description
-    "Data for requesting an email or phone activation code to be sent. \
-    \One of 'email' or 'phone' must be present."
-  Doc.property "email" Doc.string' $ do
-    Doc.description "Email address to send the code to."
-    Doc.optional
-  Doc.property "phone" Doc.string' $ do
-    Doc.description "E.164 phone number to send the code to."
-    Doc.optional
-  Doc.property "locale" Doc.string' $ do
-    Doc.description "Locale to use for the activation code template."
-    Doc.optional
-  Doc.property "voice_call" Doc.bool' $ do
-    Doc.description "Request the code with a call instead (default is SMS)."
-    Doc.optional
-
-instance ToJSON SendActivationCode where
-  toJSON (SendActivationCode userKey locale call) =
-    object $
-      either ("email" .=) ("phone" .=) userKey
-        # "locale" .= locale
-        # "voice_call" .= call
-        # []
-
-instance FromJSON SendActivationCode where
-  parseJSON = withObject "SendActivationCode" $ \o -> do
-    e <- o .:? "email"
-    p <- o .:? "phone"
-    SendActivationCode
-      <$> key e p
-      <*> o .:? "locale"
-      <*> o .:? "voice_call" .!= False
+instance ToSchema SendActivationCode where
+  schema =
+    objectWithDocModifier "SendActivationCode" objectDesc $
+      SendActivationCode
+        <$> emailKey .= field "email" schema
+        <*> locale
+          .= maybe_
+            ( optFieldWithDocModifier
+                "locale"
+                ( description ?~ "Locale to use for the activation code template."
+                )
+                schema
+            )
     where
-      key (Just _) (Just _) = fail "Only one of 'email' or 'phone' allowed."
-      key Nothing Nothing = fail "One of 'email' or 'phone' required."
-      key (Just e) Nothing = return $ Left e
-      key Nothing (Just p) = return $ Right p
+      objectDesc :: NamedSwaggerDoc -> NamedSwaggerDoc
+      objectDesc =
+        description
+          ?~ "Data for requesting an email code to be sent. 'email' must be present."
+
+--  | The information associated with the pending activation of an 'EmailKey'.
+data Activation = Activation
+  { -- | An opaque key for the original 'EmailKey' pending activation.
+    activationKey :: !ActivationKey,
+    -- | The confidential activation code.
+    activationCode :: !ActivationCode
+  }
+  deriving (Eq, Show)

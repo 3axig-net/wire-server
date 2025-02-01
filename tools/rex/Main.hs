@@ -1,12 +1,15 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use shutdown" #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,6 +35,7 @@ import Data.Bitraversable
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as ByteString
 import Data.Foldable
+import Data.Functor (($>))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HashMap
 import Data.IP
@@ -53,8 +57,7 @@ import Options.Applicative
 import System.Clock
 import qualified System.Logger as Log
 import System.Logger.Message (msg, val)
--- this library sucks
-import System.Metrics.Prometheus.Concurrent.RegistryT
+import System.Metrics.Prometheus.Concurrent.RegistryT -- this library sucks
 import System.Metrics.Prometheus.Encode.Text
 import qualified System.Metrics.Prometheus.Metric.Counter as Counter
 import System.Metrics.Prometheus.Metric.Gauge (Gauge)
@@ -225,9 +228,8 @@ data SocketStats = SocketStats
 getSocketStats :: Word16 -> IO (Maybe SocketStats)
 getSocketStats port = do
   pnu <- Text.readFile "/proc/net/udp"
-  return
-    . listToMaybe
-    . filter ((== port) . lPort)
+  pure
+    . find ((== port) . lPort)
     . map (mk . Text.words)
     . drop 1
     $ Text.lines pnu
@@ -247,7 +249,7 @@ getAppStats lgr addr sock = fmap mconcat . for cmds $ \cmd -> do
   sendAllTo sock cmd addr
   (reply, _) <- recvFrom sock 1024
   Log.trace lgr $ msg (ByteString.intercalate "\n" (ByteString.lines reply))
-  return $
+  pure $
     parseAppStats reply
   where
     cmds = ["stat", "turnstats", "turnreply", "tcpstats", "authstats"]
@@ -337,7 +339,7 @@ getPeerConnectivityStats lgr seed dom = do
           )
 
     shakehands (addr, port) =
-      handleIOError (\e -> logUnreachable addr port e *> pure Nothing)
+      handleIOError (\e -> logUnreachable addr port e $> Nothing)
         . timeout (5 * 1000000)
         $ bracket
           (socket AF_INET Stream defaultProtocol)
@@ -345,7 +347,7 @@ getPeerConnectivityStats lgr seed dom = do
           (`connect` SockAddrInet (fromIntegral port) (toHostAddress addr))
 
     mkAddr (_, Left _) = mempty
-    mkAddr (rr, Right ips) = map (\ip -> (ip, _3 rr)) ips
+    mkAddr (rr, Right ips) = (,_3 rr) <$> ips
 
     _4 (_, _, _, x) = x
     _3 (_, _, x, _) = x
@@ -354,7 +356,7 @@ getPeerConnectivityStats lgr seed dom = do
       Log.warn lgr . msg $
         "Peer " <> show addr <> ":" <> show port <> " unreachable: " <> show e
 
-serveIO :: MonadIO m => Opts -> IO RegistrySample -> m ()
+serveIO :: (MonadIO m) => Opts -> IO RegistrySample -> m ()
 serveIO opts runSample =
   liftIO $
     runSettings

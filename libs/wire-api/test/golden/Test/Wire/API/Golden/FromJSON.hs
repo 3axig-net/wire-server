@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,13 +21,14 @@ import Imports
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Wire.API.Golden.Generated.Invite_user (testObject_Invite_user_2)
+import Test.Wire.API.Golden.Generated.LockableFeature_team
 import Test.Wire.API.Golden.Generated.MemberUpdateData_user
-import Test.Wire.API.Golden.Generated.NewConvUnmanaged_user
 import Test.Wire.API.Golden.Generated.NewOtrMessage_user
 import Test.Wire.API.Golden.Generated.RmClient_user
 import Test.Wire.API.Golden.Generated.SimpleMember_user
+import Test.Wire.API.Golden.Manual.Presence
 import Test.Wire.API.Golden.Runner
-import Wire.API.Conversation (Conversation, MemberUpdate, NewConvManaged, NewConvUnmanaged, OtherMemberUpdate)
+import Wire.API.Conversation (Conversation, MemberUpdate, OtherMemberUpdate)
 import Wire.API.User (NewUser, NewUserPublic)
 import Wire.API.User.Client (RmClient)
 
@@ -43,25 +44,6 @@ tests =
           [ (testObject_SimpleMember_user_2, "testObject_SimpleMember_user_2.json"),
             (testObject_SimpleMember_user_2, "testObject_SimpleMember_user_2-2.json")
           ],
-      testGroup
-        "NewConvUnmanaged"
-        [ testCase "success" $
-            testFromJSONObject
-              testObject_NewConvUnmanaged_user_1
-              "testObject_NewConvUnmanaged_user_1.json",
-          testCase
-            "failure"
-            $ testFromJSONFailureWithMsg
-              @NewConvUnmanaged
-              (Just "managed conversations have been deprecated")
-              "testObject_NewConvUnmanaged_user_2.json"
-        ],
-      testCase
-        "NewConvManaged failure"
-        $ testFromJSONFailureWithMsg
-          @NewConvManaged
-          (Just "only managed conversations are allowed here")
-          "testObject_NewConvManaged_user_2.json",
       testCase
         "RmClient"
         $ testFromJSONObjects
@@ -108,5 +90,9 @@ tests =
             testFromJSONFailureWithMsg @NewUserPublic
               (Just "only managed-by-Wire users can be created here.")
               "testObject_NewUserPublic_user_1-3.json"
-        ]
+        ],
+      testCase "LockableFeature_ConferenceCallingConfig" $
+        testFromJSONObject testObject_LockableFeature_team_14 "testObject_LockableFeature_team_14.json",
+      testCase "LockableFeature_ConferenceCallingConfig" $
+        testFromJSONObject testObject_Presence_3 "testObject_Presence_3.json"
     ]

@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,110 +24,74 @@ module Wire.API.Team.Conversation
     TeamConversation,
     newTeamConversation,
     conversationId,
-    managedConversation,
 
     -- * TeamConversationList
     TeamConversationList,
     newTeamConversationList,
     teamConversations,
-
-    -- * Swagger
-    modelTeamConversation,
-    modelTeamConversationList,
   )
 where
 
-import Control.Lens (At (at), makeLenses, over, (?~))
-import Data.Aeson hiding (fieldLabelModifier)
+import Control.Lens (makeLenses, (?~))
+import Data.Aeson qualified as A
 import Data.Id (ConvId)
-import Data.Proxy
-import Data.Swagger
-import qualified Data.Swagger.Build.Api as Doc
+import Data.OpenApi qualified as S
+import Data.Schema
 import Imports
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (..))
+import Wire.Arbitrary (Arbitrary, GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- TeamConversation
 
-data TeamConversation = TeamConversation
-  { _conversationId :: ConvId,
-    _managedConversation :: Bool
+newtype TeamConversation = TeamConversation
+  { _conversationId :: ConvId
   }
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform TeamConversation)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema TeamConversation)
+
+managedDesc :: Text
+managedDesc =
+  "This field MUST NOT be used by clients. "
+    <> "It is here only for backwards compatibility of the interface."
 
 instance ToSchema TeamConversation where
-  declareNamedSchema _ = do
-    idSchema <- declareSchemaRef (Proxy @ConvId)
-    let managed =
-          toSchema (Proxy @Bool)
-            & description ?~ "Indicates if this is a managed team conversation."
-    pure $
-      NamedSchema (Just "TeamConversation") $
-        mempty
-          & description ?~ "team conversation data"
-          & over
-            properties
-            ( (at "managed" ?~ Inline managed)
-                . (at "conversation" ?~ idSchema)
-            )
+  schema =
+    objectWithDocModifier
+      "TeamConversation"
+      (description ?~ "Team conversation data")
+      $ TeamConversation
+        <$> _conversationId .= field "conversation" schema
+        <* const ()
+          .= fieldWithDocModifier
+            "managed"
+            (description ?~ managedDesc)
+            (c (False :: Bool))
+    where
+      c :: (A.ToJSON a) => a -> ValueSchema SwaggerDoc ()
+      c val = mkSchema mempty (const (pure ())) (const (pure (A.toJSON val)))
 
-newTeamConversation :: ConvId -> Bool -> TeamConversation
+newTeamConversation :: ConvId -> TeamConversation
 newTeamConversation = TeamConversation
-
-modelTeamConversation :: Doc.Model
-modelTeamConversation = Doc.defineModel "TeamConversation" $ do
-  Doc.description "team conversation data"
-  Doc.property "conversation" Doc.bytes' $
-    Doc.description "conversation ID"
-  Doc.property "managed" Doc.bool' $
-    Doc.description "Indicates if this is a managed team conversation."
-
-instance ToJSON TeamConversation where
-  toJSON t =
-    object
-      [ "conversation" .= _conversationId t,
-        "managed" .= _managedConversation t
-      ]
-
-instance FromJSON TeamConversation where
-  parseJSON = withObject "team conversation" $ \o ->
-    TeamConversation <$> o .: "conversation" <*> o .: "managed"
 
 --------------------------------------------------------------------------------
 -- TeamConversationList
 
-newtype TeamConversationList = TeamConversationList
-  { _teamConversations :: [TeamConversation]
-  }
+newtype TeamConversationList = TeamConversationList {teamConversations :: [TeamConversation]}
   deriving (Generic)
   deriving stock (Eq, Show)
   deriving newtype (Arbitrary)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema TeamConversationList)
 
 instance ToSchema TeamConversationList where
-  declareNamedSchema _ = do
-    convs <- declareSchema (Proxy @[TeamConversation])
-    pure $
-      NamedSchema (Just "TeamConversationList") $
-        mempty
-          & description ?~ "team conversation list"
-          & properties . at "conversations" ?~ Inline convs
+  schema =
+    objectWithDocModifier
+      "TeamConversationList"
+      (description ?~ "Team conversation list")
+      $ TeamConversationList
+        <$> teamConversations .= field "conversations" (array schema)
 
 newTeamConversationList :: [TeamConversation] -> TeamConversationList
 newTeamConversationList = TeamConversationList
 
-modelTeamConversationList :: Doc.Model
-modelTeamConversationList = Doc.defineModel "TeamConversationListList" $ do
-  Doc.description "list of team conversations"
-  Doc.property "conversations" (Doc.unique $ Doc.array (Doc.ref modelTeamConversation)) $
-    Doc.description "the array of team conversations"
-
-instance ToJSON TeamConversationList where
-  toJSON t = object ["conversations" .= _teamConversations t]
-
-instance FromJSON TeamConversationList where
-  parseJSON = withObject "team conversation list" $ \o -> do
-    TeamConversationList <$> o .: "conversations"
-
 makeLenses ''TeamConversation
-makeLenses ''TeamConversationList

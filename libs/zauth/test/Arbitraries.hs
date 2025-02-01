@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,6 +22,9 @@
 module Arbitraries where
 
 import Control.Lens ((.~))
+import Data.Text.Lazy qualified as LT
+import Data.Text.Lazy.Builder qualified as LT
+import Data.Text.Lazy.Builder.Int qualified as LT
 import Data.UUID hiding (fromString)
 import Data.ZAuth.Token
 import Imports
@@ -55,11 +58,18 @@ instance Arbitrary Header where
       <*> arbitrary
       <*> arbitrary
 
+arbitraryClientId :: Gen (Maybe Text)
+arbitraryClientId =
+  liftArbitrary $ fmap toClientId arbitrary
+  where
+    toClientId :: Word64 -> Text
+    toClientId = LT.toStrict . LT.toLazyText . LT.hexadecimal
+
 instance Arbitrary Access where
-  arbitrary = mkAccess <$> arbitrary <*> arbitrary
+  arbitrary = mkAccess <$> arbitrary <*> arbitraryClientId <*> arbitrary
 
 instance Arbitrary User where
-  arbitrary = mkUser <$> arbitrary <*> arbitrary
+  arbitrary = mkUser <$> arbitrary <*> arbitraryClientId <*> arbitrary
 
 instance Arbitrary Bot where
   arbitrary = mkBot <$> arbitrary <*> arbitrary <*> arbitrary
@@ -68,13 +78,13 @@ instance Arbitrary Provider where
   arbitrary = mkProvider <$> arbitrary
 
 instance Arbitrary LegalHoldAccess where
-  arbitrary = mkLegalHoldAccess <$> arbitrary <*> arbitrary
+  arbitrary = mkLegalHoldAccess <$> arbitrary <*> arbitraryClientId <*> arbitrary
 
 instance Arbitrary LegalHoldUser where
-  arbitrary = mkLegalHoldUser <$> arbitrary <*> arbitrary
+  arbitrary = mkLegalHoldUser <$> arbitrary <*> arbitraryClientId <*> arbitrary
 
 instance Arbitrary ByteString where
-  arbitrary = fromString <$> arbitrary `suchThat` (not . any (== '.'))
+  arbitrary = fromString <$> arbitrary `suchThat` notElem '.'
 
 instance Arbitrary Signature where
   arbitrary = Signature <$> arbitrary
@@ -83,7 +93,7 @@ instance Arbitrary Type where
   arbitrary = elements [A, U, LA, LU]
 
 instance Arbitrary Tag where
-  arbitrary = return S
+  arbitrary = pure S
 
 instance Bounded UUID where
   minBound = nil

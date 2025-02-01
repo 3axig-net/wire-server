@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -49,29 +49,29 @@ data UserSite tag route = UserSite
   { usGetUsers ::
       route
         :- QueryParam "filter" Filter
-        :> Get '[SCIM] (ListResponse (StoredUser tag)),
+          :> Get '[SCIM] (ListResponse (StoredUser tag)),
     usGetUser ::
       route
         :- Capture "id" (UserId tag)
-        :> Get '[SCIM] (StoredUser tag),
+          :> Get '[SCIM] (StoredUser tag),
     usPostUser ::
       route
         :- ReqBody '[SCIM] (User tag)
-        :> PostCreated '[SCIM] (StoredUser tag),
+          :> PostCreated '[SCIM] (StoredUser tag),
     usPutUser ::
       route
         :- Capture "id" (UserId tag)
-        :> ReqBody '[SCIM] (User tag)
-        :> Put '[SCIM] (StoredUser tag),
+          :> ReqBody '[SCIM] (User tag)
+          :> Put '[SCIM] (StoredUser tag),
     usPatchUser ::
       route
         :- Capture "id" (UserId tag)
-        :> ReqBody '[SCIM] (PatchOp tag)
-        :> Patch '[SCIM] (StoredUser tag),
+          :> ReqBody '[SCIM] (PatchOp tag)
+          :> Patch '[SCIM] (StoredUser tag),
     usDeleteUser ::
       route
         :- Capture "id" (UserId tag)
-        :> DeleteNoContent
+          :> DeleteNoContent
   }
   deriving (Generic)
 

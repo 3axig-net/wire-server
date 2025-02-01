@@ -1,6 +1,8 @@
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,19 +16,19 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 module Spar.DataMigration.V2_UserV2 (migration) where
 
 import Cassandra
 import qualified Conduit as C
+import qualified Data.ByteString.UTF8 as UTF8
 import Data.Conduit
 import qualified Data.Conduit.Combinators as CC
 import Data.Conduit.Internal (zipSources)
 import qualified Data.Conduit.List as CL
 import Data.Id
 import qualified Data.Map.Strict as Map
-import Data.String.Conversions (cs)
+import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Imports
 import qualified SAML2.WebSSO as SAML
@@ -66,7 +68,7 @@ type CollisionResolver =
 -- | Use this if you want to paginate without crashing
 newtype CqlSafe a = CqlSafe {unCqlSafe :: Either String a}
 
-instance Cql a => Cql (CqlSafe a) where
+instance (Cql a) => Cql (CqlSafe a) where
   ctype = Tagged $ untag (ctype @a)
   toCql _ = error "CqlSafe is not meant for serialization"
   fromCql val =
@@ -173,22 +175,18 @@ filterResolved resolver migMapInv =
       mbAssoc <- await
       for_ mbAssoc $ \(new@(issuer, nid), olds) -> do
         let yieldOld (nameId, uid) = yield (issuer, nid, nameId, uid)
-        let issuerURI = cs . serializeURIRef' . _fromIssuer $ issuer
+        let issuerURI = UTF8.toString . serializeURIRef' . _fromIssuer $ issuer
         case olds of
           [] -> pure ()
           [old] -> yieldOld old
           (old1 : old2 : rest) ->
             lift (resolver new (List2 old1 old2 rest)) >>= \case
               Left _ ->
-                lift $ logError $ unwords ["Couldnt resolve collisision of", issuerURI, cs (unNormalizedUNameID nid), show olds]
+                lift $ logError $ unwords ["Couldnt resolve collisision of", issuerURI, T.unpack (unNormalizedUNameID nid), show olds]
               Right old -> do
-                lift $ logInfo $ unwords ["Resolved collision", issuerURI, cs (unNormalizedUNameID nid), show (fmap snd olds), "to", show (snd old)]
+                lift $ logInfo $ unwords ["Resolved collision", issuerURI, T.unpack (unNormalizedUNameID nid), show (fmap snd olds), "to", show (snd old)]
                 yieldOld old
         go
-
--- for debugging only
-resolveNothing :: CollisionResolver
-resolveNothing = const (pure . Left)
 
 combineResolver :: CollisionResolver -> CollisionResolver -> CollisionResolver
 combineResolver resolver1 resolver2 pair olds =

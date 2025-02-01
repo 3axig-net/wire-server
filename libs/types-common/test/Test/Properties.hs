@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,20 +27,21 @@ module Test.Properties
 where
 
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, ToJSON (toJSON), ToJSONKey)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Types as Aeson
-import qualified Data.ByteString.Char8 as C8
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Types qualified as Aeson
+import Data.ByteString.Char8 qualified as C8
 import Data.ByteString.Conversion as BS
 import Data.ByteString.Lazy as L
 import Data.Domain (Domain)
 import Data.Handle (Handle)
 import Data.Id
-import qualified Data.Json.Util as Util
+import Data.Json.Util qualified as Util
+import Data.Nonce (Nonce)
 import Data.ProtocolBuffers.Internal
 import Data.Serialize
-import Data.String.Conversions (cs)
+import Data.String.Conversions
 import Data.Text.Ascii
-import qualified Data.Text.Ascii as Ascii
+import Data.Text.Ascii qualified as Ascii
 import Data.Time
 import Data.UUID
 import Imports
@@ -107,15 +109,15 @@ tests =
             \(c :: Char) -> Ascii.contains Ascii.Base64Url c ==> Ascii.contains Ascii.Standard c
         ],
       testGroup
-        "Base64ByteString"
+        "Base64ByteStringL"
         [ testProperty "validate (Aeson.decode . Aeson.encode) == pure . id" $
-            \(Util.Base64ByteString . L.pack -> s) ->
+            \(Util.Base64ByteStringL . L.pack -> s) ->
               (Aeson.eitherDecode . Aeson.encode) s == Right s,
           -- the property only considers valid 'String's, and it does not document the encoding very
           -- well, so here are some unit tests (see
           -- http://www.cl.cam.ac.uk/~mgk25/ucs/examples/UTF-8-test.txt for more).
           testCase "examples" $ do
-            let go :: Util.Base64ByteString -> L.ByteString -> Assertion
+            let go :: Util.Base64ByteStringL -> L.ByteString -> Assertion
                 go b uu = do
                   Aeson.encode b @=? uu
                   (Aeson.eitherDecode . Aeson.encode) b @=? Right b
@@ -135,7 +137,7 @@ tests =
               (BS.fromByteString' . cs . BS.toByteString') t === Just t,
           --
 
-          let toUTCTimeMillisSlow :: HasCallStack => UTCTime -> Maybe UTCTime
+          let toUTCTimeMillisSlow :: (HasCallStack) => UTCTime -> Maybe UTCTime
               toUTCTimeMillisSlow t = parseExact formatRounded
                 where
                   parseExact = parseTimeM True defaultTimeLocale "%FT%T%QZ"
@@ -209,8 +211,17 @@ tests =
         "Domain"
         [ jsonRoundtrip @Domain,
           jsonKeyRoundtrip @Domain
+        ],
+      testGroup
+        "Nonce"
+        [ testProperty "decode . encode = id" $
+            \(x :: Nonce) -> bsRoundtrip x,
+          jsonRoundtrip @Nonce
         ]
     ]
+
+bsRoundtrip :: (Eq a, Show a, FromByteString a, ToByteString a) => a -> Property
+bsRoundtrip a = fromByteString' (cs $ toByteString' a) === Just a
 
 roundtrip :: (EncodeWire a, DecodeWire a) => Tag' -> a -> Either String a
 roundtrip (Tag' t) = runGet (getWireField >>= decodeWire) . runPut . encodeWire t
@@ -226,7 +237,7 @@ jsonRoundtrip = testProperty msg trip
       counterexample (show $ toJSON v) $
         Right v === (Aeson.parseEither parseJSON . toJSON) v
 
-jsonKeyRoundtrip :: forall a. (Arbitrary a, Typeable a, ToJSONKey a, FromJSONKey a, Eq a, Show a, Ord a) => TestTree
+jsonKeyRoundtrip :: forall a. (Arbitrary a, Typeable a, ToJSONKey a, FromJSONKey a, Show a, Ord a) => TestTree
 jsonKeyRoundtrip = testProperty msg trip
   where
     msg = "json key round trip: " <> show (typeRep @a)

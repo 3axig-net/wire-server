@@ -1,11 +1,15 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE NoGeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,20 +29,17 @@ module ThreadBudget where
 import Control.Concurrent.Async
 import Control.Lens
 import Control.Monad.Catch (MonadCatch, catch)
-import Data.Metrics.Middleware (metrics)
-import Data.String.Conversions (cs)
-import Data.Time
-import Data.TreeDiff.Class (ToExpr)
+import Data.String.Conversions
 import GHC.Generics
 import Gundeck.Options
 import Gundeck.ThreadBudget.Internal
 import Imports
-import qualified System.Logger.Class as LC
+import System.Logger.Class qualified as LC
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Test.StateMachine
-import qualified Test.StateMachine.Types as STM
-import qualified Test.StateMachine.Types.Rank2 as Rank2
+import Test.StateMachine.Types qualified as STM
+import Test.StateMachine.Types.Rank2 qualified as Rank2
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck
@@ -51,18 +52,11 @@ newtype NumberOfThreads = NumberOfThreads {fromNumberOfThreads :: Int}
 
 -- | 'microseconds' determines how long one unit lasts.  there is a trade-off of fast
 -- vs. robust in this whole setup.  this type is supposed to help us find a good sweet spot.
+--
+-- There is also `Milliseconds` (with small `s` after `Milli`) in "Data.Misc".  maybe this
+-- should be cleaned up...
 newtype MilliSeconds = MilliSeconds {fromMilliSeconds :: Int}
   deriving (Eq, Ord, Show, Generic, ToExpr)
-
--- toMillisecondsCeiling 0.03      == MilliSeconds 30
--- toMillisecondsCeiling 0.003     == MilliSeconds 3
--- toMillisecondsCeiling 0.0003    == MilliSeconds 1
--- toMillisecondsCeiling 0.0000003 == MilliSeconds 1
-toMillisecondsCeiling :: NominalDiffTime -> MilliSeconds
-toMillisecondsCeiling = MilliSeconds . ceiling . (* 1000) . toRational
-
-milliSecondsToNominalDiffTime :: MilliSeconds -> NominalDiffTime
-milliSecondsToNominalDiffTime = fromRational . (/ 1000) . toRational . fromMilliSeconds
 
 instance Arbitrary NumberOfThreads where
   arbitrary = NumberOfThreads <$> choose (1, 30)
@@ -107,34 +101,29 @@ instance LC.MonadLogger (ReaderT LogHistory IO) where
           | otherwise = Unknown raw
     enterLogHistory parsed
 
-delayms :: MilliSeconds -> (MonadCatch m, MonadIO m) => m ()
+delayms :: (MonadCatch m, MonadIO m) => MilliSeconds -> m ()
 delayms = delay' . (* 1000) . fromMilliSeconds
 
-delayndt :: NominalDiffTime -> (MonadCatch m, MonadIO m) => m ()
-delayndt = delay' . round . (* 1000) . (* 1000) . toRational
-
-delay' :: Int -> (MonadCatch m, MonadIO m) => m ()
+delay' :: (MonadCatch m, MonadIO m) => Int -> m ()
 delay' microsecs = threadDelay microsecs `catch` \AsyncCancelled -> pure ()
 
 burstActions ::
-  HasCallStack =>
+  (HasCallStack) =>
   ThreadBudgetState ->
   LogHistory ->
   MilliSeconds ->
   NumberOfThreads ->
   (MonadIO m) => m ()
 burstActions tbs logHistory howlong (NumberOfThreads howmany) = do
-  mtr <- metrics
-  let budgeted = runWithBudget mtr tbs 1 (delayms howlong)
+  let budgeted = runWithBudget tbs 1 (delayms howlong)
   liftIO . replicateM_ howmany . forkIO $ runReaderT budgeted logHistory
 
 -- | Start a watcher with given params and a frequency of 10 milliseconds, so we are more
 -- likely to find weird race conditions.
 mkWatcher :: ThreadBudgetState -> LogHistory -> IO (Async ())
 mkWatcher tbs logHistory = do
-  mtr <- metrics
   async $
-    runReaderT (watchThreadBudgetState mtr tbs 0.01) logHistory
+    runReaderT (watchThreadBudgetState tbs 0.01) logHistory
       `catch` \AsyncCancelled -> pure ()
 
 ----------------------------------------------------------------------
@@ -142,17 +131,19 @@ mkWatcher tbs logHistory = do
 
 tests :: TestTree
 tests =
-  testGroup "thread budgets" $
+  testGroup
+    "thread budgets"
     [ -- flaky test case as described in https://wearezeta.atlassian.net/browse/BE-527
       -- testCase "unit test" testThreadBudgets,
-      testProperty "qc stm (sequential)" propSequential
+      testProperty "qc stm (sequential)" propSequential,
+      testCase "thread buckets" testThreadBudgets
     ]
 
 ----------------------------------------------------------------------
 -- deterministic unit test
 
-_testThreadBudgets :: Assertion
-_testThreadBudgets = do
+testThreadBudgets :: Assertion
+testThreadBudgets = do
   let timeUnits n = MilliSeconds $ lengthOfTimeUnit * n
       lengthOfTimeUnit = 5 -- if you make this larger, the test will run more slowly, and be
       -- less likely to have timing issues.  if you make it too small, some of the calls to
@@ -210,7 +201,7 @@ data Response r
   | MeasureResponse Int -- concrete running threads
   deriving (Show, Generic, Generic1, Rank2.Functor, Rank2.Foldable, Rank2.Traversable)
 
-generator :: HasCallStack => Model Symbolic -> Maybe (Gen (Command Symbolic))
+generator :: (HasCallStack) => Model Symbolic -> Maybe (Gen (Command Symbolic))
 generator (Model Nothing) = Just $ Init <$> arbitrary
 generator (Model (Just st)) =
   Just $
@@ -220,16 +211,16 @@ generator (Model (Just st)) =
         pure $ Measure st
       ]
 
-shrinker :: HasCallStack => Model Symbolic -> Command Symbolic -> [Command Symbolic]
+shrinker :: (HasCallStack) => Model Symbolic -> Command Symbolic -> [Command Symbolic]
 shrinker _ (Init _) = []
 shrinker _ (Run st n m) = Wait st (MilliSeconds 1) : (Run st <$> shrink n <*> shrink m)
 shrinker _ (Wait st n) = Wait st <$> shrink n
 shrinker _ (Measure _) = []
 
-initModel :: HasCallStack => Model r
+initModel :: (HasCallStack) => Model r
 initModel = Model Nothing
 
-semantics :: HasCallStack => Command Concrete -> IO (Response Concrete)
+semantics :: (HasCallStack) => Command Concrete -> IO (Response Concrete)
 semantics (Init (NumberOfThreads limit)) =
   do
     tbs <- mkThreadBudgetState (MaxConcurrentNativePushes (Just limit) (Just limit))
@@ -253,17 +244,17 @@ semantics (Measure (opaque -> (tbs, _, _))) =
     concreteRunning <- budgetSpent tbs
     pure (MeasureResponse concreteRunning)
 
-transition :: HasCallStack => Model r -> Command r -> Response r -> Model r
+transition :: (HasCallStack) => Model r -> Command r -> Response r -> Model r
 transition (Model Nothing) (Init _) (InitResponse st) = Model (Just st)
 transition (Model (Just st)) Run {} RunResponse = Model (Just st)
 transition (Model (Just st)) Wait {} WaitResponse = Model (Just st)
 transition (Model (Just st)) Measure {} MeasureResponse {} = Model (Just st)
 transition _ _ _ = error "impossible."
 
-precondition :: HasCallStack => Model Symbolic -> Command Symbolic -> Logic
+precondition :: (HasCallStack) => Model Symbolic -> Command Symbolic -> Logic
 precondition _ _ = Top
 
-postcondition :: HasCallStack => Model Concrete -> Command Concrete -> Response Concrete -> Logic
+postcondition :: (HasCallStack) => Model Concrete -> Command Concrete -> Response Concrete -> Logic
 postcondition (Model Nothing) Init {} InitResponse {} = Top
 postcondition (Model (Just _)) Run {} RunResponse {} = Top
 postcondition (Model (Just _)) Wait {} WaitResponse {} = Top
@@ -273,7 +264,7 @@ postcondition model@(Model (Just _)) cmd@Measure {} resp@(MeasureResponse concre
     Model (Just state) = transition model cmd resp
     threadLimit :: Int
     threadLimit = case opaque state of
-      (tbs, _, _) -> tbs ^?! Control.Lens.to threadBudgetLimits . limitHard . _Just
+      (tbs, _, _) -> tbs ^?! Control.Lens.to threadBudgetLimits . hard . _Just
     -- number of running threads is never above the limit.
     threadLimitExceeded = Annotate "thread limit exceeded" $ concreteRunning .<= threadLimit
 -- FUTUREWORK: check that the number of running threads matches the model exactly.  looks
@@ -283,7 +274,7 @@ postcondition model@(Model (Just _)) cmd@Measure {} resp@(MeasureResponse concre
 
 postcondition m c r = error $ "impossible: " <> show (m, c, r)
 
-mock :: HasCallStack => Model Symbolic -> Command Symbolic -> GenSym (Response Symbolic)
+mock :: (HasCallStack) => Model Symbolic -> Command Symbolic -> GenSym (Response Symbolic)
 mock (Model Nothing) (Init _) =
   InitResponse <$> genSym
 mock (Model (Just _)) Run {} = pure RunResponse
@@ -307,15 +298,15 @@ sm =
       STM.postcondition = postcondition,
       STM.invariant = Nothing,
       STM.generator = generator,
-      STM.distribution = Nothing,
       STM.shrinker = shrinker,
       STM.semantics = semantics,
-      STM.mock = mock
+      STM.mock = mock,
+      STM.cleanup = const (pure ())
     }
 
 -- | Remove resources created by the concrete 'STM.Commands', namely watcher and budgeted
 -- async threads.
-shutdown :: Model Concrete -> MonadIO m => m ()
+shutdown :: Model Concrete -> (MonadIO m) => m ()
 shutdown (Model Nothing) = pure ()
 shutdown (Model (Just (opaque -> (tbs, watcher, _)))) = liftIO $ do
   cancelAllThreads tbs

@@ -1,8 +1,10 @@
 {-# LANGUAGE RecordWildCards #-}
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,24 +23,29 @@ module Util.Scim where
 
 import Bilge
 import Bilge.Assert
-import Brig.Types.User
 import Control.Lens
 import Control.Monad.Random
 import Data.ByteString.Conversion
-import Data.Handle (Handle (Handle))
+import qualified Data.ByteString.Lazy as Lazy
+import Data.Handle (Handle, parseHandle)
 import Data.Id
-import Data.String.Conversions (cs)
+import Data.LanguageCodes (ISO639_1 (EN))
+import Data.String.Conversions
+import Data.Text.Encoding (encodeUtf8)
+import qualified Data.Text.Lazy as Lazy
+import Data.These
 import Data.Time
 import Data.UUID as UUID
 import Data.UUID.V4 as UUID
 import Imports
+import qualified Network.Wai.Utilities as Error
+import Polysemy.Error (runError)
 import qualified SAML2.WebSSO as SAML
 import SAML2.WebSSO.Types (IdPId, idpId)
 import qualified Spar.Intra.BrigApp as Intra
 import Spar.Scim.User (synthesizeScimUser, validateScimUser')
 import qualified Spar.Sem.ScimTokenStore as ScimTokenStore
 import Test.QuickCheck (arbitrary, generate)
-import qualified Text.Email.Parser as Email
 import qualified Text.XML.DSig as SAML
 import Util.Core
 import Util.Types
@@ -47,37 +54,56 @@ import qualified Web.Scim.Class.User as Scim
 import qualified Web.Scim.Filter as Filter
 import qualified Web.Scim.Filter as Scim
 import qualified Web.Scim.Schema.Common as Scim
+import qualified Web.Scim.Schema.Error as Scim
 import qualified Web.Scim.Schema.ListResponse as Scim
 import qualified Web.Scim.Schema.Meta as Scim
 import qualified Web.Scim.Schema.PatchOp as Scim.PatchOp
+import qualified Web.Scim.Schema.User as Scim
 import qualified Web.Scim.Schema.User as Scim.User
-import qualified Web.Scim.Schema.User.Email as Email
+import qualified Web.Scim.Schema.User.Email as Scim.Email
 import qualified Web.Scim.Schema.User.Phone as Phone
-import Wire.API.User.IdentityProvider
+import qualified Wire.API.Team.Member as Member
+import Wire.API.Team.Role (Role, defaultRole)
+import Wire.API.User
+import Wire.API.User.IdentityProvider hiding (handle, team)
 import Wire.API.User.RichInfo
 import Wire.API.User.Scim
 
+-- | Take apart a 'ValidScimId', using 'SAML.UserRef' if available, otherwise 'Email'.
+runValidScimIdEither :: (SAML.UserRef -> a) -> (EmailAddress -> a) -> ValidScimId -> a
+runValidScimIdEither doUref doEmail = these doEmail doUref (\_ uref -> doUref uref) . validScimIdAuthInfo
+
 -- | Call 'registerTestIdP', then 'registerScimToken'.  The user returned is the owner of the team;
 -- the IdP is registered with the team; the SCIM token can be used to manipulate the team.
-registerIdPAndScimToken :: HasCallStack => TestSpar (ScimToken, (UserId, TeamId, IdP))
+registerIdPAndScimToken :: (HasCallStack) => TestSpar (ScimToken, (UserId, TeamId, IdP))
 registerIdPAndScimToken = do
-  team@(_owner, teamid, idp) <- registerTestIdP
-  (,team) <$> registerScimToken teamid (Just (idp ^. idpId))
+  env <- ask
+  (owner, teamid) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+  idp <- registerTestIdP owner
+  token <- registerScimToken teamid (Just (idp ^. idpId))
+  let team = (owner, teamid, idp)
+  pure (token, team)
 
 -- | Call 'registerTestIdPWithMeta', then 'registerScimToken'.  The user returned is the owner of the team;
 -- the IdP is registered with the team; the SCIM token can be used to manipulate the team.
-registerIdPAndScimTokenWithMeta :: HasCallStack => TestSpar (ScimToken, (UserId, TeamId, IdP, (IdPMetadataInfo, SAML.SignPrivCreds)))
+registerIdPAndScimTokenWithMeta :: (HasCallStack) => TestSpar (ScimToken, (UserId, TeamId, IdP, (IdPMetadataInfo, SAML.SignPrivCreds)))
 registerIdPAndScimTokenWithMeta = do
-  team@(_owner, teamid, idp, _) <- registerTestIdPWithMeta
+  env <- ask
+  (owner, teamid) <- call $ createUserWithTeam (env ^. teBrig) (env ^. teGalley)
+  (idp, meta) <- registerTestIdPWithMeta owner
+  let team = (owner, teamid, idp, meta)
   (,team) <$> registerScimToken teamid (Just (idp ^. idpId))
 
 -- | Create a fresh SCIM token and register it for the team.
-registerScimToken :: HasCallStack => TeamId -> Maybe IdPId -> TestSpar ScimToken
+--
+-- FUTUREWORK(mangoiv): this is an integration test, it should use the
+-- API, and not directly manipulate the database
+registerScimToken :: (HasCallStack) => TeamId -> Maybe IdPId -> TestSpar ScimToken
 registerScimToken teamid midpid = do
   tok <-
     ScimToken <$> do
       code <- liftIO UUID.nextRandom
-      pure $ "scim-test-token/" <> "team=" <> idToText teamid <> "/code=" <> UUID.toText code
+      pure $ "scim-test-token/team=" <> idToText teamid <> "/code=" <> UUID.toText code
   scimTokenId <- randomId
   now <- liftIO getCurrentTime
   runSpar $
@@ -88,7 +114,8 @@ registerScimToken teamid midpid = do
           stiId = scimTokenId,
           stiCreatedAt = now,
           stiIdP = midpid,
-          stiDescr = "test token"
+          stiDescr = "test token",
+          stiName = "test token"
         }
   pure tok
 
@@ -110,12 +137,11 @@ randomScimUserWithSubject = do
 
 -- | See 'randomScimUser', 'randomScimUserWithSubject'.
 randomScimUserWithSubjectAndRichInfo ::
-  (HasCallStack, MonadRandom m, MonadIO m) =>
+  (HasCallStack, MonadRandom m) =>
   RichInfo ->
   m (Scim.User.User SparTag, SAML.UnqualifiedNameID)
 randomScimUserWithSubjectAndRichInfo richInfo = do
   suffix <- cs <$> replicateM 20 (getRandomR ('a', 'z'))
-  emails <- getRandomR (0, 3) >>= \n -> replicateM n randomScimEmail
   phones <- getRandomR (0, 3) >>= \n -> replicateM n randomScimPhone
   -- Related, but non-trivial to re-use here: 'nextSubject'
   (externalId, subj) <-
@@ -131,40 +157,52 @@ randomScimUserWithSubjectAndRichInfo richInfo = do
         )
       _ -> error "randomScimUserWithSubject: impossible"
   pure
-    ( (Scim.User.empty userSchemas ("scimuser_" <> suffix) (ScimUserExtra richInfo))
+    ( (Scim.User.empty @SparTag userSchemas ("scimuser_" <> suffix) (ScimUserExtra richInfo))
         { Scim.User.displayName = Just ("ScimUser" <> suffix),
           Scim.User.externalId = Just externalId,
-          Scim.User.emails = emails,
-          Scim.User.phoneNumbers = phones
+          Scim.User.emails = [],
+          Scim.User.phoneNumbers = phones,
+          Scim.User.roles = ["member"]
+          -- if we don't add this role here explicitly, some tests may show confusing failures
+          -- involving [] or null being changed to ["member"] during a create or update
+          -- operation.
         },
       subj
     )
 
-randomScimUserWithEmail :: MonadRandom m => m (Scim.User.User SparTag, Email)
+-- | Use the email address as externalId.
+--
+-- FUTUREWORK: since https://wearezeta.atlassian.net/browse/SQSERVICES-157 is done, we also
+-- support externalIds that are not emails, and storing email addresses in `emails` in the
+-- scim schema.  `randomScimUserWithEmail` is from a time where non-idp-authenticated users
+-- could only be provisioned with email as externalId.  we should probably rework all that.
+randomScimUserWithEmail :: (MonadRandom m) => m (Scim.User.User SparTag, EmailAddress)
 randomScimUserWithEmail = do
   suffix <- cs <$> replicateM 7 (getRandomR ('0', '9'))
-  let email = Email ("email" <> suffix) "example.com"
+  let email = unsafeEmailAddress ("email" <> encodeUtf8 suffix) "example.com"
       externalId = fromEmail email
   pure
-    ( (Scim.User.empty userSchemas ("scimuser_" <> suffix) (ScimUserExtra mempty))
+    ( (Scim.User.empty @SparTag userSchemas ("scimuser_" <> suffix) (ScimUserExtra mempty))
         { Scim.User.displayName = Just ("ScimUser" <> suffix),
           Scim.User.externalId = Just externalId
         },
       email
     )
 
-randomScimEmail :: MonadRandom m => m Email.Email
-randomScimEmail = do
-  let typ :: Maybe Text = Nothing
-      primary :: Maybe Scim.ScimBool = Nothing -- TODO: where should we catch users with more than one
-      -- primary email?
-  value :: Email.EmailAddress2 <- do
-    localpart <- cs <$> replicateM 15 (getRandomR ('a', 'z'))
-    domainpart <- (<> ".com") . cs <$> replicateM 15 (getRandomR ('a', 'z'))
-    pure . Email.EmailAddress2 $ Email.unsafeEmailAddress localpart domainpart
-  pure Email.Email {..}
+randomScimUserWithNick :: (MonadRandom m) => m (Scim.User.User SparTag, Text)
+randomScimUserWithNick = do
+  suffix <- cs <$> replicateM 7 (getRandomR ('0', '9'))
+  let nick = "nick" <> suffix
+      externalId = nick
+  pure
+    ( (Scim.User.empty @SparTag userSchemas ("scimuser_" <> suffix) (ScimUserExtra mempty))
+        { Scim.User.displayName = Just ("ScimUser" <> suffix),
+          Scim.User.externalId = Just externalId
+        },
+      nick
+    )
 
-randomScimPhone :: MonadRandom m => m Phone.Phone
+randomScimPhone :: (MonadRandom m) => m Phone.Phone
 randomScimPhone = do
   let typ :: Maybe Text = Nothing
   value :: Maybe Text <- do
@@ -177,57 +215,74 @@ randomScimPhone = do
 ----------------------------------------------------------------------------
 -- API wrappers
 
+createUser' ::
+  (HasCallStack) =>
+  ScimToken ->
+  Scim.User.User SparTag ->
+  TestSpar ResponseLBS
+createUser' tok user = do
+  env <- ask
+  createUser_
+    (Just tok)
+    user
+    (env ^. teSpar)
+
 -- | Create a user.
 createUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   Scim.User.User SparTag ->
   TestSpar (Scim.StoredUser SparTag)
 createUser tok user = do
-  env <- ask
-  r <-
-    createUser_
-      (Just tok)
-      user
-      (env ^. teSpar)
-      <!! const 201 === statusCode
+  r <- createUser' tok user <!! const 201 === statusCode
   pure (responseJsonUnsafe r)
+
+updateUser' ::
+  (HasCallStack) =>
+  ScimToken ->
+  UserId ->
+  Scim.User.User SparTag ->
+  TestSpar ResponseLBS
+updateUser' tok userid user = do
+  env <- ask
+  updateUser_ (Just tok) (Just userid) user (env ^. teSpar)
 
 -- | Update a user.
 updateUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   UserId ->
   Scim.User.User SparTag ->
   TestSpar (Scim.StoredUser SparTag)
 updateUser tok userid user = do
-  env <- ask
-  r <-
-    updateUser_
-      (Just tok)
-      (Just userid)
-      user
-      (env ^. teSpar)
-      <!! const 200 === statusCode
+  r <- updateUser' tok userid user <!! const 200 === statusCode
   pure (responseJsonUnsafe r)
 
 -- | Patch a user
 patchUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   UserId ->
   Scim.PatchOp.PatchOp SparTag ->
   TestSpar (Scim.StoredUser SparTag)
 patchUser tok uid patchOp = do
-  env <- ask
-  r <-
-    patchUser_ (Just tok) (Just uid) patchOp (env ^. teSpar)
-      <!! const 200 === statusCode
+  r <- patchUser' tok uid patchOp <!! const 200 === statusCode
   pure (responseJsonUnsafe r)
+
+-- | Patch a user
+patchUser' ::
+  (HasCallStack) =>
+  ScimToken ->
+  UserId ->
+  Scim.PatchOp.PatchOp SparTag ->
+  TestSpar ResponseLBS
+patchUser' tok uid patchOp = do
+  env <- ask
+  patchUser_ (Just tok) (Just uid) patchOp (env ^. teSpar)
 
 -- | Delete a user.
 deleteUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   UserId ->
   TestSpar (Scim.StoredUser SparTag)
@@ -243,10 +298,10 @@ deleteUser tok userid = do
 
 -- | List all users.
 listUsers ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   Maybe Scim.Filter ->
-  TestSpar [(Scim.StoredUser SparTag)]
+  TestSpar [Scim.StoredUser SparTag]
 listUsers tok mbFilter = do
   env <- ask
   r <-
@@ -264,7 +319,7 @@ listUsers tok mbFilter = do
 
 -- | Get a user.
 getUser ::
-  HasCallStack =>
+  (HasCallStack) =>
   ScimToken ->
   UserId ->
   TestSpar (Scim.StoredUser SparTag)
@@ -280,10 +335,10 @@ getUser tok userid = do
 
 -- | Create a SCIM token.
 createToken ::
-  HasCallStack =>
+  (HasCallStack) =>
   UserId ->
   CreateScimToken ->
-  TestSpar CreateScimTokenResponse
+  TestSpar CreateScimTokenResponseV7
 createToken zusr payload = do
   env <- ask
   r <-
@@ -294,9 +349,28 @@ createToken zusr payload = do
       <!! const 200 === statusCode
   pure (responseJsonUnsafe r)
 
+createTokenFailsWith ::
+  (HasCallStack) =>
+  UserId ->
+  CreateScimToken ->
+  Int ->
+  Lazy.Text ->
+  TestSpar ()
+createTokenFailsWith zusr payload expectedStatus expectedLabel = do
+  env <- ask
+  void $
+    createToken_ zusr payload (env ^. teSpar)
+      <!! do
+        const expectedStatus === statusCode
+        const (Just expectedLabel) === errorLabel
+
+-- | Get error label from the response (for use in assertions).
+errorLabel :: Response (Maybe Lazy.ByteString) -> Maybe Lazy.Text
+errorLabel = fmap Error.label . responseJsonMaybe
+
 -- | Delete a SCIM token.
 deleteToken ::
-  HasCallStack =>
+  (HasCallStack) =>
   UserId ->
   -- | Token to delete
   ScimTokenId ->
@@ -311,7 +385,7 @@ deleteToken zusr tokenid = do
 
 -- | List SCIM tokens.
 listTokens ::
-  HasCallStack =>
+  (HasCallStack) =>
   UserId ->
   TestSpar ScimTokenList
 listTokens zusr = do
@@ -343,14 +417,15 @@ createUser_ auth user spar_ = do
   -- still some confusion here about the distinction between *validated*
   -- emails and *scim-provided* emails, which are two entirely
   -- different things.
-  call . post $
-    ( spar_
-        . paths ["scim", "v2", "Users"]
-        . scimAuth auth
-        . contentScim
-        . json user
-        . acceptScim
-    )
+  call
+    . post
+    $ ( spar_
+          . paths ["scim", "v2", "Users"]
+          . scimAuth auth
+          . contentScim
+          . json user
+          . acceptScim
+      )
 
 -- | Update a user.
 updateUser_ ::
@@ -365,28 +440,30 @@ updateUser_ ::
   SparReq ->
   TestSpar ResponseLBS
 updateUser_ auth muid user spar_ = do
-  call . put $
-    ( spar_
-        . paths (["scim", "v2", "Users"] <> maybeToList (toByteString' <$> muid))
-        . scimAuth auth
-        . contentScim
-        . json user
-        . acceptScim
-    )
+  call
+    . put
+    $ ( spar_
+          . paths (["scim", "v2", "Users"] <> maybeToList (toByteString' <$> muid))
+          . scimAuth auth
+          . contentScim
+          . json user
+          . acceptScim
+      )
 
 -- | Patch a user
 patchUser_ :: Maybe ScimToken -> Maybe UserId -> Scim.PatchOp.PatchOp SparTag -> SparReq -> TestSpar ResponseLBS
 patchUser_ auth muid patchop spar_ =
-  call . patch $
-    ( spar_
-        . paths (["scim", "v2", "Users"] <> maybeToList (toByteString' <$> muid))
-        . scimAuth auth
-        . contentScim
-        . json patchop
-        . acceptScim
-    )
+  call
+    . patch
+    $ ( spar_
+          . paths (["scim", "v2", "Users"] <> maybeToList (toByteString' <$> muid))
+          . scimAuth auth
+          . contentScim
+          . json patchop
+          . acceptScim
+      )
 
--- | Update a user.
+-- | Delete a user.
 deleteUser_ ::
   -- | Authentication
   Maybe ScimToken ->
@@ -396,13 +473,14 @@ deleteUser_ ::
   SparReq ->
   TestSpar ResponseLBS
 deleteUser_ auth uid spar_ = do
-  call . delete $
-    ( spar_
-        . paths (["scim", "v2", "Users"] <> (toByteString' <$> maybeToList uid))
-        . scimAuth auth
-        . contentScim
-        . acceptScim
-    )
+  call
+    . delete
+    $ ( spar_
+          . paths (["scim", "v2", "Users"] <> (toByteString' <$> maybeToList uid))
+          . scimAuth auth
+          . contentScim
+          . acceptScim
+      )
 
 -- | List all users.
 listUsers_ ::
@@ -414,18 +492,19 @@ listUsers_ ::
   SparReq ->
   TestSpar ResponseLBS
 listUsers_ auth mbFilter spar_ = do
-  call . get $
-    ( spar_
-        . paths ["scim", "v2", "Users"]
-        . queryItem' "filter" (toByteString' . Scim.renderFilter <$> mbFilter)
-        . scimAuth auth
-        . acceptScim
-    )
+  call
+    . get
+    $ ( spar_
+          . paths ["scim", "v2", "Users"]
+          . queryItem' "filter" (toByteString' . Scim.renderFilter <$> mbFilter)
+          . scimAuth auth
+          . acceptScim
+      )
 
 filterBy :: Text -> Text -> Filter.Filter
 filterBy name value = Filter.FilterAttrCompare (Filter.topLevelAttrPath name) Filter.OpEq (Filter.ValString value)
 
-filterForStoredUser :: HasCallStack => Scim.StoredUser SparTag -> Filter.Filter
+filterForStoredUser :: (HasCallStack) => Scim.StoredUser SparTag -> Filter.Filter
 filterForStoredUser = filterBy "externalId" . fromJust . Scim.User.externalId . Scim.value . Scim.thing
 
 -- | Get one user.
@@ -438,12 +517,13 @@ getUser_ ::
   SparReq ->
   TestSpar ResponseLBS
 getUser_ auth userid spar_ = do
-  call . get $
-    ( spar_
-        . paths ["scim", "v2", "Users", toByteString' userid]
-        . scimAuth auth
-        . acceptScim
-    )
+  call
+    . get
+    $ ( spar_
+          . paths ["scim", "v2", "Users", toByteString' userid]
+          . scimAuth auth
+          . acceptScim
+      )
 
 -- | Create a SCIM token.
 createToken_ ::
@@ -454,14 +534,16 @@ createToken_ ::
   SparReq ->
   TestSpar ResponseLBS
 createToken_ userid payload spar_ = do
-  call . post $
-    ( spar_
-        . paths ["scim", "auth-tokens"]
-        . zUser userid
-        . contentJson
-        . json payload
-        . acceptJson
-    )
+  call
+    . post
+    $ ( versioned "v6"
+          . spar_
+          . paths ["scim", "auth-tokens"]
+          . zUser userid
+          . contentJson
+          . json payload
+          . acceptJson
+      )
 
 -- | Delete a SCIM token.
 deleteToken_ ::
@@ -473,12 +555,13 @@ deleteToken_ ::
   SparReq ->
   TestSpar ResponseLBS
 deleteToken_ userid tokenid spar_ = do
-  call . delete $
-    ( spar_
-        . paths ["scim", "auth-tokens"]
-        . queryItem "id" (toByteString' tokenid)
-        . zUser userid
-    )
+  call
+    . delete
+    $ ( spar_
+          . paths ["scim", "auth-tokens"]
+          . queryItem "id" (toByteString' tokenid)
+          . zUser userid
+      )
 
 -- | List SCIM tokens.
 listTokens_ ::
@@ -488,11 +571,12 @@ listTokens_ ::
   SparReq ->
   TestSpar ResponseLBS
 listTokens_ userid spar_ = do
-  call . get $
-    ( spar_
-        . paths ["scim", "auth-tokens"]
-        . zUser userid
-    )
+  call
+    . get
+    $ ( spar_
+          . paths ["scim", "auth-tokens"]
+          . zUser userid
+      )
 
 ----------------------------------------------------------------------------
 -- Utilities
@@ -537,16 +621,18 @@ class IsUser u where
   maybeTenant :: Maybe (u -> Maybe SAML.Issuer)
   maybeSubject :: Maybe (u -> Maybe SAML.NameID)
   maybeScimExternalId :: Maybe (u -> Maybe Text)
+  maybeLocale :: Maybe (u -> Maybe Locale)
 
 -- | 'ValidScimUser' is tested in ScimSpec.hs exhaustively with literal inputs, so here we assume it
 -- is correct and don't aim to verify that name, handle, etc correspond to ones in 'vsuUser'.
 instance IsUser ValidScimUser where
   maybeUserId = Nothing
-  maybeHandle = Just (Just . view vsuHandle)
-  maybeName = Just (Just . view vsuName)
-  maybeTenant = Just (^? (vsuExternalId . veidUref . SAML.uidTenant))
-  maybeSubject = Just (^? (vsuExternalId . veidUref . SAML.uidSubject))
-  maybeScimExternalId = Just (runValidExternalId Intra.urefToExternalId (Just . fromEmail) . view vsuExternalId)
+  maybeHandle = Just (Just <$> handle)
+  maybeName = Just (Just <$> (.name))
+  maybeTenant = Just (fmap SAML._uidTenant . veidUref . externalId)
+  maybeSubject = Just (fmap SAML._uidSubject . veidUref . externalId)
+  maybeScimExternalId = Just (runValidScimIdEither Intra.urefToExternalId (Just . fromEmail) . externalId)
+  maybeLocale = Just locale
 
 instance IsUser (WrappedScimStoredUser SparTag) where
   maybeUserId = Just $ scimUserId . fromWrappedScimStoredUser
@@ -555,37 +641,47 @@ instance IsUser (WrappedScimStoredUser SparTag) where
   maybeTenant = maybeTenant <&> _wrappedStoredUserToWrappedUser
   maybeSubject = maybeSubject <&> _wrappedStoredUserToWrappedUser
   maybeScimExternalId = maybeScimExternalId <&> _wrappedStoredUserToWrappedUser
+  maybeLocale = maybeLocale <&> _wrappedStoredUserToWrappedUser
 
 _wrappedStoredUserToWrappedUser :: (WrappedScimUser tag -> a) -> (WrappedScimStoredUser tag -> a)
 _wrappedStoredUserToWrappedUser f = f . WrappedScimUser . Scim.value . Scim.thing . fromWrappedScimStoredUser
 
 instance IsUser (WrappedScimUser SparTag) where
   maybeUserId = Nothing
-  maybeHandle = Just (Just . Handle . Scim.User.userName . fromWrappedScimUser)
+  maybeHandle = Just (parseHandle . Scim.User.userName . fromWrappedScimUser)
   maybeName = Just (fmap Name . Scim.User.displayName . fromWrappedScimUser)
   maybeTenant = Nothing
   maybeSubject = Nothing
   maybeScimExternalId = Just $ Scim.User.externalId . fromWrappedScimUser
+  maybeLocale =
+    Just
+      ( \u ->
+          case Scim.User.preferredLanguage (fromWrappedScimUser u) >>= (fmap (flip Locale Nothing) . parseLanguage) of
+            -- this should match the default user locale in brig options
+            Nothing -> Just (Locale (Language EN) Nothing)
+            Just l -> Just l
+      )
 
 instance IsUser User where
   maybeUserId = Just userId
   maybeHandle = Just userHandle
   maybeName = Just (Just . userDisplayName)
   maybeTenant = Just $ \usr ->
-    Intra.veidFromBrigUser usr Nothing
+    Intra.veidFromBrigUser usr Nothing Nothing
       & either
         (const Nothing)
-        (preview (veidUref . SAML.uidTenant))
+        (fmap SAML._uidTenant . veidUref)
   maybeSubject = Just $ \usr ->
-    Intra.veidFromBrigUser usr Nothing
+    Intra.veidFromBrigUser usr Nothing Nothing
       & either
         (const Nothing)
-        (preview (veidUref . SAML.uidSubject))
+        (fmap SAML._uidSubject . veidUref)
   maybeScimExternalId = Just $ \usr ->
-    Intra.veidFromBrigUser usr Nothing
+    Intra.veidFromBrigUser usr Nothing Nothing
       & either
         (const Nothing)
-        (runValidExternalId Intra.urefToExternalId (Just . fromEmail))
+        (runValidScimIdEither Intra.urefToExternalId (Just . fromEmail))
+  maybeLocale = Just $ Just . userLocale
 
 -- | For all properties that are present in both @u1@ and @u2@, check that they match.
 --
@@ -607,11 +703,12 @@ userShouldMatch u1 u2 = liftIO $ do
   check "tenant" maybeTenant
   check "subject" maybeSubject
   check "scim externalId" maybeScimExternalId
+  check "preferred language maps to locale" maybeLocale
   where
     check ::
       (Eq a, Show a) =>
       Text -> -- field name
-      (forall u. IsUser u => Maybe (u -> a)) -> -- accessor (polymorphic)
+      (forall u. (IsUser u) => Maybe (u -> a)) -> -- accessor (polymorphic)
       IO ()
     check field getField = case (getField <&> ($ u1), getField <&> ($ u2)) of
       (Just a1, Just a2) -> (field, a1) `shouldBe` (field, a2)
@@ -621,7 +718,51 @@ userShouldMatch u1 u2 = liftIO $ do
 -- floor.  This function calls the spar functions that do that.  This allows us to express
 -- what we expect a user that comes back from spar to look like in terms of what it looked
 -- like when we sent it there.
-whatSparReturnsFor :: HasCallStack => IdP -> Int -> Scim.User.User SparTag -> Either String (Scim.User.User SparTag)
-whatSparReturnsFor idp richInfoSizeLimit =
-  either (Left . show) (Right . synthesizeScimUser)
-    . validateScimUser' "whatSparReturnsFor" (Just idp) richInfoSizeLimit
+whatSparReturnsFor :: (HasCallStack) => IdP -> Int -> Scim.User.User SparTag -> TestSpar (Either String (Scim.User.User SparTag))
+whatSparReturnsFor idp richInfoSizeLimit user = do
+  eitherValidatedScimUser <- runSpar $ runError @Scim.ScimError $ validateScimUser' "whatSparReturnsFor" (Just idp) richInfoSizeLimit user
+  pure $ case eitherValidatedScimUser of
+    Left err -> Left (show err)
+    Right validatedScimUser -> Right $ synthesizeScimUser validatedScimUser
+
+setPreferredLanguage :: Language -> Scim.User.User SparTag -> Scim.User.User SparTag
+setPreferredLanguage lang u =
+  u {Scim.preferredLanguage = Scim.preferredLanguage u <|> Just (lan2Text lang)}
+
+setDefaultRoleAndEmailsIfEmpty :: Scim.User.User a -> Scim.User.User a
+setDefaultRoleAndEmailsIfEmpty u =
+  u
+    { Scim.User.roles = case Scim.User.roles u of
+        [] -> [cs $ toByteString' defaultRole]
+        xs -> xs,
+      -- when the emails field is empty, we try to populate it with the externalId
+      Scim.User.emails = case Scim.User.emails u of
+        [] -> maybeToList ((\e -> Scim.Email.Email Nothing (Scim.Email.EmailAddress e) Nothing) <$> (emailAddressText =<< (Scim.User.externalId u)))
+        xs -> xs
+    }
+
+-- this is not always correct, but hopefully for the tests that we're using it in it'll do.
+scimifyBrigUserHack :: User -> EmailAddress -> User
+scimifyBrigUserHack usr email =
+  usr
+    { userManagedBy = ManagedByScim,
+      userIdentity = Just (SSOIdentity (UserScimExternalId (fromEmail email)) (Just email))
+    }
+
+getDefaultUserLocale :: TestSpar Locale
+getDefaultUserLocale = do
+  env <- ask
+  LocaleUpdate defLocale <-
+    fmap responseJsonUnsafe
+      . call
+      . get
+      $ ( (env ^. teBrig)
+            . path "/i/users/locale"
+            . expect2xx
+        )
+  pure defLocale
+
+checkTeamMembersRole :: (HasCallStack) => TeamId -> UserId -> UserId -> Role -> TestSpar ()
+checkTeamMembersRole tid owner uid role = do
+  [member] <- filter ((== uid) . (^. Member.userId)) <$> getTeamMembers owner tid
+  liftIO $ (member ^. Member.permissions . to Member.permissionsRole) `shouldBe` Just role

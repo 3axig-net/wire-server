@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,76 +17,32 @@
 
 module CargoHold.API.Error where
 
-import CargoHold.Types.V3.Resumable (Offset, TotalSize)
-import Data.Text.Lazy.Builder
-import Data.Text.Lazy.Builder.Int
 import Imports
 import Network.HTTP.Types.Status
 import Network.Wai.Utilities.Error
+import Wire.API.Error
+import Wire.API.Error.Cargohold
 
 assetTooLarge :: Error
-assetTooLarge = mkError status413 "client-error" "Asset too large."
+assetTooLarge = errorToWai @'AssetTooLarge
 
 unauthorised :: Error
-unauthorised = mkError status403 "unauthorised" "Unauthorised operation."
+unauthorised = errorToWai @'Unauthorised
 
 invalidLength :: Error
-invalidLength = mkError status400 "invalid-length" "Invalid content length."
+invalidLength = errorToWai @'InvalidLength
 
 assetNotFound :: Error
-assetNotFound = mkError status404 "not-found" "Asset not found."
+assetNotFound = errorToWai @'AssetNotFound
 
-invalidMD5 :: Error
-invalidMD5 = mkError status400 "client-error" "Invalid MD5."
+unverifiedUser :: Error
+unverifiedUser = errorToWai @'UnverifiedUser
 
-requestTimeout :: Error
-requestTimeout =
-  mkError
-    status408
-    "request-timeout"
-    "The request timed out. The server was still expecting more data \
-    \but none was sent over an extended period of time. Idle connections \
-    \will be closed."
+userNotFound :: Error
+userNotFound = errorToWai @'UserNotFound
 
-invalidOffset :: Offset -> Offset -> Error
-invalidOffset expected given =
-  mkError status409 "invalid-offset" $
-    toLazyText $
-      "Invalid offset: "
-        <> "expected: "
-        <> decimal expected
-        <> ", "
-        <> "given: "
-        <> decimal given
-        <> "."
-
-uploadTooSmall :: Error
-uploadTooSmall =
-  mkError
-    status403
-    "client-error"
-    "The current chunk size is \
-    \smaller than the minimum allowed."
-
-uploadTooLarge :: Error
-uploadTooLarge =
-  mkError
-    status413
-    "client-error"
-    "The current chunk size + offset \
-    \is larger than the full upload size."
-
-uploadIncomplete :: TotalSize -> TotalSize -> Error
-uploadIncomplete expected actual =
-  mkError status403 "client-error" $
-    toLazyText $
-      "The upload is incomplete: "
-        <> "expected size: "
-        <> decimal expected
-        <> ", "
-        <> "current size: "
-        <> decimal actual
-        <> "."
+noMatchingAssetEndpoint :: Error
+noMatchingAssetEndpoint = errorToWai @'NoMatchingAssetEndpoint
 
 clientError :: LText -> Error
 clientError = mkError status400 "client-error"

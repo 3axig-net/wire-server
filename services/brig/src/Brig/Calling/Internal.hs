@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,12 +18,13 @@
 module Brig.Calling.Internal where
 
 import Control.Lens ((?~))
-import qualified Data.ByteString.Char8 as BS
+import Data.ByteString.Char8 qualified as BS
 import Data.Misc (ensureHttpsUrl)
+import Data.Text qualified as T
 import Imports
-import qualified URI.ByteString as URI
-import qualified URI.ByteString.QQ as URI
-import qualified Wire.API.Call.Config as Public
+import URI.ByteString qualified as URI
+import URI.ByteString.QQ qualified as URI
+import Wire.API.Call.Config qualified as Public
 import Wire.Network.DNS.SRV (SrvTarget (..))
 
 -- FUTUREWORK: Extract function to translate SrvTarget to HttpsUrl and use it
@@ -40,3 +41,13 @@ sftServerFromSrvTarget (SrvTarget host port) =
       if BS.last bs == '.'
         then BS.init bs
         else bs
+
+base26 :: Integer -> Text
+base26 0 = "a"
+base26 num = T.pack $ go [] num
+  where
+    go :: String -> Integer -> String
+    go acc 0 = acc
+    go acc n =
+      let (q, r) = divMod n 26
+       in go (chr (fromIntegral r + ord 'a') : acc) q

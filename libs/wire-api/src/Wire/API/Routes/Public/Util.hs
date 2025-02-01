@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,9 +21,10 @@
 module Wire.API.Routes.Public.Util where
 
 import Control.Comonad
+import Data.Maybe
 import Data.SOP (I (..), NS (..))
 import Servant
-import Servant.Swagger.Internal.Orphans ()
+import Servant.OpenApi.Internal.Orphans ()
 import Wire.API.Routes.MultiVerb
 
 instance
@@ -35,7 +36,7 @@ instance
 
   fromUnion (Z (I x)) = Existed x
   fromUnion (S (Z (I x))) = Created x
-  fromUnion (S (S x)) = case x of
+  fromUnion (S (S x)) = case x of {}
 
 -- Note: order is important here; if you swap Existed with Created, the wrong
 -- status codes will be returned. Keep the Order in ResponseForExistedCreated
@@ -60,6 +61,10 @@ type ResponsesForExistedCreated eDesc cDesc a =
 data UpdateResult a
   = Unchanged
   | Updated !a
+  deriving (Functor)
+
+mkUpdateResult :: Maybe a -> UpdateResult a
+mkUpdateResult = maybe Unchanged Updated
 
 type UpdateResponses unchangedDesc updatedDesc a =
   '[ RespondEmpty 204 unchangedDesc,
@@ -75,4 +80,15 @@ instance
 
   fromUnion (Z (I ())) = Unchanged
   fromUnion (S (Z (I a))) = Updated a
-  fromUnion (S (S x)) = case x of
+  fromUnion (S (S x)) = case x of {}
+
+type PaginationDocs =
+  "The IDs returned by this endpoint are paginated. To get the first page, make\
+  \ a call with the `paging_state` field set to `null` (or omitted). Whenever the\
+  \ `has_more` field of the response is set to `true`, more results are available,\
+  \ and they can be obtained by calling the endpoint again, but this time passing\
+  \ the value of `paging_state` returned by the previous call. One can continue in\
+  \ this fashion until all results are returned, which is indicated by `has_more`\
+  \ being `false`. Note that `paging_state` should be considered an opaque token.\
+  \ It should not be inspected, or stored, or reused across multiple unrelated\
+  \ invocations of the endpoint."

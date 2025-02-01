@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,26 +19,27 @@
 
 module Data.Domain where
 
+import Cassandra
 import Control.Lens ((?~))
 import Data.Aeson (FromJSON, FromJSONKey, FromJSONKeyFunction (FromJSONKeyTextParser), ToJSON, ToJSONKey (toJSONKey))
-import qualified Data.Aeson as Aeson
+import Data.Aeson qualified as Aeson
 import Data.Aeson.Types (toJSONKeyText)
 import Data.Attoparsec.ByteString ((<?>))
-import qualified Data.Attoparsec.ByteString.Char8 as Atto
+import Data.Attoparsec.ByteString.Char8 qualified as Atto
 import Data.Bifunctor (Bifunctor (first))
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Builder as Builder
-import qualified Data.ByteString.Char8 as BS.Char8
+import Data.Binary
+import Data.ByteString qualified as BS
+import Data.ByteString.Builder qualified as Builder
+import Data.ByteString.Char8 qualified as BS.Char8
 import Data.ByteString.Conversion
-import Data.Schema hiding (opt)
-import Data.String.Conversions (cs)
-import qualified Data.Swagger as S
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text.E
+import Data.OpenApi qualified as S
+import Data.Schema
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text.E
 import Imports hiding (isAlphaNum)
 import Servant (FromHttpApiData (..), ToHttpApiData (..))
 import Test.QuickCheck (Arbitrary (arbitrary))
-import qualified Test.QuickCheck as QC
+import Test.QuickCheck qualified as QC
 import Util.Attoparsec (takeUpToWhile)
 
 -- | A Fully Qualified Domain Name (FQDN).
@@ -63,7 +64,7 @@ import Util.Attoparsec (takeUpToWhile)
 -- The domain will be normalized to lowercase when parsed.
 newtype Domain = Domain {_domainText :: Text}
   deriving stock (Eq, Ord, Generic, Show)
-  deriving newtype (S.ToParamSchema)
+  deriving newtype (S.ToParamSchema, Binary)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema Domain
 
 instance ToSchema Domain where
@@ -77,11 +78,14 @@ domainText = _domainText
 mkDomain :: Text -> Either String Domain
 mkDomain = Atto.parseOnly (domainParser <* Atto.endOfInput) . Text.E.encodeUtf8
 
+mkDomainFromBS :: ByteString -> Either String Domain
+mkDomainFromBS = runParser parser
+
 instance FromByteString Domain where
   parser = domainParser
 
 instance ToByteString Domain where
-  builder = Builder.lazyByteString . cs @Text @LByteString . _domainText
+  builder = Builder.lazyByteString . BS.Char8.fromStrict . Text.E.encodeUtf8 . _domainText
 
 instance FromHttpApiData Domain where
   parseUrlPiece = first Text.pack . mkDomain
@@ -177,3 +181,9 @@ instance Arbitrary DomainText where
           [ (1, pure ""),
             (5, x) -- to get longer labels
           ]
+
+instance Cql Domain where
+  ctype = Tagged TextColumn
+  toCql = CqlText . domainText
+  fromCql (CqlText txt) = mkDomain txt
+  fromCql _ = Left "Domain: Text expected"

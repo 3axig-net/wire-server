@@ -1,6 +1,10 @@
+-- Disabling to stop warnings on HasCallStack
+{-# LANGUAGE DeepSubsumption #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,16 +24,16 @@ module Gundeck.ThreadBudget.Internal where
 import Control.Exception.Safe (catchAny)
 import Control.Lens
 import Control.Monad.Catch (MonadCatch)
-import qualified Data.HashMap.Strict as HM
-import Data.Metrics (Metrics, counterIncr)
-import Data.Metrics.Middleware (gaugeSet, path)
-import qualified Data.Set as Set
+import Data.HashMap.Strict qualified as HM
+import Data.Set qualified as Set
 import Data.Time
 import Data.UUID (UUID, toText)
 import Data.UUID.V4 (nextRandom)
 import Gundeck.Options
 import Imports
-import qualified System.Logger.Class as LC
+import Prometheus (MonadMonitor)
+import Prometheus qualified as Prom
+import System.Logger.Class qualified as LC
 import UnliftIO.Async
 import UnliftIO.Exception (finally)
 
@@ -60,14 +64,14 @@ budgetSpent' = sum . fmap fst . filter (isJust . snd) . HM.elems . bmap
 cancelAllThreads :: ThreadBudgetState -> IO ()
 cancelAllThreads (ThreadBudgetState _ ref) =
   readIORef ref
-    >>= mapM_ cancel . catMaybes . fmap snd . HM.elems . bmap
+    >>= mapM_ cancel . mapMaybe snd . HM.elems . bmap
 
-mkThreadBudgetState :: HasCallStack => MaxConcurrentNativePushes -> IO ThreadBudgetState
+mkThreadBudgetState :: (HasCallStack) => MaxConcurrentNativePushes -> IO ThreadBudgetState
 mkThreadBudgetState limits = ThreadBudgetState limits <$> newIORef (BudgetMap 0 HM.empty)
 
 -- | Allocate the resources for a new action to be called (but don't call the action yet).
 allocate ::
-  IORef BudgetMap -> UUID -> Int -> MonadIO m => m Int
+  IORef BudgetMap -> UUID -> Int -> (MonadIO m) => m Int
 allocate ref key newspent =
   atomicModifyIORef' ref $
     \(BudgetMap spent hm) ->
@@ -77,17 +81,17 @@ allocate ref key newspent =
 
 -- | Register an already-allocated action with its 'Async'.
 register ::
-  IORef BudgetMap -> UUID -> Async () -> MonadIO m => m Int
+  IORef BudgetMap -> UUID -> Async () -> (MonadIO m) => m Int
 register ref key handle =
   atomicModifyIORef' ref $
     \(BudgetMap spent hm) ->
-      ( BudgetMap spent (HM.adjust (_2 .~ Just handle) key hm),
+      ( BudgetMap spent (HM.adjust (_2 ?~ handle) key hm),
         spent
       )
 
 -- | Remove an registered and/or allocated action from a 'BudgetMap'.
 unregister ::
-  IORef BudgetMap -> UUID -> MonadIO m => m ()
+  IORef BudgetMap -> UUID -> (MonadIO m) => m ()
 unregister ref key =
   atomicModifyIORef' ref $
     \bhm@(BudgetMap spent hm) ->
@@ -108,56 +112,62 @@ unregister ref key =
 -- update the budget.
 runWithBudget ::
   forall m.
-  (MonadIO m, LC.MonadLogger m, MonadUnliftIO m) =>
-  Metrics ->
+  (LC.MonadLogger m, MonadUnliftIO m, MonadMonitor m) =>
   ThreadBudgetState ->
   Int ->
   m () ->
   m ()
-runWithBudget metrics tbs spent = runWithBudget' metrics tbs spent ()
+runWithBudget tbs spent = runWithBudget' tbs spent ()
 
 -- | More flexible variant of 'runWithBudget' that allows the action to return a value.  With
 -- a default in case of budget exhaustion.
 runWithBudget' ::
   forall m a.
-  (MonadIO m, LC.MonadLogger m, MonadUnliftIO m) =>
-  Metrics ->
+  (MonadIO m, LC.MonadLogger m, MonadUnliftIO m, MonadMonitor m) =>
   ThreadBudgetState ->
   Int ->
   a ->
   m a ->
   m a
-runWithBudget' metrics (ThreadBudgetState limits ref) spent fallback action = do
+runWithBudget' (ThreadBudgetState limits ref) spent fallback action = do
   key <- liftIO nextRandom
   (`finally` unregister ref key) $ do
     oldsize <- allocate ref key spent
-    let softLimitBreached = maybe False (oldsize >=) (limits ^. limitSoft)
-        hardLimitBreached = maybe False (oldsize >=) (limits ^. limitHard)
+    let softLimitBreached = maybe False (oldsize >=) (limits ^. soft)
+        hardLimitBreached = maybe False (oldsize >=) (limits ^. hard)
     warnNoBudget softLimitBreached hardLimitBreached oldsize
-    if (maybe True (oldsize <) (limits ^. limitHard))
+    if maybe True (oldsize <) (limits ^. hard)
       then go key oldsize
       else pure fallback
   where
     go :: UUID -> Int -> m a
     go key oldsize = do
       LC.debug $
-        "key" LC..= (toText key)
-          LC.~~ "spent" LC..= oldsize
+        "key"
+          LC..= toText key
+          LC.~~ "spent"
+          LC..= oldsize
           LC.~~ LC.msg (LC.val "runWithBudget: go")
       handle <- async action
-      _ <- register ref key (const () <$> handle)
+      _ <- register ref key (void handle)
       wait handle
     -- iff soft and/or hard limit are breached, log a warning-level message.
     warnNoBudget :: Bool -> Bool -> Int -> m ()
     warnNoBudget False False _ = pure ()
-    warnNoBudget soft hard oldsize = do
-      let limit = if hard then "hard" else "soft"
-          metric = "net.nativepush." <> limit <> "_limit_breached"
-      counterIncr (path metric) metrics
+    warnNoBudget soft' hard' oldsize = do
+      let limit :: ByteString = if hard' then "hard" else "soft"
+          counter =
+            if hard'
+              then threadBudgetHardLimitBreachedCounter
+              else threadBudgetSoftLimitBreachedCounter
+      Prom.incCounter counter
       LC.warn $
-        "spent" LC..= show oldsize
-          LC.~~ "soft-breach" LC..= soft
-          LC.~~ "hard-breach" LC..= hard
+        "spent"
+          LC..= show oldsize
+          LC.~~ "soft-breach"
+          LC..= soft'
+          LC.~~ "hard-breach"
+          LC..= hard'
           LC.~~ LC.msg ("runWithBudget: " <> limit <> " limit reached")
 
 -- | Fork a thread that checks with the given frequency if any async handles stored in the
@@ -170,32 +180,80 @@ runWithBudget' metrics (ThreadBudgetState limits ref) spent fallback action = do
 -- Also, issue some metrics.
 watchThreadBudgetState ::
   forall m.
-  (MonadIO m, LC.MonadLogger m, MonadCatch m) =>
-  Metrics ->
+  (MonadIO m, LC.MonadLogger m, MonadCatch m, MonadMonitor m) =>
   ThreadBudgetState ->
   NominalDiffTime ->
   m ()
-watchThreadBudgetState metrics (ThreadBudgetState limits ref) freq = safeForever $ do
-  recordMetrics metrics limits ref
+watchThreadBudgetState (ThreadBudgetState limits ref) freq = safeForever $ do
+  recordMetrics limits ref
   removeStaleHandles ref
   threadDelayNominalDiffTime freq
 
 recordMetrics ::
   forall m.
-  (MonadIO m, LC.MonadLogger m, MonadCatch m) =>
-  Metrics ->
+  (MonadIO m, MonadMonitor m) =>
   MaxConcurrentNativePushes ->
   IORef BudgetMap ->
   m ()
-recordMetrics metrics limits ref = do
+recordMetrics limits ref = do
   (BudgetMap spent _) <- readIORef ref
-  gaugeSet (fromIntegral spent) (path "net.nativepush.thread_budget_allocated") metrics
-  forM_ (limits ^. limitHard) $ \lim ->
-    gaugeSet (fromIntegral lim) (path "net.nativepush.thread_budget_hard_limit") metrics
-  forM_ (limits ^. limitSoft) $ \lim ->
-    gaugeSet (fromIntegral lim) (path "net.nativepush.thread_budget_soft_limit") metrics
+  Prom.setGauge threadBudgetAllocatedGauge (fromIntegral spent)
+  forM_ (limits ^. hard) $ \lim ->
+    Prom.setGauge threadBudgetHardLimitGauge (fromIntegral lim)
+  forM_ (limits ^. soft) $ \lim ->
+    Prom.setGauge threadBudgetSoftLimitGauge (fromIntegral lim)
 
-threadDelayNominalDiffTime :: NominalDiffTime -> MonadIO m => m ()
+{-# NOINLINE threadBudgetAllocatedGauge #-}
+threadBudgetAllocatedGauge :: Prom.Gauge
+threadBudgetAllocatedGauge =
+  Prom.unsafeRegister $
+    Prom.gauge
+      Prom.Info
+        { Prom.metricName = "net_nativepush_thread_budget_allocated",
+          Prom.metricHelp = "Number of allocated threads for native pushes"
+        }
+
+{-# NOINLINE threadBudgetHardLimitGauge #-}
+threadBudgetHardLimitGauge :: Prom.Gauge
+threadBudgetHardLimitGauge =
+  Prom.unsafeRegister $
+    Prom.gauge
+      Prom.Info
+        { Prom.metricName = "net_nativepush_thread_budget_hard_limit",
+          Prom.metricHelp = "Hard limit for threads for native pushes"
+        }
+
+{-# NOINLINE threadBudgetSoftLimitGauge #-}
+threadBudgetSoftLimitGauge :: Prom.Gauge
+threadBudgetSoftLimitGauge =
+  Prom.unsafeRegister $
+    Prom.gauge
+      Prom.Info
+        { Prom.metricName = "net_nativepush_thread_budget_soft_limit",
+          Prom.metricHelp = "Soft limit for threads for native pushes"
+        }
+
+{-# NOINLINE threadBudgetHardLimitBreachedCounter #-}
+threadBudgetHardLimitBreachedCounter :: Prom.Counter
+threadBudgetHardLimitBreachedCounter =
+  Prom.unsafeRegister $
+    Prom.counter
+      Prom.Info
+        { Prom.metricName = "net_nativepush_thread_budget_hard_limit_breached",
+          Prom.metricHelp = "Number of times hard limit for threads for native pushes was breached"
+        }
+
+{-# NOINLINE threadBudgetSoftLimitBreachedCounter #-}
+threadBudgetSoftLimitBreachedCounter :: Prom.Counter
+threadBudgetSoftLimitBreachedCounter =
+  Prom.unsafeRegister $
+    Prom.counter
+      Prom.Info
+        { Prom.metricName = "net_nativepush_thread_budget_soft_limit_breached",
+          Prom.metricHelp = "Number of times soft limit for threads for native pushes was breached"
+        }
+
+threadDelayNominalDiffTime :: NominalDiffTime -> (MonadIO m) => m ()
 threadDelayNominalDiffTime = threadDelay . round . (* 1000000) . toRational
 
 staleTolerance :: NominalDiffTime
@@ -208,7 +266,7 @@ staleTolerance = 3
 -- then remove them from the budgetmap.
 removeStaleHandles ::
   forall m.
-  (MonadIO m, LC.MonadLogger m, MonadCatch m) =>
+  (MonadIO m, LC.MonadLogger m) =>
   IORef BudgetMap ->
   m ()
 removeStaleHandles ref = do
@@ -219,7 +277,7 @@ removeStaleHandles ref = do
   unless (null staleHandles) $ do
     warnStaleHandles (Set.size staleHandles) =<< readIORef ref
     forM_ staleHandles $ \key -> do
-      mapM_ waitCatch . join . fmap snd =<< HM.lookup key . bmap <$> readIORef ref
+      (mapM_ waitCatch . (snd =<<)) . HM.lookup key . bmap =<< readIORef ref
       unregister ref key
   isSanitary <- (\bm -> bspent bm == budgetSpent' bm) <$> readIORef ref
   unless isSanitary . LC.warn . LC.msg . LC.val $
@@ -238,7 +296,8 @@ removeStaleHandles ref = do
     warnStaleHandles :: Int -> BudgetMap -> m ()
     warnStaleHandles num (BudgetMap spent _) =
       LC.warn $
-        "spent" LC..= show spent
+        "spent"
+          LC..= show spent
           LC.~~ LC.msg ("watchThreadBudgetState: removed " <> show num <> " stale handles.")
 
 safeForever ::

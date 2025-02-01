@@ -1,36 +1,74 @@
 cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 803cec639d33ee7123c779f5eedc7c78efdda2ae46ab9ecfc58e088e168b8ebc
-
-name:           find-undead
-version:        1.0.0
-synopsis:       Backfill billing_team_member table
-category:       Network
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2020 Wire Swiss GmbH
-license:        AGPL-3
-build-type:     Simple
+name:          find-undead
+version:       1.0.0
+synopsis:      Backfill billing_team_member table
+category:      Network
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2020 Wire Swiss GmbH
+license:       AGPL-3
+build-type:    Simple
 
 executable find-undead
-  main-is: Main.hs
+  main-is:            Main.hs
   other-modules:
-      Options
-      Work
-      Paths_find_undead
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -funbox-strict-fields -threaded -with-rtsopts=-N -with-rtsopts=-T -rtsopts
+    Options
+    Paths_find_undead
+    Work
+
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -funbox-strict-fields -threaded "-with-rtsopts=-N -T" -rtsopts
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
       aeson
     , base
     , bloodhound
-    , brig-types
     , cassandra-util
     , conduit
     , containers
@@ -41,4 +79,6 @@ executable find-undead
     , text
     , tinylog
     , uuid
-  default-language: Haskell2010
+    , wire-api
+
+  default-language:   GHC2021

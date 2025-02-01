@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,23 +17,34 @@
 
 module Galley.DataMigration (cassandraSettingsParser, migrate) where
 
-import qualified Cassandra as C
-import qualified Cassandra.Settings as C
+import Cassandra qualified as C
+import Cassandra.Options
+import Cassandra.Util (defInitCassandra)
 import Control.Monad.Catch (finally)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Time (UTCTime, getCurrentTime)
 import Galley.DataMigration.Types
 import Imports
 import Options.Applicative (Parser)
-import qualified Options.Applicative as Opts
+import Options.Applicative qualified as Opts
 import System.Logger.Class (Logger)
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 
 data CassandraSettings = CassandraSettings
   { cHost :: String,
     cPort :: Word16,
-    cKeyspace :: C.Keyspace
+    cKeyspace :: C.Keyspace,
+    cTlsCa :: Maybe FilePath
   }
+
+toCassandraOpts :: CassandraSettings -> CassandraOpts
+toCassandraOpts cas =
+  CassandraOpts
+    { endpoint = Endpoint (Text.pack (cas.cHost)) (cas.cPort),
+      keyspace = C.unKeyspace (cas.cKeyspace),
+      filterNodesByDatacentre = Nothing,
+      tlsCa = cas.cTlsCa
+    }
 
 cassandraSettingsParser :: Parser CassandraSettings
 cassandraSettingsParser =
@@ -53,6 +64,11 @@ cassandraSettingsParser =
                   <> Opts.value "galley_test"
               )
         )
+    <*> ( (Opts.optional . Opts.strOption)
+            ( Opts.long "tls-ca-certificate-file"
+                <> Opts.help "Location of a PEM encoded list of CA certificates to be used when verifying the Cassandra server's certificate"
+            )
+        )
 
 migrate :: Logger -> CassandraSettings -> [Migration] -> IO ()
 migrate l cas ms = do
@@ -69,14 +85,7 @@ mkEnv l cas =
     <$> initCassandra
     <*> initLogger
   where
-    initCassandra =
-      C.init $
-        C.setLogger (C.mkLogger l)
-          . C.setContacts (cHost cas) []
-          . C.setPortNumber (fromIntegral (cPort cas))
-          . C.setKeyspace (cKeyspace cas)
-          . C.setProtocolVersion C.V4
-          $ C.defSettings
+    initCassandra = defInitCassandra (toCassandraOpts cas) l
     initLogger = pure l
 
 -- | Runs only the migrations which need to run
@@ -107,5 +116,5 @@ persistVersion (MigrationVersion v) desc time = C.write cql (C.params C.LocalQuo
     cql :: C.QueryString C.W (Int32, Text, UTCTime) ()
     cql = "insert into data_migration (id, version, descr, date) values (1,?,?,?)"
 
-info :: Log.MonadLogger m => String -> m ()
+info :: (Log.MonadLogger m) => String -> m ()
 info = Log.info . Log.msg

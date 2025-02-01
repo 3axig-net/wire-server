@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: galley
   labels:
-    wireService: galley
+    app: galley
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -16,17 +16,26 @@ spec:
       maxSurge: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      wireService: galley
+      app: galley
   template:
     metadata:
       labels:
-        wireService: galley
+        app: galley
         release: {{ .Release.Name }}
       annotations:
         # An annotation of the configmap checksum ensures changes to the configmap cause a redeployment upon `helm upgrade`
         checksum/configmap: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/aws-secret: {{ include (print .Template.BasePath "/aws-secret.yaml") . | sha256sum }}
         checksum/secret: {{ include (print .Template.BasePath "/secret.yaml") . | sha256sum }}
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: galley
+      serviceAccountName: {{ .Values.serviceAccount.name }}
       volumes:
         - name: "galley-config"
           configMap:
@@ -34,26 +43,50 @@ spec:
         - name: "galley-secrets"
           secret:
             secretName: "galley"
+        {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+        - name: "galley-cassandra"
+          secret:
+            secretName: {{ (include "tlsSecretRef" .Values.config | fromYaml).name }}
+        {{- end }}
+        {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+        - name: "rabbitmq-ca"
+          secret:
+            secretName: {{ .Values.config.rabbitmq.tlsCaSecretRef.name }}
+        {{- end }}
       containers:
         - name: galley
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           volumeMounts:
-          - name: "galley-secrets"
-            mountPath: "/etc/wire/galley/secrets"
           - name: "galley-config"
             mountPath: "/etc/wire/galley/conf"
+          - name: "galley-secrets"
+            mountPath: "/etc/wire/galley/secrets"
+          {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+          - name: "galley-cassandra"
+            mountPath: "/etc/wire/galley/cassandra"
+          {{- end }}
+          {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+          - name: "rabbitmq-ca"
+            mountPath: "/etc/wire/galley/rabbitmq-ca/"
+          {{- end }}
           env:
+          {{- if hasKey .Values.secrets "awsKeyId" }}
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: galley
+                name: galley-aws
                 key: awsKeyId
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: galley
+                name: galley-aws
                 key: awsSecretKey
+          {{- end }}
           - name: AWS_REGION
             value: "{{ .Values.config.aws.region }}"
           {{- with .Values.config.proxy }}
@@ -75,7 +108,19 @@ spec:
           - name: NO_PROXY
             value: {{ join "," .noProxyList | quote }}
           {{- end }}
-          {{- end }} 
+          {{- end }}
+          {{- if .Values.config.enableFederation }}
+          - name: RABBITMQ_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: galley
+                key: rabbitmqUsername
+          - name: RABBITMQ_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: galley
+                key: rabbitmqPassword
+          {{- end }}
           ports:
             - containerPort: {{ .Values.service.internalPort }}
           livenessProbe:
@@ -88,5 +133,10 @@ spec:
               scheme: HTTP
               path: /i/status
               port: {{ .Values.service.internalPort }}
+          {{- if .Values.preStop }}
+          lifecycle:
+            preStop:
+{{ toYaml .Values.preStop | indent 14 }}
+          {{- end }}
           resources:
 {{ toYaml .Values.resources | indent 12 }}

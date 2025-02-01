@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,10 +17,7 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Test.Class.UserSpec
-  ( spec,
-  )
-where
+module Test.Class.UserSpec (spec) where
 
 import Data.ByteString.Lazy (ByteString)
 import Network.Wai (Application)
@@ -39,7 +36,7 @@ app = do
   pure $ mkapp @Mock (Proxy @(UserAPI Mock)) (toServant (userServer auth)) (nt storage)
 
 spec :: Spec
-spec = beforeAll app $ do
+spec = with app $ do
   describe "GET & POST /Users" $ do
     it "responds with [] in empty environment" $ do
       get "/" `shouldRespondWith` emptyList
@@ -49,17 +46,23 @@ spec = beforeAll app $ do
       get "/" `shouldRespondWith` allUsers
     describe "filtering" $ do
       it "can filter by username" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         get "/?filter=userName eq \"bjensen\"" `shouldRespondWith` onlyBarbara
       it "is case-insensitive regarding syntax" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         get "/?filter=USERName EQ \"bjensen\"" `shouldRespondWith` onlyBarbara
       it "is case-insensitive regarding usernames" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         get "/?filter=userName eq \"BJensen\"" `shouldRespondWith` onlyBarbara
       it "handles malformed filter syntax" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         get "/?filter=userName eqq \"bjensen\"" `shouldRespondWith` 400
       -- TODO: would be nice to check the error message as well
 
       it "handles type errors in comparisons" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         get "/?filter=userName eq true" `shouldRespondWith` 400
+
   describe "GET /Users/:id" $ do
     it "responds with 404 for unknown user" $ do
       get "/9999" `shouldRespondWith` 404
@@ -68,12 +71,15 @@ spec = beforeAll app $ do
     xit "responds with 401 for unparseable user ID" $ do
       get "/unparseable" `shouldRespondWith` 401
     it "retrieves stored user" $ do
+      post "/" newBarbara `shouldRespondWith` 201
       -- the test implementation stores users with uid [0,1..n-1]
       get "/0" `shouldRespondWith` barbara
   describe "PUT /Users/:id" $ do
     it "overwrites the user" $ do
+      post "/" newBarbara `shouldRespondWith` 201
       put "/0" barbUpdate0 `shouldRespondWith` updatedBarb0
     it "does not create new users" $ do
+      post "/" newBarbara `shouldRespondWith` 201
       put "/9999" newBarbara `shouldRespondWith` 404
   -- TODO(arianvp): Perhaps we want to make this an acceptance spec.
   describe "PATCH /Users/:id" $ do
@@ -82,6 +88,7 @@ spec = beforeAll app $ do
       -- TODO(arianvp): We need to merge multi-value fields, but not supported yet
       -- TODO(arianvp): Add and Replace tests currently identical, because of lack of multi-value
       it "adds all fields if no target" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -116,6 +123,7 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
       it "adds fields if they didn't exist yet" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -147,6 +155,7 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
       it "replaces individual simple fields" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -183,6 +192,7 @@ spec = beforeAll app $ do
       -- not limit by type what fields it lenses in to. It is a very untyped
       -- thingy currently.
       it "PatchOp is atomic. Either fully applies or not at all" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -202,6 +212,7 @@ spec = beforeAll app $ do
     describe "Replace" $ do
       -- TODO(arianvp): Implement and test multi-value fields properly
       it "adds all fields if no target" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -236,6 +247,7 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
       it "adds fields if they didn't exist yet" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -267,6 +279,7 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
       it "replaces individual simple fields" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -298,6 +311,7 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
       it "PatchOp is atomic. Either fully applies or not at all" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -316,6 +330,7 @@ spec = beforeAll app $ do
         get "/0" `shouldRespondWith` smallUserGet {matchStatus = 200}
     describe "Remove" $ do
       it "fails if no target" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" barbUpdate0 -- reset
         patch
           "/0"
@@ -329,6 +344,7 @@ spec = beforeAll app $ do
             { matchStatus = 400
             }
       it "fails if removing immutable" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" barbUpdate0 -- reset
         patch
           "/0"
@@ -342,6 +358,7 @@ spec = beforeAll app $ do
             { matchStatus = 400
             }
       it "deletes the specified attribute" $ do
+        post "/" newBarbara `shouldRespondWith` 201
         _ <- put "/0" smallUser -- reset
         patch
           "/0"
@@ -366,13 +383,15 @@ spec = beforeAll app $ do
             { matchStatus = 200
             }
   describe "DELETE /Users/:id" $ do
-    it "responds with 404 for unknown user" $ do
-      delete "/9999" `shouldRespondWith` 404
+    it "responds with 204 for unknown user" $ do
+      delete "/9999" `shouldRespondWith` 204
     it "deletes a stored user" $ do
+      post "/" newBarbara `shouldRespondWith` 201
       delete "/0" `shouldRespondWith` 204
       -- user should be gone
       get "/0" `shouldRespondWith` 404
-      delete "/0" `shouldRespondWith` 404
+      -- delete is idempotent
+      delete "/0" `shouldRespondWith` 204
 
 smallUser :: ByteString
 smallUser =

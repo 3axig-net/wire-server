@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,7 +23,6 @@
 -- galley-types.
 module Test.Brig.Types.Common where
 
-import Brig.Types.Common
 import Brig.Types.Team.LegalHold
 import Brig.Types.Test.Arbitrary ()
 import Test.Brig.Roundtrip (testRoundTrip)
@@ -35,7 +34,6 @@ tests :: TestTree
 tests =
   testGroup
     "Common (types vs. aeson)"
-    [ testRoundTrip @ExcludedPrefix,
-      testRoundTrip @LegalHoldService,
+    [ testRoundTrip @LegalHoldService,
       testRoundTrip @LegalHoldClientRequest
     ]

@@ -35,6 +35,18 @@ nginz:
   host: 127.0.0.1
   port: 8080
 
+backgroundWorker:
+  host: 127.0.0.1
+  port: 8089
+
+stern:
+  host: 127.0.0.1
+  port: 8091
+
+wireServerEnterprise:
+  host: 127.0.0.1
+  port: 8079
+
 # client-API:
 # webapp ---> load balancer  ---> nginx-ingress (TLS termination) ---> nginz ----> brig
 #
@@ -53,7 +65,7 @@ federatorExternal:
   host: 127.0.0.1
   port: 8098
 
-# This domain is configured using coredns runing along with the rest of
+# This domain is configured using coredns running along with the rest of
 # docker-ephemeral setup. There is only an SRV record for
 # _wire-server-federator._tcp.example.com
 originDomain: example.com
@@ -64,23 +76,200 @@ provider:
   publicKey: test/resources/pubkey.pem
   cert: test/resources/cert.pem
   botHost: https://127.0.0.1
-  botPort: 29631
 
 # Used by spar integration tests
 # Keep this in sync with setTeamInvitationTimeout from brig
-brigSettingsTeamInvitationTimeout: 5
+brigSettingsTeamInvitationTimeout: 10
 
 # Used by brig-integration (Federation subfolder)
 backendTwo:
   brig:
     host: 127.0.0.1 # in kubernetes, brig.<NAMESPACE>.svc.cluster.local
     port: 9082
-  galley:
-    host: 127.0.0.1 # in kubernetes, galley.<NAMESPACE>.svc.cluster.local
-    port: 9085
+  cannon:
+    host: 127.0.0.1
+    port: 9083
+  cargohold:
+    host: 127.0.0.1
+    port: 9084
   federatorInternal:
     host: 127.0.0.1 # in kubernetes, federator.<NAMESPACE>.svc.cluster.local
     port: 9097
   federatorExternal:
     host: 127.0.0.1 # in kubernetes, federator.<NAMESPACE>.svc.cluster.local
-    port: 9097
+    port: 9098
+  galley:
+    host: 127.0.0.1 # in kubernetes, galley.<NAMESPACE>.svc.cluster.local
+    port: 9085
+  gundeck:
+    host: 127.0.0.1
+    port: 9086
+  nginz:
+    host: 127.0.0.1
+    port: 9080
+  spar:
+    host: 127.0.0.1
+    port: 9088
+  proxy:
+    host: 127.0.0.1
+    port: 9087
+  backgroundWorker:
+    host: 127.0.0.1
+    port: 9089
+  stern:
+    host: 127.0.0.1
+    port: 9091
+  wireServerEnterprise:
+    host: 127.0.0.1
+    port: 9079
+
+  originDomain: b.example.com
+
+redis2:
+  host: 127.0.0.1
+  port: 6379
+  connectionMode: master
+  enableTls: false
+  insecureSkipVerifyTls: false
+
+dynamicBackends:
+  dynamic-backend-1:
+    domain: d1.example.com
+    federatorExternalPort: 10098
+    mlsPrivateKeyPaths:
+      removal:
+        ed25519: "test/resources/dynBackend1/ed25519.pem"
+        ecdsa_secp256r1_sha256: "test/resources/dynBackend1/ecdsa_secp256r1_sha256.pem"
+        ecdsa_secp384r1_sha384: "test/resources/dynBackend1/ecdsa_secp384r1_sha384.pem"
+        ecdsa_secp521r1_sha512: "test/resources/dynBackend1/ecdsa_secp521r1_sha512.pem"
+  dynamic-backend-2:
+    domain: d2.example.com
+    federatorExternalPort: 11098
+    mlsPrivateKeyPaths:
+      removal:
+        ed25519: "test/resources/dynBackend2/ed25519.pem"
+        ecdsa_secp256r1_sha256: "test/resources/dynBackend2/ecdsa_secp256r1_sha256.pem"
+        ecdsa_secp384r1_sha384: "test/resources/dynBackend2/ecdsa_secp384r1_sha384.pem"
+        ecdsa_secp521r1_sha512: "test/resources/dynBackend2/ecdsa_secp521r1_sha512.pem"
+  dynamic-backend-3:
+    domain: d3.example.com
+    federatorExternalPort: 12098
+    mlsPrivateKeyPaths:
+      removal:
+        ed25519: "test/resources/dynBackend3/ed25519.pem"
+        ecdsa_secp256r1_sha256: "test/resources/dynBackend3/ecdsa_secp256r1_sha256.pem"
+        ecdsa_secp384r1_sha384: "test/resources/dynBackend3/ecdsa_secp384r1_sha384.pem"
+        ecdsa_secp521r1_sha512: "test/resources/dynBackend3/ecdsa_secp521r1_sha512.pem"
+
+rabbitmq:
+  host: localhost
+  adminPort: 15671
+  tls: true
+  vHost: /
+
+rabbitmq-v0:
+  host: localhost
+  adminPort: 15672
+  tls: false
+  vHost: federation-v0
+
+rabbitmq-v1:
+  host: localhost
+  adminPort: 15672
+  tls: false
+  vHost: federation-v1
+
+cassandra:
+  host: 127.0.0.1
+  port: 9042
+
+dnsMockServer:
+  host: localhost
+  apiPort: 5380
+  dohPort: 5381
+
+federation-v0:
+  originDomain: federation-v0.example.com
+  brig:
+    host: 127.0.0.1
+    port: 21082
+  cannon:
+    host: 127.0.0.1
+    port: 21083
+  cargohold:
+    host: 127.0.0.1
+    port: 21084
+  federatorInternal:
+    host: 127.0.0.1
+    port: 21097
+  federatorExternal:
+    host: 127.0.0.1
+    port: 21098
+  galley:
+    host: 127.0.0.1
+    port: 21085
+  gundeck:
+    host: 127.0.0.1
+    port: 21086
+  nginz:
+    host: 127.0.0.1
+    port: 21080
+  spar:
+    host: 127.0.0.1
+    port: 21088
+  proxy:
+    host: 127.0.0.1
+    port: 21087
+  backgroundWorker:
+    host: 127.0.0.1
+    port: 21089
+  stern:
+    host: 127.0.0.1
+    port: 21091
+  wireServerEnterprise:
+    host: 127.0.0.1
+    port: 21079
+
+federation-v1:
+  originDomain: federation-v1.example.com
+  brig:
+    host: 127.0.0.1
+    port: 22082
+  cannon:
+    host: 127.0.0.1
+    port: 22083
+  cargohold:
+    host: 127.0.0.1
+    port: 22084
+  federatorInternal:
+    host: 127.0.0.1
+    port: 22097
+  federatorExternal:
+    host: 127.0.0.1
+    port: 22098
+  galley:
+    host: 127.0.0.1
+    port: 22085
+  gundeck:
+    host: 127.0.0.1
+    port: 22086
+  nginz:
+    host: 127.0.0.1
+    port: 22080
+  spar:
+    host: 127.0.0.1
+    port: 22088
+  proxy:
+    host: 127.0.0.1
+    port: 22087
+  backgroundWorker:
+    host: 127.0.0.1
+    port: 22089
+  stern:
+    host: 127.0.0.1
+    port: 22091
+  wireServerEnterprise:
+    host: 127.0.0.1
+    port: 22079
+
+integrationTestHostName: "localhost"

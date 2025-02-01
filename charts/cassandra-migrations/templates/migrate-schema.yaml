@@ -3,82 +3,173 @@ kind: Job
 metadata:
   name: cassandra-migrations
   labels:
-    wireService: cassandra-migrations
+    app: cassandra-migrations
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
   annotations:
     "helm.sh/hook": pre-install,pre-upgrade
-    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-weight": "1"
     "helm.sh/hook-delete-policy": "before-hook-creation"
 spec:
   template:
     metadata:
       labels:
-        wireService: cassandra-migrations
+        app: cassandra-migrations
         release: {{ .Release.Name }}
     spec:
       restartPolicy: OnFailure
       # specifying cassandra-migrations as initContainers executes them sequentially, rather than in parallel
       # to avoid 'Column family ID mismatch' / schema disagreements
       # see https://stackoverflow.com/questions/29030661/creating-new-table-with-cqlsh-on-existing-keyspace-column-family-id-mismatch#40325651 for details.
+      volumes:
+        {{- if eq (include "useTlsGundeck" .) "true" }}
+        - name: gundeck-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefGundeck" . | fromYaml).name }}
+        {{- end }}
+        {{- if eq (include "useTlsBrig" .) "true" }}
+        - name: brig-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefBrig" . | fromYaml).name }}
+        {{- end }}
+        {{- if eq (include "useTlsGalley" .) "true" }}
+        - name: galley-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefGalley" . | fromYaml).name }}
+        {{- end }}
+        {{- if eq (include "useTlsSpar" .) "true" }}
+        - name: spar-cassandra-cert
+          secret:
+            secretName: {{ (include "tlsSecretRefSpar" . | fromYaml).name }}
+        {{- end }}
       initContainers:
+        {{- if .Values.enableGundeckMigrations }}
         - name: gundeck-schema
           image: "{{ .Values.images.gundeck }}:{{ .Values.images.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           command:
             - gundeck-schema
             - --host
-            - "{{ .Values.cassandra.host }}"
+            - "{{ template "cassandraGundeckHost" . }}"
             - --port
             - "9042"
             - --keyspace
             - gundeck
-            - --replication-factor
-            - "{{ .Values.cassandra.replicaCount }}"
+            - {{ template "cassandraGundeckReplicationType" . }}
+            - "{{ template "cassandraGundeckReplicationArg" . }}"
+            {{- if eq (include "useTlsGundeck" .) "true" }}
+            - --tls-ca-certificate-file
+            - /certs/gundeck/{{- (include "tlsSecretRefGundeck" . | fromYaml).key }}
+            {{- end }}
 
+          {{- if eq (include "useTlsGundeck" .) "true" }}
+          volumeMounts:
+            - name: gundeck-cassandra-cert
+              mountPath: "/certs/gundeck"
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.enableBrigMigrations }}
         - name: brig-schema
           image: "{{ .Values.images.brig }}:{{ .Values.images.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           command:
             - brig-schema
             - --host
-            - "{{ .Values.cassandra.host }}"
+            - "{{ template "cassandraBrigHost" . }}"
             - --port
             - "9042"
             - --keyspace
             - brig
-            - --replication-factor
-            - "{{ .Values.cassandra.replicaCount }}"
+            - {{ template "cassandraBrigReplicationType" . }}
+            - "{{ template "cassandraBrigReplicationArg" . }}"
+            {{- if eq (include "useTlsBrig" .) "true" }}
+            - --tls-ca-certificate-file
+            - /certs/brig/{{- (include "tlsSecretRefBrig" . | fromYaml).key }}
+            {{- end }}
 
+          {{- if eq (include "useTlsBrig" .) "true" }}
+          volumeMounts:
+            - name: brig-cassandra-cert
+              mountPath: "/certs/brig"
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.enableGalleyMigrations }}
         - name: galley-schema
           image: "{{ .Values.images.galley }}:{{ .Values.images.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           command:
             - galley-schema
             - --host
-            - "{{ .Values.cassandra.host }}"
+            - "{{ template "cassandraGalleyHost" . }}"
             - --port
             - "9042"
             - --keyspace
             - galley
-            - --replication-factor
-            - "{{ .Values.cassandra.replicaCount }}"
+            - {{ template "cassandraGalleyReplicationType" . }}
+            - "{{ template "cassandraGalleyReplicationArg" . }}"
+            {{- if eq (include "useTlsGalley" .) "true" }}
+            - --tls-ca-certificate-file
+            - /certs/galley/{{- (include "tlsSecretRefGalley" . | fromYaml).key }}
+            {{- end }}
 
+          {{- if eq (include "useTlsGalley" .) "true" }}
+          volumeMounts:
+            - name: galley-cassandra-cert
+              mountPath: "/certs/galley"
+          {{- end }}
+        {{- end }}
+
+        {{- if .Values.enableSparMigrations }}
         - name: spar-schema
           image: "{{ .Values.images.spar }}:{{ .Values.images.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           command:
             - spar-schema
             - --host
-            - "{{ .Values.cassandra.host }}"
+            - "{{ template "cassandraSparHost" . }}"
             - --port
             - "9042"
             - --keyspace
             - spar
-            - --replication-factor
-            - "{{ .Values.cassandra.replicaCount }}"
+            - {{ template "cassandraSparReplicationType" . }}
+            - "{{ template "cassandraSparReplicationArg" . }}"
+             {{- if eq (include "useTlsSpar" .) "true" }}
+            - --tls-ca-certificate-file
+            - /certs/spar/{{- (include "tlsSecretRefSpar" . | fromYaml).key }}
+            {{- end }}
+
+          {{- if eq (include "useTlsSpar" .) "true" }}
+          volumeMounts:
+            - name: spar-cassandra-cert
+              mountPath: "/certs/spar"
+          {{- end }}
+       {{- end }}
+
       containers:
         - name: job-done
-          image: busybox:1.32.0
+          image: alpine:3.18.2
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+            runAsUser: 65534
+        {{- end }}
           command: ['sh', '-c', 'echo "gundeck, brig, galley, spar schema cassandra-migrations completed. See initContainers for details with e.g. kubectl logs ... -c gundeck-schema"']

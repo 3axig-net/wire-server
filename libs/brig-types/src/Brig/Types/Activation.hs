@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,19 +17,9 @@
 
 module Brig.Types.Activation
   ( ActivationPair,
-
-    -- * re-exports
-    module C,
-    ActivationKey (..),
-    ActivationCode (..),
-    Activate (..),
-    ActivationTarget (..),
-    ActivationResponse (..),
-    SendActivationCode (..),
   )
 where
 
-import Brig.Types.Common as C
 import Wire.API.User.Activation
 
 -- | A pair of 'ActivationKey' and 'ActivationCode' as required for activation.

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,7 +19,7 @@ module Test.Wire.Network.DNS.SRVSpec where
 
 import Data.List.NonEmpty (NonEmpty (..))
 import Imports
-import qualified Network.DNS as DNS
+import Network.DNS qualified as DNS
 import Test.Hspec
 import Wire.Network.DNS.SRV
 

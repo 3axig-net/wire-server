@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,8 +30,11 @@
 -- wire-message-proto-lens package.
 module Wire.API.Message
   ( -- * Message
+    MessageMetadata (..),
+    defMessageMetadata,
     NewOtrMessage (..),
     QualifiedNewOtrMessage (..),
+    qualifiedNewOtrMetadata,
     protoToNewOtrMessage,
 
     -- * Protobuf messages
@@ -47,60 +50,74 @@ module Wire.API.Message
     UserClientMap (..),
 
     -- * Mismatch
-    OtrFilterMissing (..),
     ClientMismatch (..),
     ClientMismatchStrategy (..),
     MessageSendingStatus (..),
-    PostOtrResponses,
-    PostOtrResponse,
-    MessageNotSent (..),
     UserClients (..),
     ReportMissing (..),
     IgnoreMissing (..),
-
-    -- * Swagger
-    modelNewOtrMessage,
-    modelOtrRecipients,
-    modelClientMismatch,
-    typePriority,
   )
 where
 
 import Control.Lens (view, (.~), (?~))
-import qualified Data.Aeson as A
-import qualified Data.ByteString.Lazy as LBS
+import Data.Aeson qualified as A
+import Data.ByteString.Lazy qualified as LBS
 import Data.CommaSeparatedList (CommaSeparatedList (fromCommaSeparatedList))
 import Data.Domain (Domain, domainText, mkDomain)
 import Data.Id
 import Data.Json.Util
-import qualified Data.Map.Strict as Map
-import qualified Data.ProtoLens as ProtoLens
-import qualified Data.ProtoLens.Field as ProtoLens
-import qualified Data.ProtocolBuffers as Protobuf
+import Data.Map.Strict qualified as Map
+import Data.OpenApi qualified as S
+import Data.ProtoLens qualified as ProtoLens
+import Data.ProtoLens.Field qualified as ProtoLens
+import Data.ProtocolBuffers qualified as Protobuf
 import Data.Qualified (Qualified (..))
-import Data.SOP (I (..), NS (..), unI, unZ)
 import Data.Schema
-import Data.Serialize (runGetLazy)
-import qualified Data.Set as Set
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
-import qualified Data.Text.Read as Reader
-import qualified Data.UUID as UUID
-import qualified Generics.SOP as GSOP
+import Data.Serialize (runGet)
+import Data.Set qualified as Set
+import Data.Text.Read qualified as Reader
+import Data.UUID qualified as UUID
 import Imports
-import qualified Proto.Otr
-import qualified Proto.Otr_Fields as Proto.Otr
+import Proto.Otr qualified
+import Proto.Otr_Fields qualified as Proto.Otr
 import Servant (FromHttpApiData (..))
-import Servant.Server (type (.++))
-import Wire.API.Arbitrary (Arbitrary (..), GenericUniform (..))
-import Wire.API.ErrorDescription
-import qualified Wire.API.Message.Proto as Proto
-import Wire.API.Routes.MultiVerb
+import Wire.API.Message.Proto qualified as Proto
 import Wire.API.ServantProto (FromProto (..), ToProto (..))
-import Wire.API.User.Client (QualifiedUserClientMap (QualifiedUserClientMap), QualifiedUserClients, UserClientMap (..), UserClients (..), modelOtrClientMap, modelUserClients)
+import Wire.API.User.Client
+import Wire.Arbitrary (Arbitrary (..), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- Message
+
+data MessageMetadata = MessageMetadata
+  { mmNativePush :: Bool,
+    mmTransient :: Bool,
+    mmNativePriority :: Maybe Priority,
+    mmData :: Maybe Text
+  }
+  deriving stock (Eq, Generic, Ord, Show)
+  deriving (Arbitrary) via (GenericUniform MessageMetadata)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema MessageMetadata)
+
+messageMetadataObjectSchema :: ObjectSchema SwaggerDoc MessageMetadata
+messageMetadataObjectSchema =
+  MessageMetadata
+    <$> mmNativePush .= fmap (fromMaybe True) (optField "native_push" schema)
+    <*> mmTransient .= fmap (fromMaybe False) (optField "transient" schema)
+    <*> mmNativePriority .= maybe_ (optField "native_priority" schema)
+    <*> mmData .= maybe_ (optField "data" schema)
+
+instance ToSchema MessageMetadata where
+  schema = object "MessageMetadata" messageMetadataObjectSchema
+
+defMessageMetadata :: MessageMetadata
+defMessageMetadata =
+  MessageMetadata
+    { mmNativePush = True,
+      mmTransient = False,
+      mmNativePriority = Nothing,
+      mmData = Nothing
+    }
 
 data NewOtrMessage = NewOtrMessage
   { newOtrSender :: ClientId,
@@ -119,45 +136,35 @@ data NewOtrMessage = NewOtrMessage
   deriving (Arbitrary) via (GenericUniform NewOtrMessage)
   deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema NewOtrMessage)
 
-modelNewOtrMessage :: Doc.Model
-modelNewOtrMessage = Doc.defineModel "NewOtrMessage" $ do
-  Doc.description "OTR message per recipient"
-  Doc.property "sender" Doc.bytes' $
-    Doc.description "The sender's client ID"
-  Doc.property "recipients" (Doc.ref modelOtrRecipients) $
-    Doc.description "Per-recipient data (i.e. ciphertext)."
-  Doc.property "native_push" Doc.bool' $ do
-    Doc.description "Whether to issue a native push to offline clients."
-    Doc.optional
-  Doc.property "transient" Doc.bool' $ do
-    Doc.description "Whether to put this message into the notification queue."
-    Doc.optional
-  Doc.property "native_priority" typePriority $ do
-    Doc.description "The native push priority (default 'high')."
-    Doc.optional
-  Doc.property "data" Doc.bytes' $ do
-    Doc.description
-      "Extra (symmetric) data (i.e. ciphertext) that is replicated \
-      \for each recipient."
-    Doc.optional
-  Doc.property "report_missing" (Doc.unique $ Doc.array Doc.bytes') $ do
-    Doc.description "List of user IDs"
-    Doc.optional
+newOtrMessageMetadata :: NewOtrMessage -> MessageMetadata
+newOtrMessageMetadata msg =
+  MessageMetadata
+    (newOtrNativePush msg)
+    (newOtrTransient msg)
+    (newOtrNativePriority msg)
+    (newOtrData msg)
 
 instance ToSchema NewOtrMessage where
   schema =
     object "new-otr-message" $
-      NewOtrMessage
+      mk
         <$> newOtrSender .= field "sender" schema
         <*> newOtrRecipients .= field "recipients" schema
-        <*> newOtrNativePush .= (field "native_push" schema <|> pure True)
-        <*> newOtrTransient .= (field "transient" schema <|> pure False)
-        <*> newOtrNativePriority .= opt (field "native_priority" schema)
-        <*> newOtrData .= opt (field "data" schema)
-        <*> newOtrReportMissing .= opt (field "report_missing" (array schema))
+        <*> newOtrMessageMetadata .= messageMetadataObjectSchema
+        <*> newOtrReportMissing .= maybe_ (optField "report_missing" (array schema))
+    where
+      mk :: ClientId -> OtrRecipients -> MessageMetadata -> Maybe [UserId] -> NewOtrMessage
+      mk cid rcpts mm =
+        NewOtrMessage
+          cid
+          rcpts
+          (mmNativePush mm)
+          (mmTransient mm)
+          (mmNativePriority mm)
+          (mmData mm)
 
 instance FromProto NewOtrMessage where
-  fromProto bs = protoToNewOtrMessage <$> runGetLazy Protobuf.decodeMessage bs
+  fromProto bs = protoToNewOtrMessage <$> runGet Protobuf.decodeMessage bs
 
 protoToNewOtrMessage :: Proto.NewOtrMessage -> NewOtrMessage
 protoToNewOtrMessage msg =
@@ -187,6 +194,15 @@ data QualifiedNewOtrMessage = QualifiedNewOtrMessage
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform QualifiedNewOtrMessage)
 
+qualifiedNewOtrMetadata :: QualifiedNewOtrMessage -> MessageMetadata
+qualifiedNewOtrMetadata msg =
+  MessageMetadata
+    { mmNativePush = qualifiedNewOtrNativePush msg,
+      mmTransient = qualifiedNewOtrTransient msg,
+      mmNativePriority = qualifiedNewOtrNativePriority msg,
+      mmData = Just . toBase64Text $ qualifiedNewOtrData msg
+    }
+
 instance S.ToSchema QualifiedNewOtrMessage where
   declareNamedSchema _ =
     pure $
@@ -198,10 +214,10 @@ instance S.ToSchema QualifiedNewOtrMessage where
                \https://github.com/wireapp/generic-message-proto/blob/master/proto/otr.proto."
 
 instance FromProto QualifiedNewOtrMessage where
-  fromProto bs = protolensToQualifiedNewOtrMessage =<< ProtoLens.decodeMessage (LBS.toStrict bs)
+  fromProto bs = protolensToQualifiedNewOtrMessage =<< ProtoLens.decodeMessage bs
 
 instance ToProto QualifiedNewOtrMessage where
-  toProto = LBS.fromStrict . ProtoLens.encodeMessage . qualifiedNewOtrMessageToProto
+  toProto = ProtoLens.encodeMessage . qualifiedNewOtrMessageToProto
 
 protolensToQualifiedNewOtrMessage :: Proto.Otr.QualifiedNewOtrMessage -> Either String QualifiedNewOtrMessage
 protolensToQualifiedNewOtrMessage protoMsg = do
@@ -219,7 +235,7 @@ protolensToQualifiedNewOtrMessage protoMsg = do
       }
 
 protolensToClientId :: Proto.Otr.ClientId -> ClientId
-protolensToClientId = newClientId . view Proto.Otr.client
+protolensToClientId = ClientId . view Proto.Otr.client
 
 qualifiedNewOtrMessageToProto :: QualifiedNewOtrMessage -> Proto.Otr.QualifiedNewOtrMessage
 qualifiedNewOtrMessageToProto msg =
@@ -246,7 +262,8 @@ mkQualifiedOtrPayload sender entries dat strat =
       }
   where
     mkRecipients =
-      QualifiedOtrRecipients . QualifiedUserClientMap
+      QualifiedOtrRecipients
+        . QualifiedUserClientMap
         . foldr
           ( \(Qualified u d, c, t) ->
               Map.insertWith
@@ -259,7 +276,7 @@ mkQualifiedOtrPayload sender entries dat strat =
 clientIdToProtolens :: ClientId -> Proto.Otr.ClientId
 clientIdToProtolens cid =
   ProtoLens.defMessage
-    & Proto.Otr.client .~ (either error fst . Reader.hexadecimal $ client cid)
+    & Proto.Otr.client .~ (either error fst . Reader.hexadecimal $ clientToText cid)
 
 --------------------------------------------------------------------------------
 -- Priority
@@ -278,14 +295,6 @@ data Priority = LowPriority | HighPriority
   deriving stock (Eq, Show, Ord, Enum, Generic)
   deriving (Arbitrary) via (GenericUniform Priority)
   deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema Priority
-
-typePriority :: Doc.DataType
-typePriority =
-  Doc.string $
-    Doc.enum
-      [ "low",
-        "high"
-      ]
 
 instance ToSchema Priority where
   schema =
@@ -318,16 +327,10 @@ newtype OtrRecipients = OtrRecipients
   deriving stock (Eq, Show)
   deriving newtype (ToSchema, A.ToJSON, A.FromJSON, Semigroup, Monoid, Arbitrary)
 
--- FUTUREWORK: Remove when 'NewOtrMessage' has ToSchema
-modelOtrRecipients :: Doc.Model
-modelOtrRecipients = Doc.defineModel "OtrRecipients" $ do
-  Doc.description "Recipients of OTR content."
-  Doc.property "" (Doc.ref modelOtrClientMap) $
-    Doc.description "Mapping of user IDs to 'OtrClientMap's."
-
 protoToOtrRecipients :: [Proto.UserEntry] -> OtrRecipients
 protoToOtrRecipients =
-  OtrRecipients . UserClientMap
+  OtrRecipients
+    . UserClientMap
     . foldl' userEntries mempty
   where
     userEntries :: Map UserId (Map ClientId Text) -> Proto.UserEntry -> Map UserId (Map ClientId Text)
@@ -413,22 +416,6 @@ parseMap keyParser valueParser xs = Map.fromList <$> traverse (\x -> (,) <$> key
 --------------------------------------------------------------------------------
 -- Filter
 
--- | A setting for choosing what to do when a message has not been encrypted
--- for all recipients.
-data OtrFilterMissing
-  = -- | Pretend everything is okay
-    OtrIgnoreAllMissing
-  | -- | Complain (default)
-    OtrReportAllMissing
-  | -- | Complain only about missing
-    --      recipients who are /not/ on this list
-    OtrIgnoreMissing (Set UserId)
-  | -- | Complain only about missing
-    --      recipients who /are/ on this list
-    OtrReportMissing (Set UserId)
-  deriving stock (Eq, Show, Generic)
-  deriving (Arbitrary) via (GenericUniform OtrFilterMissing)
-
 data ClientMismatchStrategy
   = MismatchReportAll
   | MismatchIgnoreAll
@@ -464,7 +451,7 @@ clientMismatchStrategyToProtolens = \case
           & Proto.Otr.userIds .~ map qualifiedUserIdToProtolens (toList users)
       )
 
-protolensToSetQualifiedUserIds :: ProtoLens.HasField s "userIds" [Proto.Otr.QualifiedUserId] => s -> Either String (Set (Qualified UserId))
+protolensToSetQualifiedUserIds :: (ProtoLens.HasField s "userIds" [Proto.Otr.QualifiedUserId]) => s -> Either String (Set (Qualified UserId))
 protolensToSetQualifiedUserIds = fmap Set.fromList . mapM protolensToQualifiedUserId . view Proto.Otr.userIds
 
 protolensToQualifiedUserId :: Proto.Otr.QualifiedUserId -> Either String (Qualified UserId)
@@ -493,19 +480,10 @@ data ClientMismatch = ClientMismatch
 instance Arbitrary ClientMismatch where
   arbitrary =
     ClientMismatch
-      <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-
-modelClientMismatch :: Doc.Model
-modelClientMismatch = Doc.defineModel "ClientMismatch" $ do
-  Doc.description "Map of missing, redundant or deleted clients."
-  Doc.property "time" Doc.dateTime' $
-    Doc.description "Server timestamp (date and time)"
-  Doc.property "missing" (Doc.ref modelUserClients) $
-    Doc.description "Map of missing clients per user."
-  Doc.property "redundant" (Doc.ref modelUserClients) $
-    Doc.description "Map of redundant clients per user."
-  Doc.property "deleted" (Doc.ref modelUserClients) $
-    Doc.description "Map of deleted clients per user."
+      <$> arbitrary
+      <*> arbitrary
+      <*> arbitrary
+      <*> arbitrary
 
 instance ToSchema ClientMismatch where
   schema =
@@ -521,86 +499,51 @@ data MessageSendingStatus = MessageSendingStatus
     mssMissingClients :: QualifiedUserClients,
     mssRedundantClients :: QualifiedUserClients,
     mssDeletedClients :: QualifiedUserClients,
-    mssFailedToSend :: QualifiedUserClients
+    mssFailedToSend :: QualifiedUserClients,
+    mssFailedToConfirmClients :: QualifiedUserClients
   }
   deriving stock (Eq, Show, Generic)
   deriving (A.ToJSON, A.FromJSON, S.ToSchema) via Schema MessageSendingStatus
 
 instance ToSchema MessageSendingStatus where
   schema =
-    object "MessageSendingStatus" $
-      MessageSendingStatus
-        <$> mssTime
-          .= fieldWithDocModifier
-            "time"
-            (description ?~ "Time of sending message.")
-            schema
-        <*> mssMissingClients
-          .= fieldWithDocModifier
-            "missing"
-            (description ?~ "Clients that the message /should/ have been encrypted for, but wasn't.")
-            schema
-        <*> mssRedundantClients
-          .= fieldWithDocModifier
-            "redundant"
-            (description ?~ "Clients that the message /should not/ have been encrypted for, but was.")
-            schema
-        <*> mssDeletedClients
-          .= fieldWithDocModifier
-            "deleted"
-            (description ?~ "Clients that were deleted.")
-            schema
-        <*> mssFailedToSend
-          .= fieldWithDocModifier
-            "failed_to_send"
-            ( description
-                ?~ "When message sending fails for some clients but succeeds for others,\
-                   \this field will contain the list of clients for which the message sending \
-                   \failed. This list should be empty when message sending is not even tried, \
-                   \like when some clients are missing."
-            )
-            schema
-
-data MessageNotSent a
-  = MessageNotSentConversationNotFound
-  | MessageNotSentUnknownClient
-  | MessageNotSentLegalhold
-  | MessageNotSentClientMissing a
-  deriving stock (Eq, Show, Generic, Functor)
-  deriving
-    (AsUnion (MessageNotSentResponses a))
-    via (GenericAsUnion (MessageNotSentResponses a) (MessageNotSent a))
-
-instance GSOP.Generic (MessageNotSent a)
-
-type MessageNotSentResponses a =
-  '[ ConvNotFound,
-     UnknownClient,
-     MissingLegalholdConsent,
-     Respond 412 "Missing clients" a
-   ]
-
-type PostOtrResponses a =
-  MessageNotSentResponses a
-    .++ '[Respond 201 "Message sent" a]
-
-type PostOtrResponse a = Either (MessageNotSent a) a
-
-instance
-  ( rs ~ (MessageNotSentResponses a .++ '[r]),
-    a ~ ResponseType r
-  ) =>
-  AsUnion rs (PostOtrResponse a)
-  where
-  toUnion =
-    eitherToUnion
-      (toUnion @(MessageNotSentResponses a))
-      (Z . I)
-
-  fromUnion =
-    eitherFromUnion
-      (fromUnion @(MessageNotSentResponses a))
-      (unI . unZ)
+    objectWithDocModifier
+      "MessageSendingStatus"
+      (description ?~ combinedDesc)
+      $ MessageSendingStatus
+        <$> mssTime .= field "time" schema
+        <*> mssMissingClients .= field "missing" schema
+        <*> mssRedundantClients .= field "redundant" schema
+        <*> mssDeletedClients .= field "deleted" schema
+        <*> mssFailedToSend .= field "failed_to_send" schema
+        <*> mssFailedToConfirmClients .= field "failed_to_confirm_clients" schema
+    where
+      combinedDesc =
+        "The Proteus message sending status. It has these fields:\n\
+        \- `time`: "
+          <> timeDesc
+          <> "\n\
+             \- `missing`: "
+          <> missingDesc
+          <> "\n\
+             \- `redundant`: "
+          <> redundantDesc
+          <> "\n\
+             \- `deleted`: "
+          <> deletedDesc
+          <> "\n\
+             \- `failed_to_send`: "
+          <> failedToSendDesc
+      timeDesc = "Time of sending message."
+      missingDesc = "Clients that the message /should/ have been encrypted for, but wasn't."
+      redundantDesc = "Clients that the message /should not/ have been encrypted for, but was."
+      deletedDesc = "Clients that were deleted."
+      failedToSendDesc =
+        "When message sending fails for some clients but succeeds for others, \
+        \e.g., because a remote backend is unreachable, \
+        \this field will contain the list of clients for which the message sending \
+        \failed. This list should be empty when message sending is not even tried, \
+        \like when some clients are missing."
 
 -- QueryParams
 
@@ -610,7 +553,7 @@ data IgnoreMissing
   deriving (Show, Eq)
 
 instance S.ToParamSchema IgnoreMissing where
-  toParamSchema _ = mempty & S.type_ ?~ S.SwaggerString
+  toParamSchema _ = mempty & S.type_ ?~ S.OpenApiString
 
 instance FromHttpApiData IgnoreMissing where
   parseQueryParam = \case
@@ -623,7 +566,7 @@ data ReportMissing
   | ReportMissingList (Set UserId)
 
 instance S.ToParamSchema ReportMissing where
-  toParamSchema _ = mempty & S.type_ ?~ S.SwaggerString
+  toParamSchema _ = mempty & S.type_ ?~ S.OpenApiString
 
 instance FromHttpApiData ReportMissing where
   parseQueryParam = \case

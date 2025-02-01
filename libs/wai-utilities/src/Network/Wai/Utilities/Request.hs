@@ -1,9 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,20 +22,17 @@
 module Network.Wai.Utilities.Request where
 
 import Control.Error
-import Control.Monad.Catch (MonadThrow, throwM)
 import Data.Aeson
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as Lazy
-import qualified Data.Text.Lazy as Text
+import Data.ByteString qualified as B
+import Data.ByteString.Lazy qualified as Lazy
+import Data.Id
+import Data.Text.Lazy qualified as Text
 import Imports
-import Network.HTTP.Types.Status (status400)
+import Network.HTTP.Types
 import Network.Wai
-import Network.Wai.Predicate
 import Network.Wai.Predicate.Request
-import qualified Network.Wai.Utilities.Error as Wai
-import Network.Wai.Utilities.ZAuth ((.&>))
 import Pipes
-import qualified Pipes.Prelude as P
+import Pipes.Prelude qualified as P
 
 readBody :: (MonadIO m, HasRequest r) => r -> m LByteString
 readBody r = liftIO $ Lazy.fromChunks <$> P.toListM chunks
@@ -53,46 +49,20 @@ parseBody ::
   ExceptT LText m a
 parseBody r = readBody r >>= hoistEither . fmapL Text.pack . eitherDecode'
 
-parseBody' :: (FromJSON a, MonadIO m, MonadThrow m) => JsonRequest a -> m a
-parseBody' r = either thrw pure =<< runExceptT (parseBody r)
-  where
-    thrw msg = throwM $ Wai.mkError status400 "bad-request" msg
+lookupRequestId :: HeaderName -> Request -> Maybe ByteString
+lookupRequestId reqIdHeaderName =
+  lookup reqIdHeaderName . requestHeaders
 
-parseOptionalBody ::
-  (MonadIO m, FromJSON a) =>
-  OptionalJsonRequest a ->
-  ExceptT LText m (Maybe a)
-parseOptionalBody r =
-  hoistEither . fmapL Text.pack . traverse eitherDecode' . nonEmptyBody =<< readBody r
-  where
-    nonEmptyBody "" = Nothing
-    nonEmptyBody ne = Just ne
-
-lookupRequestId :: HasRequest r => r -> Maybe ByteString
-lookupRequestId = lookup "Request-Id" . requestHeaders . getRequest
+getRequestId :: HeaderName -> Request -> RequestId
+getRequestId reqIdHeaderName req =
+  RequestId $ fromMaybe defRequestId $ lookupRequestId reqIdHeaderName req
 
 ----------------------------------------------------------------------------
 -- Typed JSON 'Request'
 
 newtype JsonRequest body = JsonRequest {fromJsonRequest :: Request}
 
-jsonRequest ::
-  forall body r.
-  (HasRequest r, HasHeaders r) =>
-  Predicate r Error (JsonRequest body)
-jsonRequest =
-  contentType "application" "json"
-    .&> (return . JsonRequest . getRequest)
-
 newtype OptionalJsonRequest body = OptionalJsonRequest {fromOptionalJsonRequest :: Request}
-
-optionalJsonRequest ::
-  forall body r.
-  (HasRequest r, HasHeaders r) =>
-  Predicate r Error (OptionalJsonRequest body)
-optionalJsonRequest =
-  opt (contentType "application" "json")
-    .&> (return . OptionalJsonRequest . getRequest)
 
 ----------------------------------------------------------------------------
 -- Instances

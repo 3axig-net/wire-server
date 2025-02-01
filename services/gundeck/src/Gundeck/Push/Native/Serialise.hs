@@ -1,6 +1,9 @@
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,34 +26,27 @@ where
 
 import Data.Aeson (Value, object, (.=))
 import Data.Aeson.Text (encodeToTextBuilder)
-import qualified Data.ByteString as BS
+import Data.ByteString qualified as BS
 import Data.Id
 import Data.Text.Encoding (encodeUtf8)
-import qualified Data.Text.Lazy as LT
-import qualified Data.Text.Lazy.Builder as LTB
+import Data.Text.Lazy qualified as LT
+import Data.Text.Lazy.Builder qualified as LTB
 import Gundeck.Push.Native.Types
-import Gundeck.Types
 import Imports
+import Wire.API.Push.V2
 
-serialise :: HasCallStack => NativePush -> UserId -> Transport -> IO (Either Failure LT.Text)
-serialise m uid transport = do
-  let rs = prepare m uid
-  case rs of
-    Left failure -> return $! Left $! failure
-    Right (v, prio) -> case renderText transport prio v of
-      Nothing -> return $ Left PayloadTooLarge
-      Just txt -> return $ Right txt
-
-prepare :: NativePush -> UserId -> Either Failure (Value, Priority)
-prepare m uid = case m of
-  NativePush nid prio _aps ->
-    let o =
-          object
-            [ "type" .= ("notice" :: Text),
-              "data" .= object ["id" .= nid],
-              "user" .= uid
-            ]
-     in Right (o, prio)
+serialise :: (HasCallStack) => NativePush -> UserId -> Transport -> Either Failure LT.Text
+serialise (NativePush nid prio _aps) uid transport = do
+  case renderText transport prio o of
+    Nothing -> Left PayloadTooLarge
+    Just txt -> Right txt
+  where
+    o =
+      object
+        [ "type" .= ("notice" :: Text),
+          "data" .= object ["id" .= nid],
+          "user" .= uid
+        ]
 
 -- | Assemble a final SNS JSON string for transmission.
 renderText :: Transport -> Priority -> Value -> Maybe LT.Text

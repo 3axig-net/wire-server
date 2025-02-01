@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: federator
   labels:
-    wireService: federator
+    app: federator
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -16,11 +16,11 @@ spec:
       maxSurge: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      wireService: federator
+      app: federator
   template:
     metadata:
       labels:
-        wireService: federator
+        app: federator
         release: {{ .Release.Name }}
       annotations:
         # An annotation of the configmap checksum ensures changes to the configmap cause a redeployment upon `helm upgrade`
@@ -30,6 +30,13 @@ spec:
         {{- end }}
         fluentbit.io/parser: json
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: federator
       volumes:
         - name: "federator-config"
           configMap:
@@ -57,6 +64,10 @@ spec:
         - name: federator
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           volumeMounts:
             - name: "federator-config"
               mountPath: "/etc/wire/federator/conf"
@@ -69,16 +80,15 @@ spec:
               containerPort: {{ .Values.service.internalFederatorPort }}
             - name: external
               containerPort: {{ .Values.service.externalFederatorPort }}
-          # TODO ensure to have a status endpoint!
-          # livenessProbe:
-          #   httpGet:
-          #     scheme: HTTP
-          #     path: /i/status
-          #     port: {{ .Values.service.internalFederatorPort }}
-          # readinessProbe:
-          #   httpGet:
-          #     scheme: HTTP
-          #     path: /i/status
-          #     port: {{ .Values.service.internalFederatorPort }}
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /i/status
+              port: {{ .Values.service.internalFederatorPort }}
+          readinessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /i/status
+              port: {{ .Values.service.internalFederatorPort }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

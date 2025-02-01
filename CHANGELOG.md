@@ -1,4 +1,4081 @@
-<!-- if you're not the release manager, do your edits to changelog under CHANGELOG.d/ -->
+# [2025-01-28] (Chart Release 5.10.0)
+
+## Release notes
+
+
+This is a hotfix release to re-enable adding and removing bots to conversations. (#4424, #4425, #4426)
+
+
+# [2024-12-30] (Chart Release 5.9.0)
+
+## Release notes
+
+
+* POST /scim/auth-token request body allows you to choose an IdP UUID to associate with.  If none is given, do not associate.
+
+  **WARNING:** the new behavior differs from the old one when first creating a unique SAML IdP and then the SCIM token: before this release, this request would associate the two, now it doesn't. (#4349)
+
+* We changed the default MLS cipher suite from
+
+  - MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+
+  to
+
+  - MLS_128_DHKEMP256_AES128GCM_SHA256_P256
+
+  and the allowed MLS cipher suites from only
+
+  - MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519
+
+  to _only_
+
+  - MLS_128_DHKEMP256_AES128GCM_SHA256_P256.
+
+  ATTENTION: This breaks your MLS clients if they used the previous defaults before. This is even true if you allow several cipher suites, since current MLS clients only support _one_ cipher suite at a time.
+
+  [Adjust the defaults in the server configuration](https://github.com/wireapp/wire-server/blob/develop/docs/src/developer/reference/config-options.md#mls) to switch the values of `defaultCipherSuite` and `allowedCipherSuites` back to the previous defaults, `1` and `[1]`, respectively. Once MLS clients support several cipher suites, you could even use `[1,2]` or a list of other cipher suites in `allowedCipherSuites`. Make sure that this list contains the currently used cipher suite! (#4373)
+
+* This release contains a new Git submodule: `wire-server-enterprise`. This module represents a service which contains all non-open-source features. Wire can still be deployed and run without this service. Building it without `wire-server-enterprise` is currently not documented, but Wire will keep providing the artefacts.
+
+  The service can be deployed with a dedicated Helm chart (`charts/wire-server-enterprise`.) The required service image is not freely available (the registry is password protected.) (#4357)
+
+
+## API changes
+
+
+* The `client_id` query parameter of the `GET /events` endpoint is now optional. When not provided, events are returned from a temporary queue that's not bound to any specific client. The queue is deleted when the websocket disconnects. (#4360)
+
+
+## Features
+
+
+* You can now create both multiple SCIM peers and multiple SAML IdPs, and freely associate them with each other (team management app implementation pending). (#4349)
+
+* Internal API and backoffice support for managing email domains for enterprise login (#4364)
+
+
+## Bug fixes and other updates
+
+
+* Fix `gzip filter failed to use preallocated memory` alerts in nginz by upgrading (#4365)
+
+* Send team active event in personal user to team flow (#4380)
+
+* Add profile name to new team owner welcome mail (#4378)
+
+
+## Internal changes
+
+
+* Delete federation V0 and V1 queues after integration tests (#4374)
+
+* Stabilize `index migration` tests by fixing a race on index names. (#4382)
+
+* Adjust the existing Ormolu script to format the wire-server-enterprise submodule
+  as well. (#4377)
+
+* Revive and translate old integration test (#4387, #4386)
+
+* Translate integration test to new suite. (#4384)
+
+
+# [2024-12-11] (Chart Release 5.8.0)
+
+## Release notes
+
+
+* [RabbitMQ events] Notifications are now also sent via RabbitMQ. Therefore RabbitMQ is now a required dependency for Cannon and Gundeck.  Cassandra is now a required dependency for Cannon and Background-Worker.  Both of them need access to the Gundeck keyspace.  These are breaking changes for Charts. (#4272, #4358, #4340)
+
+* If brig's server values config has the field `emailSMS.team`, the correct value for the personal user to team invitation URL must be set under `emailSMS.team.tExistingUserInvitationUrl`. Otherwise the URL will point to a path under the account pages and therefore a value for `externalUrls.accountPages` is required. (#4341)
+
+
+## API changes
+
+
+* The endpoint `POST /teams/:tid/invitations` gained a new optional field `allow_existing`, which controls whether an existing personal user should be invited to the team (#4336)
+
+
+## Features
+
+
+* Welcome email for new team owner. (#4333)
+
+* Added inviter's email to `GET /teams/invitation/info` endpoint. (#4332)
+
+
+## Bug fixes and other updates
+
+
+* Updated `nginz` config for personal user to team flow (#4334)
+
+* Freeze API version 7, create new dev version 8.  Also update checklist. (#4356, #4356)
+
+* Fixed config for personal user to team invitation URL template. (#4341)
+
+* Fixed search index after personal user creates team (#4362)
+
+
+## Documentation
+
+
+* Add a few more swagger descriptions and examples. (#4323)
+
+
+## Internal changes
+
+
+* `charts/wire-server-enterprise` is a Helm chart to run the `wire-server-enterprise`
+  service. This service can only be deployed with an image pull secret (the
+  registry is not open to public.) (#4359)
+
+* [Polysemy] Move email update and remove operations to effects (#4316, #4316)
+
+* Log uncaught IO exceptions in cargohold (#4352)
+
+* Updated email templates to v1.0.124 (#4328)
+
+* charts/galley: Make missing mls keys a templating error. Update MLS docs. (#4369)
+
+* [RabbitMQ events] New endpoint `GET /events` for consuming events is added (in API V8).
+
+  - When a client misses notifications because it was offline for too long, it needs to know this information so it can do a full synchronisation. This appears as the first notification in `GET /events` endpoint whenever the system detects this happening. The next acknowledgement of the message makes this notification not appear anymore until the next notification is missed. (#4272)
+  - New internal endpoint `POST /i/users/:uid/clients/:cid/consumable-notifications` is added (#4272)
+  - Connection pooling in cannon (#4348)
+  - Add consumers to the draining step on Cannon, in case of termination. (#4342)
+  - List queues more efficiently. (#4351)
+
+
+# [2024-11-04] (Chart Release 5.7.0)
+
+## Bug fixes and other updates
+
+
+* galley: Use bulk query when getting all feature configs for a team user (#4325)
+
+
+## Internal changes
+
+
+* Block access to assets.*/minio/ path for public access. (#4297)
+
+* galley: Delete unused endpoint for getting feature status for multiple teams (#4326)
+
+* Fix shellcheck problems in all shell scripts (#4220)
+
+
+# [2024-10-30] (Chart Release 5.6.0)
+
+## Release notes
+
+
+* To remove phone keys from brig's `user_keys` table an ad hoc data-migration can be run. See PR https://github.com/wireapp/wire-server/pull/4146 which contains the implementation. (#4130)
+
+* Because the `phone` column is deleted from Brig's `user` table in a schema
+  migration, temporarily there might be 5xx errors during deployment if Wire
+  server 5.4.0 was not deployed previously. To avoid these errors, please deploy
+  the Wire server 5.4.0 release first. (#4130)
+
+* With this release it will be possible to invite personal users to teams. In `brig`'s config, `emailSMS.team.tExistingUserInvitationUrl` is required to be set to a value that points to the correct teams/account page.
+  If `emailSMS.team` is not defined at all in the current environment, the value of `externalUrls.teamSettings` (or, if not present, `externalUrls.nginz`) will be used to construct the correct url, and no configuration change is necessary. (#4229)
+
+* charts/wire-server: There is a new config value called `background-worker.config.enableFederation` which defaults to `false`. This must be kept in sync with `tags.federation`. (#4243)
+
+* If you are mapping an email address to the `externalId` field in the
+  scim schema, please check the following list for items that apply to
+  you and recommended steps before/during/after upgrade.
+
+  - **Situation:** the `emails` field of in your scim user records is
+      empty.
+
+    **What you need to do:** change your schema mapping to contain the
+      same address in `externalId` and (as a record with one element) in
+      `emails`.
+
+  - **Situation:** the `emails` field of your scim user records is
+      non-empty.
+
+    **What you need to do:** make sure `emails` contains exactly one
+      entry, which is the email from `externalId`.  If there is a
+      discrepancy, the address from `emails` will become the new
+      (unvalidated) address of the user, and the user will receive an
+      email to validate it.  If the email cannot be sent or is ignored
+      by the recipient, the *valid* address will not be changed. (#4221)
+
+* A schema migration drops column 'phone' from Brig's 'team_invitation' table. Previous releases were still reading this column. As there is no Team Settings UI action to enter a phone number, this reading will not miss to read actual phone numbers. Therefore, during deployment this will lead to benign 5xx errors. (#4149)
+
+* Password hashing can now be done using argon2id instead of scrypt. The argon2id parameters can be configured using these options:
+
+  ```yaml
+  brig:
+    optSettings:
+      setPasswordHashingOptions:
+        algorithm: argon2id
+        iterations: ...
+        memory: ... # memory needed in KiB
+        parallelism: ...
+  galley:
+    settings:
+      passwordHashingOptions:
+        algorithm: argon2id
+        iterations: ...
+        memory: ... # memory needed in KiB
+        parallelism: ...
+  ```
+
+  The default option is still to use scrypt as moving to argon2id might require
+  allocating more resources according to configured parameters.
+
+  When configured to use argon2id, the DB will be migrated slowly over time as the
+  users enter their passwords (either to login or to do other operations which
+  require explicit password entry). This migration is **NOT** done in reverse,
+  i.e., if a deployment started with argon2id as the algorithm then chose to move
+  to scrypt, the passwords will not get rehashed automatically, instead the users
+  will have to reset their passwords if that is desired.
+
+  **NOTE** It is highly recommended to move to argon2id as it will be made the
+    only available choice for the `algorithm` config option in future.
+
+  (#4291, #4291)
+
+* Config value `gundeck.config.bulkPush` has been removed. This is purely an
+  internal change, in case the value was overriden to `false`, operators might see
+  more spiky usage of CPU and memory from gundeck due to bulk processing. (#4290)
+
+
+## API changes
+
+
+* A new endpoint `POST /teams/invitations/accept` allows a non-team user to accept an invitation to join a team (#4229)
+
+* Services allowlist are blocked by 409 (mls-services-not-allowed) for teams with default protocol MLS. (#4266)
+
+* The `POST /clients` and `PUT /clients/:cid` endpoints support a new capability "consume-notifications" (#4259)
+
+* New variant in API version 7 of endpoints for creating and listing SCIM tokens that support a `name` field. New endpoint in version 7 for updating a SCIM token name. (#4307)
+
+* All the phone number-based functionality is removed from the client API v6 (#4149)
+
+* The team CSV export endpoint has gained two extra columns: `last_active` and `status`. The streaming behaviour has also been improved. (#4293)
+
+* The changes to the `capabilities` field of the `Client` structure, introduced in v6, have now been postponed to v7 (#4179)
+
+* Finalise version 6 and introduce new development version 7 (#4179, #4179)
+
+* From API version 7 the `GET /mls/public-key` and `GET  /conversations/one2one/:domain/:uid` endpoints now take a `format` query parameter which can be either `raw` (default, for raw base64-encoded keys) or `jwk` (for JWK keys) (#4216, #4224)
+
+* `GET /conversations/one2one/:domain/:uid` now returns `public_keys` along with the conversation containing all MLS public keys for the backend which will host this conversation (since v6). (#4224)
+
+* Remove the ability to set the TTL of a feature flag. Existing TTLs are still retrieved and returned as before. Note that this only applies to the conferenceCalling feature, as none of the others supported TTL anyway. (#4164)
+
+* Add useSFTForOneToOneCalls as a config option for the Conference Calling feature flag and make its lock status explicit. (#4164)
+
+* Add endpoint to upgrade a personal user to a team owner (#4251)
+
+
+## Features
+
+
+* DB migration for dropping `phone` column from `user` table (#4130)
+
+* A text status field was added to user and user profile (#4155)
+
+* Allow an existing non-team user to migrate to a team (#4229, #4268, #4315)
+
+* Makes it impossible for a user to join an MLS conversation while already under legalhold (at least pending)
+
+  This implies two things:
+  1. If a user is under legalhold they cannot ever join an MLS conversation, not even an MLS self conversation.
+  2. A user has to reject to be put under legalhold when they want to join an MLS conversation (ignoring the request to be put under legalhold is not enough). (#4242)
+
+* Email template for inviting a personal user to a team added (#4310)
+
+* Clients can declare to be supporting a capability for consuming notifications (#4259)
+
+* New endpoint to revoke an OAuth session (#4213)
+
+* Adds a field which contains a list of all active sessions to each OAuth application in the response of `GET /oauth/applications` (#4211)
+
+* SCIM's emails field is now handled and the external ID is not restricted to being an email anymore (#4221)
+
+* Added human readable names for SCIM tokens (#4307)
+
+* allow subconversations for MLS 1-1 conversations (#4133)
+
+* Allow choosing hashing algorithm and configuring argon2id parameters (#4291, #4291)
+
+* Deny requests for a legalhold device for users who are part of any MLS conversations (#4245)
+
+* Allow setting of Kubernetes annotations for the `coturn` Service. (#4189)
+
+* Add `initialConfig` setting for the `mls` feature flag (#4262)
+
+* Add `federationProtocols` setting to galley, which can be used to disable the creation of federated conversations with a given protocol (#4278)
+
+* added open telemetry instrumentation for brig, galley, gundeck and cannon (#3901)
+
+* Send confirmation email after adding a personal user to a new team (#4253)
+
+* The SFT and turn usernames returned by `/calls/config/v2` are now deterministically computed from the user ID (#4156)
+
+* Use latest stable RabbitMQ version (`3.13.7`) and Helm chart (`14.6.9`). Please
+  note that this minor RabbitMQ version upgrade (`3.11.x` to `3.13.x`) may need
+  special treatment regarding existing RabbitMQ instances. See
+  https://www.rabbitmq.com/docs/upgrade#rabbitmq-version-upgradability . The major
+  Helm chart version upgrade may (depending on your setup/values) need attention
+  as well: https://github.com/bitnami/charts/tree/main/bitnami/rabbitmq#upgrading (#4227)
+
+
+## Bug fixes and other updates
+
+
+* Fixed API version check. It has now precedence over other checks like e.g. method check. (#4152)
+
+* Fix handling of defaults of `mlsE2EID` feature config (#4233)
+
+* Match cipher suite tag in query parameters against key packages on replacing key packages (#4158)
+
+* Users with SAML-SSO are allowed to delete their email address on the rest api. If they do that, the search indices are not updated correctly, and finding the user by the removed email address is still possible. (#4260)
+
+* Re-add accidentally removed add-bot@v6 route in nginz, fixes #4302 (#4318)
+
+* Exclude exception message from error response (#4153)
+
+* Return HTTP 400 instead of 500 when property key is not printable ASCII (#4148)
+
+* move cipher suite updates into the commit lock (#4151)
+
+* Fix feature flag default calculation for `mlsMigration` and `enforceFileDownloadLocation` (#4265)
+
+* Allow setting existing properties even if we have max properties (#4148)
+
+* removed spam from nginx (nginz) by using the new style http/2 directive (#3901)
+
+* brig: Make `GET /services/tags` work again (#4250)
+
+* Process bounce and complaint notifications from SES correctly.  (#4301)
+
+
+## Documentation
+
+
+* Call graph of federated endpoints was removed from the docs (#4299)
+
+* Restored LegalHold internal API swagger as part of Brig. (#4191)
+
+* Fix: show openapi docs for blocked versions (#4309)
+
+* Move docs from docs.wire.com to generated helper page served by brig (#4311)
+
+* Deleted proteus-specific test documentation tags and added some new tags to MLS tests (#4240)
+
+* Fix openapi validation errors (#4295, #4295)
+
+* Re-introduce test case tags for BSI audit (revert #4041) (#4192)
+
+
+## Internal changes
+
+
+* Introduced API versioning and version negotiation for external LegalHold Service supporting `v0` and `v1` (#4284)
+
+* Read sftTokenSecret from secrets.yaml and mount to /etc/wire/brig/secrets/sftTokenSecret by default (#4214)
+
+* Added node based topology constraint to ensure pods are distributed uniformly on all nodes. (#4222)
+
+* Move smallstep-accomp` helm charts to `wireapp/helm-charts` (#4204)
+
+* Remove coturn helm chart. It is moved to `wireapp/coturn`. (#4209)
+
+* Additional test for password reset, port tests to new integration test suite (#4249)
+
+* Remove unused invitation tables from brig. (#4263)
+
+* Improve abstraction in the invitation store and hide DB interaction-specific internal types from the application code. (#4280)
+
+* Move some invitation handling from brig to wire-subsystems.
+
+  - introduce cyclically dependent effects: UserSubsystem, AuthenticationSubsystem (see Brig.CanonicalInterpreter).
+  - introduce TeamInvitationSubsystem with operations inviteUser, internalCreateInvitation.
+  - add verifyPassword to AuthenticationSubsystem.
+  - add sendInvitationMail, sendInvitationMailPersonalUser to EmailSubsystem.
+  - add getTeamSize to IndexedUserStore (this is morally internal to wire-subsystems, and making another ES subsystem would mean adding a lot of code everywhere).
+  - add updateUserTeam to UserStore.
+  - add acceptTeamInvitation, internalFindTeamInvitation to UserSubsystem.
+  - make a few small rest api handlers in brig polysemic (Handler -> Sem). (#4264)
+
+* tools/db/team-info: collects last login times of all team members (#4274)
+
+* Introduce length-preserving function mapRange to replace Functor instance for Range data type. (#4279)
+
+* TransitiveAnns compiler plugin was removed (#4299)
+
+* Servantify internal routing table for proxy. (#4296)
+
+* Servantify gundeck internal api (#4246)
+
+* Removed `indexReindex` and `indexReindexIfSameOrNewer` from internal Brig/SearchIndex. (#4188)
+
+* Introduced ElasticSearch effects related to user search. (#4188)
+
+* Brig was refactored by pulling out email block-listing into a wire subsystems effect, and its actions are exposed via the user subsystem. (#4167)
+
+* charts/wire-server: Deploy background-worker even when tags.federation is `false` (#4342, #4248)
+
+* Updated email templates to v1.0.122 (#4308)
+
+* Refactor feature flags
+  - Improved naming slightly. Features types are now called `Feature`, `LockableFeature` and `LockableFeaturePatch`
+  - Turned `AllFeatures` into an extensible record type
+  - Removed `WithStatusBase` barbie.
+  - Deleted obsolete `computeFeatureConfigForTeamUser`
+  - Abstracted `getFeature` and `setFeature`
+  - Abstracted getAllTeamFeatures (#4181)
+
+* Clean up and reorganise feature flag endpoints (#4193)
+
+* Clean up feature default configuration code (#4196)
+
+* Add federation-v1 environment for testing compatibility of the federation API with version 1 (#4125)
+
+* Fix overlapping paths errors in galley's internal API (#4313)
+
+* Local integration tests of federation version V1 fixed (#4320)
+
+* nginz/local-conf: Update list of endpoints (#4176)
+
+* Expose gundeck internal API on swagger.  Mv some types and routes to wire-api. (#4247)
+
+* dockerephemeral: Use inbucket for SMTP (#4176)
+
+* Makefile: Add target `crm` to run services tuned for manual usage (#4176)
+
+* Postgresql helm chart is removed from charts/ directory and migrated to wireapp/helm-charts repo (#4208)
+
+* Simplify NewTeam and related types and remove lenses (#4257)
+
+* Add openapi validation test to integration (#4302)
+
+* Optimize getting a lot of users by concurrently getting target users (#4140)
+
+* charts/{brig,galley}: Allow setting a preStop hook for the deployments (#4200)
+
+* Introduce proeprty subsytem (#4148)
+
+* Factored out our Email type in favour of EmailAddress from email-validate. (#4206)
+
+* Move CSV export test to integration (#4292)
+
+* add the TODO pattern and the todo function to Imports (#4198)
+
+* Refactor user feature logic (#4178)
+
+* Remove `UserAccount` and `ExtendedUserAccount` and their fields to the `User` type (#4275)
+
+* Started weeding out dead code. (#4170)
+
+* New user subsystem operation `getAccountsBy` for complex account lookups. (#4218)
+
+* Added warning when deploying wire-server helm chart with User/Team creation over internet enabled. (#4212)
+
+
+# [2024-07-09] (Chart Release 5.5.0)
+
+## Bug fixes and other updates
+
+
+* Fix names of metrics so they do not contain any dots (#4134)
+
+
+# [2024-07-08] (Chart Release 5.4.0)
+
+## Release notes
+
+
+* Phone registration and login is not supported anymore. All API endpoints dealing with phone numbers and phone activation codes now fail with a 400 error. Brig options related to phone number support have now been deleted, namely:
+   - `setTwilio`
+   - `setNexmo`
+   - `setAllowlistPhonePrefixes`. (#4045)
+
+
+## API changes
+
+
+* Internal API endpoints related to phone numbers have been removed.
+
+  In brig:
+  - `iGetPhonePrefix`
+  - `iDeletePhonePrefix`
+  - `iPostPhonePrefix`.
+
+  In stern:
+  - `get-users-by-phone`
+  - `put-phone`. (#4045)
+
+
+## Features
+
+
+* charts/coturn: support putting coturn into 'drain' mode when terminating pods, denying new incoming client connections. This speeds up graceful coturn restarts significantly. (#4098)
+
+* Set SFT usernames's `shared` field according to team settings (#4117)
+
+* Updated the `mlsE2EId` feature config with two additional fields `crlProxy` and `useProxyOnMobile` (#4051)
+
+* reject MLS messages for future epochs (#4110)
+
+* Introduce more configuration options to the `coturn` helm chart (#4083)
+
+* Update email templates to v1.0.121. (#4064)
+
+* Support connecting to RabbitMQ over TLS. See "Configure RabbitMQ" section in the documentation for details. (#4094)
+
+* Support connecting to Redis over TLS
+
+  It can be enabled by setting these options on the wire-server helm chart:
+
+  ```yaml
+  gundeck:
+    config:
+      redis:
+        enableTls: true
+
+        # When custom CAs are required, one of these must be set:
+        tlsCa: <PEM encoded CA certificates>
+        tlsCaSecretRef:
+          name: <Name of the secret>
+          key: <Key in the secret containing pem encoded CA Cert>
+
+        # When TLS needs to be used without verification:
+        insecureSkipVerifyTls: true
+  ```
+  (#4016)
+
+
+## Bug fixes and other updates
+
+
+* fixed stern endpoint `/i/users/meta-info` (#4101)
+
+* Log password reset errors instead of propagating them (#4114)
+
+* Log request ids in brig. (#4086)
+
+* Do not set update origin "scim" in public brig api. (#4072)
+
+* Disabling legalhold before user's approval doesn't result in an error  (#4104)
+
+* Make scim-delete-user idempotent. Hide information about existing users (make delete idempotent) (#4120)
+
+* Expose /providers/assets via nginz (#4082)
+
+* federator: Expect a client certificate to be the certificate chain
+
+  Without this openssl doesn't forward to whole chain causing mTLS to not succeed. (#4089)
+
+* Only resend proposals once after external commit (#4103)
+
+* gundeck: Better tolerance for redis-cluster restarts (#4084)
+
+* GHC does not support repeated --with-rtsopts options, and it simply applies the last one. This means many of the baked-in options were actually not being passed, including -N for some of the services and -T for cannon. (#4118)
+
+* Ensure that a Request ID is logged whenever unexpected errors are caught in any service (#4059)
+
+* charts/coturn: use allowed dir to write PID file (#4098)
+
+* Make pending LH requests (with no LH devices listening yet) not throw LH policy errors.  This helps eg. in cases where a LH request is issued to the wrong user by accident, and the user can clear up the mistake. (#4056)
+
+
+## Documentation
+
+
+* Adjust documentation for migrated helm charts (#4058)
+
+
+## Internal changes
+
+
+* Adapt EJPD data to current requirements. (#3945)
+
+* Port team feature tests to the `integration` package (#4063)
+
+* Ported flaky legalhold test to the new integration test suite (#4057)
+
+* Added profile update operations to the user subsystem. (#4046)
+
+* Introduce authentication subsystem with password reset. (#4086)
+
+* update nixpkgs and hence GHC version as well as some other tooling. (#4071)
+
+* nginz: Added `allowlisted_fqdn_origins` to `nginx_conf` value (#4087)
+
+* Add weeder for dead code elimination. (#4088)
+
+* Introduce email subsystem (#4111)
+
+* replace cabal.project.local template and update cabal.project (#4119)
+
+* Add HTTP proxy in the local setup for elasticsearch in federation-v0. This makes it possible to use a single elasticsearch instance for both the main backends and federation-v0. (#4062)
+
+* federator: Add metrics for garbage collections and unexpected errors that were caught (#4085)
+
+* federator: Simplify polysemy setup to make it similar to other services so the
+  interpreter is only used for hoisting the servant application and not explicitly
+  inside handler of an endpoint (#4059)
+
+* Added prometheus enable and datacenter size variables for k8ssandra-test-cluster helm chart. (#4011)
+
+* Make `Handle` type abstract to guarantee it always contains *valid* Handles. (#4076)
+
+* metrics-core: Delete `Data.Metrics` in favour of defining metrics closer to where they are being emitted (#4085)
+
+* add more metadata into the meta attribute of all nix derivations produced locally (#4069)
+
+* Do not log anything when warp kills a worker thread. (#4112)
+
+* Introduce VerificationCodSubsystem (#4121)
+
+* add tests for bots that use self-signed certs and add documentation on why we cannot test the bots to work with PKI (#4027)
+
+
+# [2024-05-21] (Chart Release 5.3.0)
+
+## API changes
+
+
+* /mls/keys use JWK instead of bare keys as MLS removal keys (#3548)
+
+* The `cipher_suite` field is not present anymore in objects corresponding to newly created conversations (#4009)
+
+
+## Features
+
+
+* Upgrade `rusty-jwt-tools` to support `ecdsa_secp256r1_sha256` (#4035)
+
+* gundeck: Delete all APNS_VOIP and APNS_VOIP_SANDBOX push tokens (#4044)
+
+
+## Bug fixes and other updates
+
+
+* gundeck: Fix parsing errors for SNS ARN for VOIP Tokens (#4040)
+
+* Fix hardcoded ciphersuite when switching to mixed (#4048)
+
+
+## Internal changes
+
+
+* Add tool to determine number of phone-only users (#4024)
+
+* Log federator request ID on exceptions (#4037)
+
+* Update mls-test-cli to version 0.12 (#4039)
+
+* Remove inbucket helm chart. (#4032)
+
+* Finish servantifying galley and remove wai-routing dependency (#4018)
+
+* New subsystem for user management. (#3977)
+
+* Clean up syntax of test cases that occur in BSI audit. (#4041)
+
+
+# [2024-04-26] (Chart Release 4.43.0)
+
+## Bug fixes and other updates
+
+
+* charts/brig: Fix template for settings ES CA certs (#4022)
+
+
+# [2024-04-25] (Chart Release 4.42.0)
+
+## Release notes
+
+
+* There is a new optional Boolean in Brig's Helm chart, `config.multiSFT.enabled`,
+  signalling whether calls between federated SFT servers are allowed.
+
+  IMPORTANT: The value of this new option needs be set to the value of
+  `multiSFT.enabled` in SFT's Helm chart. Otherwise federated SFT servers won't
+  work.
+
+  If provided, the field `is_federating` in the response of `/calls/config/v2`
+  will reflect `multiSFT.enabled`'s value.
+
+  Example:
+
+  ```
+  # [brig/values.yaml]
+  multiSFT:
+    enabled: true
+  ```
+
+  Also, the optional object `sftToken` with its fields `ttl` and `secret` define
+  whether an SFT credential would be rendered in the response of
+  `/calls/config/v2`. The field `ttl` determines the seconds for the credential to
+  be valid and `secret` is the path to the secret shared with SFT to create
+  credentials.
+
+  Example:
+
+  ```
+  # [brig.yaml]
+  sft:
+    sftBaseDomain: sft.wire.example.com
+    sftSRVServiceName: sft
+    sftDiscoveryIntervalSeconds: 10
+    sftListLength: 20
+    sftToken:
+      ttl: 120
+      secret: /path/to/secret
+  ``` (#3915)
+
+* The "addClient" internal endpoint of galley has been changed. This can cause temporary failures during upgrades if brig attempts to use this endpoint on a different version of galley. (#3904)
+
+* Removed the deprecated and unused field `geoDb` from Brig's config. (#3975)
+
+* Added support for 3 more MLS ciphersuites. To enable MLS, all supported signature schemes (ed25519 and the three ecdsa variants) now need to have private keys specified in galley's configuration file. (#3964)
+
+
+## API changes
+
+
+* Create version 6 of client-related endpoints, fixing an oddity in the serialisation of capabilities. (#3904)
+
+* Add gzip request support to spar and proxy (#4013)
+
+
+## Features
+
+
+* Backend validates display name during DPoP challenge (#3890)
+
+* Add Helm chart `smallstep-accomp` that provides a CRL endpoint proxy for federated E2EI (#3896)
+
+* Support for Elasticsearch password authentication (#6717, #7283)
+
+* Support unblocking a user in an MLS 1-to-1 conversation (#3940)
+
+* Add E2EI configuration setup to smallstep-accomp chart (#3944)
+
+* Remove Helm migrated charts webapp, team-settings, account-pages, sftd (#3927)
+
+* charts/nginz: Rate limiting claiming MLS key-pacakges by requesting and target user (#3918)
+
+* Support connecting to Elasticsearch over TLS
+
+  It can be enabled by setting these options on the wire-server helm chart:
+
+  ```yaml
+  brig:
+    config:
+      elasticsearch:
+        scheme: https
+
+        # When custom CAs are required, one of these must be set:
+        tlsCa: <PEM encoded CA certificates>
+        tlsCaSecretRef:
+          name: <Name of the secret>
+          key: <Key in the secret containing pem encoded CA Cert>
+
+        # When TLS needs to be used without verification:
+        insecureSkipVerifyTls: true
+
+  elasticsearch-index:
+    elasticsearch:
+      scheme: https
+
+      # When custom CAs are required, one of these must be set:
+      tlsCa: <PEM encoded CA certificates>
+      tlsCaSecretRef:
+        name: <Name of the secret>
+        key: <Key in the secret containing pem encoded CA Cert>
+
+      # When TLS needs to be used without verification:
+      insecureSkipVerifyTls: true
+  ``` (#3989)
+
+* Make gundeck's notificationTTL configurable. The value defines how long
+  notifications are (at most) stored in the database. Decreasing this value e.g.
+  helps to safe database space on test environments. (#3960)
+
+* charts/nginz: Allow 3000 reqs/min on /conversations/one2one/:user_domain/:user (#3918)
+
+* Support authenticating to redis (#3971)
+
+
+## Bug fixes and other updates
+
+
+* Send connection cancelled event to local pending connection when user gets deleted (#3861)
+
+* Optional `apiProxy` attribute added to `deeplink.json` in nginz chart (#3933)
+
+* coturn cert-reloader sidecar config: process name should not contain the path (helm chart) (#3916)
+
+* Prevent conflict on subsequent tries to provision a SCIM user (#3914)
+
+* Avoid IO Exception when querying
+
+    GET /converations/{cnv_domain}/{cnv}/groupinfo
+
+  with public group state not set in galley.converation. (#3939)
+
+* Return an actual list of other users in a remote MLS 1-to-1 conversation (#3998)
+
+* charts/background-worker: Fix name of the service monitor (#3913)
+
+* Fix crash when enqueing an empty list of notifications and federation is disabled (#PR_NOT_FOUND)
+
+* Add the request ID to the request's execution environment in gundeck, such that it can be logged. (#3903)
+
+* The AWS SNS ARN was parsed by accumulating the environment name up to the first
+  dash ('-') such that parts of this name spilled over into the app name. Now, we
+  accumulate up to the last dash. (#3894)
+
+* Fix bug where welcome notifications were generated for each client instead of for each user (#3907)
+
+* Do not deliver MLS one-to-one conversation messages to a user that blocked the sender (#3889, #3906)
+
+*  Optimize getting all feature configs (#4002)
+
+
+## Documentation
+
+
+* adds new coding-conventions.md and talks about the decision we made for `cs` (#4006)
+
+* Distinguish UTCTime and UTCTimeMillis in swagger (#3899)
+
+* Patch hole in scim docs regarding wire team role manipulation. (#3897)
+
+
+## Internal changes
+
+
+* Create a new script (`Sbom.hs`) to generate the wire-server sbom (bill of material) file. (#3942)
+
+* port flaking LH tests to new integration and improve the ergonomics of our testing library (#3876)
+
+* some small refactorings to make it more clear in code what is happening when registering a scim token and an IdP (#3966)
+
+* In order for the CRL-proxy to function correctly, it needs to have CORS headers set.
+  We are now setting the CORS headers on the ingress level. (#3956)
+
+* drop cs in all production code and from Imports (#4001)
+
+* Galley's internal `DELETE /i/client/:clientID` now early-exits before visiting all conversations if the client is already gone.
+  Galley now reports debug logs for every call to Cassandra. (#3985)
+
+* move formatting and linting of haskell files to treefmt, remove some of the now unneeded rules (#4000)
+
+* Integration test cases for strangely behaving feature config settings. (#4007)
+
+* Add ldap-scim-bridge chart to the wire-server release (#3999)
+
+* Disable `integration` subchart of `wire-server` by default (#3682)
+
+* Provide password as value in `elasticsearch-ephemeral`. This way we can use
+  different passwords on our test systems. Ensuring that the password is really
+  configurable (and not accidentally hardcoded somewhere.) (#3994)
+
+* Upgraded fluent-bit chart to version 0.46.2
+  Added example values for fluent-bit helm chart for output to syslog server (#4012)
+
+* Ported 2FA tests to the new integration test suite (#3986)
+
+* To ensure certificate revocations get active in a short time frame, disable
+  caching of proxy results on client side by setting respective HTTP headers. (#3952)
+
+* Ensure that targets of the smallstep nginx proxy are resolved at runtime via the
+  configured DNS server. This has two benefits: The target gets adjusted when it's
+  changed at the DNS server. And, nginx doesn't fail to start when the target
+  doesn't exist yet. (#3947)
+
+* Use schema-profunctor for user event serialisation and introduce golden tests (#3912)
+
+* Setup federation-v0 environment for use in integration tests:
+   - add federation-v0 domain to test environment
+   - provision integration certificates with cert-manager (#3849, #3898)
+
+* Add assets to output of ejpd-info end-point in stern; also:
+
+  - [brig] now talks to carghold for profile picture extraction;
+  - [integration] migrate ejpd tests;
+  - [integration] enhanced `shouldMatch` shows a diff on failure now;
+  - [integration] added `shouldMatchLeniently` for rule-based canonicalization of arguments (#3875)
+
+* Bump hsaml2, saml2-web-sso dependencies. (#3995)
+
+* Remove support for push token transport types APNSVoIP, APNSVoIPSandbox from gundeck. (#3967)
+
+* Include remote domain in federator error logs (#3919)
+
+* Remove remaining splinters of wai-routing, wai-predicate from brig. (#3996)
+
+
+## Federation changes
+
+
+* The on-conversation-updated notification is now queued instead of being sent directly. A new version of the notification has been introduced with a different JSON format for the body, mostly for testing purposes of the versioning system.
+
+  Since the notification is now sent asynchronously, some error conditions in case of unreachable backends cannot be triggered anymore. (#3831)
+
+* Versioning of backend to backend notifications. Notifications are now stored in "bundles" containing a serialised payload for each supported version. The background worker then dynamically selects the best version to use and sends only the notification corresponding to that version.
+   (#3831)
+
+
+# [2024-02-13] (Chart Release 4.41.0)
+
+# [2024-02-12] (Chart Release 4.40.0)
+
+## Release notes
+
+
+* The settings `setDisabledAPIVersions` (brig) and `disabledAPIVersions` (in cannon, cargohold, galley, gundeck, proxy, and spar) are now required.
+  The default defined in `charts/<service>/values.yaml` is set to `[ development ]` and disables all development API versions.
+  For more information see <https://docs.wire.com/developer/reference/config-options.html#disabling-api-versions> (#3772)
+
+* The mls team feature now has a lock status. If the current installation has default settings defined in wire-server's `values.yaml`, the `lockStatus` has to be added, e.g.:
+
+  ```yaml
+  mls:
+    defaults:
+      status: enabled
+      config:
+        protocolToggleUsers: []
+        defaultProtocol: mls
+        allowedCipherSuites: [1]
+        defaultCipherSuite: 1
+        supportedProtocols: [proteus, mls] # must contain defaultProtocol
+      lockStatus: locked
+  ``` (#3681)
+
+* * Replace fake-sqs with ElasticMQ
+
+  ElasticMQ is an actively maintained project, fake-sqs hasn't seen a commit since
+  2018. This is not expected to have any noticeable effect on deployments that
+  don't have any extra configurations for the SQS queues. If the fake-aws-sqs
+  chart had configured custom queue names, they have couple of extra limitations:
+  - The queue names must only contain alphanumeric characters and hyphens.
+  - The FIFO queue names must end in `.fifo`. (#3750)
+
+* Upgrade team-settings version to 4.15.1-v0.31.19-0-ee1dbce (#2180)
+
+* Upgrade webapp to 2023-12-11-production.0-v0.31.17-0-1e91445
+
+  Beside using up-to-date versions in Helm charts is generally beneficial,
+  this version also provides multi-ingress support. (#3803)
+
+* Upgrade webapp version to 2024-01-22-production.1-v0.31.17-0-7f83dbe (#2302)
+
+
+## API changes
+
+
+* Un-verified users can no longer upload assets (#3604)
+
+* * Remove IP request header from add-client endpoint.
+  * Remove longitude and latitude response fields from add-client, list-clients, and get-client endpoints.
+
+  These are not considered breaking changes, since clients are not using this information. (#3792)
+
+* Create new API version V6 and finalize V5 (#3815)
+
+* Block changes of userDisplayName, userHandle in mlsE2EI-enabled teams on the backend without SCIM; report `"managed_by" == "scim"` in `GET /self`, but only there (#3827)
+
+* The federation API can now be versioned. Multiple versions of an RPC can be defined on the same path. After version negotiation, the federation client now sets the `X-Wire-API-Version` header, and federator propagates it to the destination service. (#3762)
+
+* Improved formatting of federation errors. No extra copy of the response body, and nested errors are now part of the JSON structure, not quoted inside the message. (#3742)
+
+* New endpoint for replacing MLS key packages in bulk: `PUT /mls/key-packages/self/:client`. It replaces all existing key packages that match the given ciphersuites with the new key packages provided in the body. (#3654)
+
+
+## Features
+
+
+* The lifetime of conversation guest links is now configurable (#3796)
+
+* Events for a member update, join and leave are not sent to everyone in the team any longer. Only team admins get them. (#3703)
+
+* Allowlist for who on cloud can connect to on-prem:
+  - Internal API to configure allowlist
+  - Restrict federated user search according to team federation policy
+  (#3697, #3732, #3758)
+
+* The mls team feature now has a lock status (#3681)
+
+* add a uniform timeout to the integration test-suite set by the environment variable TEST_TIMEOUT_SECONDS with a default of 10 seconds if the variable isn't set (#3692)
+
+* Apply team-level federation policies when establishing and updating user connections (#3774)
+
+* Introduce a feature flag that controls whether the limited event fanout should be used when a team member is deleted (#3797)
+
+* Send a `conversation.member-leave` event to team admins for each conversation the deleted team member used to be part of (#3790)
+
+* Allow the configuration of TLS-secured connections to Cassandra. TLS is used
+  when a certificate is provided. This is either done with
+  `--tls-ca-certificate-file` for cli commands or the configuration attribute
+  `cassandra.tlsCa` for services. In Helm charts, the certificate is provided as
+  literal PEM string; either as attribute `cassandra.tlsCa` (analog to service
+  configuration) or by a reference to a secret (`cassandra.tlsCaSecretRef`.) (#3587)
+
+* [SFT chart] Add option to enable serviceMonitor to scrape prometheus metrics (#3770)
+
+
+## Bug fixes and other updates
+
+
+* galley's DB migrations fixed (#3680)
+
+* The X509 client identity parser supports a new format: `wireapp://{userid}!{deviceid}@{host}` (#3808)
+
+* Updated `demo-smtp` Helm chart from deprecated docker image namshi/smtp to ixdotai/smtp (#3791)
+
+* External partners search restriction enforced by backend (#3708)
+
+* File upload size is now limited to 100 MiB (#3752)
+
+* Fix a bug where non-team conversation members that are remote would not get a `conversation.member-leave` event (#3745, #3764)
+
+* Enforce external partner permissions on the backend (#3788)
+
+* Various improvements around LH policy conflict detection:
+  * Fix LH policy conflict detection logic when posting messages
+  * Better policy conflict error messages (distinguish between old clients and missing consent)
+  * Add first LH scaffolding and tests to `/integration`
+  * Annotate some API functions in `/integration` with links to openapi3 docs (#3773)
+
+* Do not match on the `Accept` header for service provider endpoints with no response body (#3766)
+
+* Guests should not be added to conversations that are under legalhold (#3853)
+
+* Intra-service calls from brig to galley's public API are now aware of disabled API versions (#3863)
+
+* fix Helm pretty-printer for disabledAPIVersions (#3877)
+
+* Adjust the requested memory and upper bound limit of `nginz` pods in the related Helm chart. (We experienced OOM errors with the old settings.) (#3821)
+
+* don't use shell when communicating with mls-test-cli, move flaking brig tests over to new integration testsuite (#3701)
+
+*  set notificationTimeOut to 28 days, make it legible (#3714)
+
+* Update coturn image with bugfix to its prestop-hook from https://github.com/wireapp/coturn/pull/10 to allow coturn pods to terminate once their traffic has drained. (#3872)
+
+* Extra remove proposals were being sent when a user was removed from a conversation (#3672)
+
+* Remove client check for subconversations (#3677)
+
+* Ensure that SCIM can find users even after the team admin has changed the SAML issuer for the user. (#3747)
+
+* addClient used the internal brig API in the integration testsuite when it should use the public one (#3869)
+
+* Ensure that HTTP 1.1 connections are grafully closed
+
+  To fix this warp had to be patched to fix the bug upstream: https://github.com/yesodweb/wai/pull/958 (#3775)
+
+
+## Documentation
+
+
+* Fix missing code sections on docs.wire.com, notably on "configuring TLS" page. (#3839)
+
+* Swagger generation no longer adds tags containing information about federation calls.
+
+  Added the federation calling graph to the Federation API Conventions page. (#3674)
+
+* Backend-to-backend OpenApi Docs added (#3666)
+
+* Documentation for creating a new API version updated (#3817)
+
+* Update documentation of MLS group ID (#3705)
+
+* Turn long summaries in openapi documentation into descriptions (#3706)
+
+* update the build instructions for wire-server (#3854)
+
+
+## Internal changes
+
+
+* stern/backoffice `PUT /teams/{teamId}/features/conferenceCalling` fixed (#3723)
+
+* Removed client ID conversion round trip (#3727)
+
+* Migrate to Servant the Galley conversation internal endpoints (#3718)
+
+* The development API version is now disabled by default (#3772)
+
+* Attempt to fix flaky integration test `provider.service.delete` (#3689)
+
+* The fedcalls tool no longer walks the Swagger/OpenAPI structure when generating call graphs. These graphs are now generated directly from the Servant API types. (#3674, #3691)
+
+* Increased ingress payload size from 256k to 512k (#3756)
+
+* Request tracing across federated requests (#3765)
+
+* upgrade nixpkgs to upgrade haskell-language-server (#3650)
+
+* upgrade the GHC version to GHC 9.4 (#3679)
+
+* Removed APNS_VOIP code. (APNS_VOIP is a native push notification channel which we aren't using anymore.) (#3695)
+
+* Improve error logs (#3782)
+
+* Migrating tests for Cargohold to the new `integration` test suite. (#3741)
+
+* Fix calendar integration setting in backoffice / stern (#3761)
+
+* `Reply-Nonce` is added to `Access-Control-Expose-Headers` (#3729)
+
+* Add custom feature flag; only supported for some on-prem installations; locked & disabled by default (#3779)
+
+* Improved how tests are automatically extracted from the `integration` test suite.
+
+  The test extractor parser has been improved to handle block comments, and to more strictly check for Haddock documentation for each test. (#3749)
+
+* Additional logging on user/team suspension (#3795)
+
+* cleanup the haskell-pins
+  - remove many pins
+  - remove many overrides
+  - restructure the files such that it's easier to see what is going on (#3814)
+
+* Version of rusty-jwt-tools bumped to v0.8.0 (#3805)
+
+* Feature enforceFileDownloadLocation lockstatus can be set with basic auth on staging (#3802)
+
+* Version of rusty-jwt-tools bumped to v0.8.5 (#3820)
+
+* Translate integration tests: manually add / delete LH device (#3830)
+
+* adds a new executable, hs-run, to quickly run haskell scripts (#3716)
+
+* Represent client IDs as Word64 internally (#3713)
+
+* Allow to install the coturn chart multiple times in multiple namespaces on the same cluster. (#3698)
+
+* For some rust packages (cryptobox and libzauth-c), we now use crate2nix as a build tool, rather than the more coarse and FOD-based nixpkgs `rustPlatform.buildRustPackage` approach. (#3686)
+
+* Delete `shell.nix`. It has been broken for quite some time. The supported way to get a development nix environment is to use direnv. (#3726)
+
+* Deploy a backend with federation API V0 while setting up services for local testing (#3719)
+
+* Improve integration test coverage (#3757)
+
+* Increase timeout for waiting for SQS notifications in galley's integration tests (#3699)
+
+* Simplify process spawning of dynamic backends in integration tests (#3759)
+
+* More robust consuming of MLS messages: the behaviour of `sendAndConsumeMessage` and `sendAndConsumeCommitBundle` is changed to actually wait for those messages on the client's websocket (#3671)
+
+* Update group state after application message (#3678)
+
+* bump the nixpkgs version to allow updating curl (#3781)
+
+* Simplify the definition of the servant notification API (#3685)
+
+* Start refactoring code into subsystems, first subsystem being the NotificationSubsystem. (#3786)
+
+* Remove apply-refact from CI image
+
+  This gets rid of GHC in the image, making the image smaller. (#3712)
+
+* Refactor getOptions (#3707)
+
+* Restored Brig memory quota to 512mb down from 1gb. (prev bump #3751) (#3806)
+
+* Add tool to analyse test results in junit/ant xml format (#3652)
+
+* updated annotation for enabling Topology Aware Routing to service.kubernetes.io/topology-mode for k8s 1.27+ (#3878)
+
+* replace runAsNonRoot with runAsUser and runAsGroup 1000 (#3826)
+
+* Update SFTD default to 4.0.10 and its nginx to 1.25.3. (#3768)
+
+* add a Makefile target to make it possible to upload a bom of all services to s3 on every CI run (#3744)
+
+* Upload bill-of-material (BOM) files directly to the Dependency Tracker via REST.
+  This eases the life of the security team and prevents cluttering our release
+  artifact page. (#3810)
+
+* Passively migrate user passwords from scrypt to argon2id.
+
+  By passively we mean that whenever a user re-enters their passwords, if it was hashed using scrypt, it is then rehashed using argon2id and stored as such.
+  If that user has a legacy short password (under 8 characters in length), it does not migrate to argon2id. (#3720)
+
+
+## Federation changes
+
+
+* Define a few tests for adding members to an MLS conversation when unreachable backends are involved (#3673)
+
+* Make sure that remote users can be added to both a Proteus and an MLS conversation when other users are unreachable (#3688)
+
+
+# [2023-10-23] (Chart Release 4.39.0)
+
+## Release notes
+
+
+* New field for Supported protocols in Galley's MLS feature config
+
+  Galley will refuse to start if the list `supportedProtocols` does not contain
+  the value of the field `defaultProtocol`. Galley will also refuse to start if
+  MLS migration is enabled and MLS is not part of `supportedProtocols`.
+
+  The default value for `supportedProtocols` is:
+  ```
+  [proteus, mls]
+  ``` (#3374)
+
+
+## API changes
+
+
+* The JSON schema of `NonConnectedBackends` has changed to have its single field now called `non_connected_backends`. (#3518)
+
+* Remove de-federation (to avoid a scalability issue). (#3582)
+
+* Replace the placeholder self conversation id with the qualified conversation id for welcome events. (#3335)
+
+* Add new endpoint `DELETE /mls/key-packages/self/:client` (#3295)
+
+* Introduce an endpoint for deleting a subconversation (#2956, #3119, #3123)
+
+* Remove MLS endpoints from API v4 and finalise it (#3545)
+
+* Add new endpoint `GET /conversations/one2one/:domain/:uid` to fetch the MLS 1-1 conversation with another user (#3345)
+
+* Introduce a subconversation GET endpoint (#2869, #2995)
+
+* Add `GET /conversations/:domain/:cid/subconversations/:id/groupinfo` endpoint to fetch the group info object for a subconversation (#2932)
+
+* Introduce v5 development version (#3527)
+
+* It is now possible to use `PUT /conversation/:domain/:id/protocol` to transition from Mixed to MLS (#3334)
+
+* Report a failure to add remote users to an MLS conversation (#3304)
+
+* The key package API has gained a `ciphersuite` query parameter, which should be the hexadecimal value of an MLS ciphersuite, defaulting to `0x0001`. The `ciphersuite` parameter is used by the claim and count endpoints. For uploads, the API is unchanged, and the ciphersuite is taken directly from the uploaded key package. (#3454)
+
+* Add MLS migration feature config (#3299)
+
+* Switch to MLS draft 20. The following endpoints are affected by the change:
+
+   - All endpoints with `message/mls` content type now expect and return draft-20 MLS structures.
+   - `POST /conversations` does not require `creator_client` anymore.
+   - `POST /mls/commit-bundles` now expects a "stream" of MLS messages, i.e. a sequence of TLS-serialised messages, one after the other, in any order. Its protobuf interface has been removed.
+   - `POST /mls/welcome` has been removed. Welcome messages can now only be sent as part of a commit bundle.
+   - `POST /mls/message` does not accept commit messages anymore. All commit messages must be sent as part of a commit bundle. (#3172)
+
+* Key packages and leaf nodes with x509 credentials are now supported (#3532)
+
+
+## Features
+
+
+* Add reason field to conversation.member-leave (#3640)
+
+* Support deleting a remote subconversation (#2964)
+
+* Introduce support for resetting a subconversation (#2956)
+
+* Introduce a "mixed" conversation protocol type. A conversation of "mixed" protocol functions as a Proteus converation as well as a MLS conversations. It's intended to be used for migrating conversations from Proteus to MLS. (#3258)
+
+* Added support for post-quantum ciphersuite 0xf031. Correspondingly, MLS groups with a non-default ciphersuite are now supported. The first commit in a group determines the group ciphersuite. (#3454)
+
+* Remove conversation size limit for MLS conversations (#3468)
+
+* Added support for MSL 1-1 conversations (#3360)
+
+* MLS application messages for older epochs are now rejected (#3438)
+
+* The public key in an x509 credential is now checked against that of the client (#3542)
+
+* Add federated endpoints to get subconversations (#2952)
+
+* Add Helm chart (`rabbitmq-external`) to interface RabbitMQ instances outside of the Kubernetes cluster. (#3626)
+
+* Removing or kicking a user from a conversation also removes the user's clients from any subconversation. (#2942)
+
+* Add support for subconversations in `POST /mls/commit-bundles` (#2932)
+
+* Implement endpoint for leaving a subconversation (#2969, #3080, #3085, #3107)
+
+
+## Bug fixes and other updates
+
+
+* Fix nix derivations for rust packages (#3628)
+
+* Ensure benchmarking dependencies are provided by nix development environment (#3628)
+
+* Disable a guest user from creating a group conversation (#3622)
+
+* Adding users to a conversation now enforces that all federation domains that will be in the conversation are federated with each other. (#3514)
+
+* Fix ES migration script. (#3558)
+
+* Fixed add user to conversation when one of the other participating backends is offline (#3585)
+
+* Create a new http2 connection in every federator client request instead of using a shared connection. (#3602)
+
+* list-clients returns with partial success even if one of the remote backends is unreachable (#3611)
+
+* Defederation notifications, federation.delete and federation.connectionRemoved, now deduplicate the user list so that we don't send them more notifications than required. (#3515)
+
+* Fix memory and TCP connection leak in brig, galley, caroghold and background-worker. (#3663)
+
+* Fix bug where notifications for MLS messages were not showing up in all notification streams of clients (#3610)
+
+* Map the MLS self-conversation creator's key package reference in Brig (#3055)
+
+* This fixes a bug where a remote member is removed from a conversation while their backend is unreachable, and the backend does not receive the removal notification once it is reachable again. (#3537)
+
+* Welcome messages are not sent anymore to the creator of an MLS group on the first commit (#3392)
+
+
+## Documentation
+
+
+* Fix: support api versions other than v0 in swagger docs. (#3619)
+
+* Updating the route documentation from Swagger 2 to OpenAPI 3. (#3570)
+
+* Elaborate on internal user creation in prod (#3596)
+
+* Adding a testing config entry to the PR guidelines. (#3624)
+
+
+## Internal changes
+
+
+* remove leaving clients immediately from subconversations (#3096)
+
+* Servantify internal end-points: brig/teams (#3634)
+
+* add conversation type to group ID serialisation (#3344)
+
+* Do not cache federation remote configs on non-brig services (#3612)
+
+* JSON derived schemas have been changed to no longer pre-process record fields to drop prefixes that were required to disambiguate fields.
+  Prefix processing still exists to drop leading underscores from field names, as we are using prefixed field names with `makeLenses`.
+  Code has been updated to use `OverloadedRecordDot` with the changed field names. (#3518)
+
+* Updating the route documentation library from swagger2 to openapi3.
+
+  This also introduced a breaking change in how we track what federation calls each route makes.
+  The openapi3 library doesn't support extension fields, and as such tags are being used instead in a similar way. (#3570)
+
+* - Extending the information returned in errors for Federator. Paths and response bodies, if available, are included in error logs.
+  - Prometheus metrics for outgoing and incoming federation requests added. They can be enabled by setting `metrics.serviceMonitor.enabled`, like in other charts. (#3556)
+
+* CLI tool to consume messages from a RabbitMQ queue (#3589, #3655)
+
+* Removed user and client threshold fields from mls migration feature. (#3364)
+
+* Include timestamp in s3 upload path for test logs (#3621)
+
+* Migrating the following routes to the Servant API form.
+
+  POST /provider/services
+  GET /provider/services
+  GET /provider/services/:sid
+  PUT /provider/services/:sid
+  PUT /provider/services/:sid/connection
+  DELETE /provider/services/:sid
+  GET /providers/:pid/services
+  GET /providers/:pid/services/:sid
+  GET /services
+  GET /services/tags
+  GET /teams/:tid/services/whitelisted
+  POST /teams/:tid/services/whitelist (#3554)
+
+* Provider API has been migrated to servant (#3547)
+
+* background-worker: Get list of domains from RabbitMQ instead of brig for pushing backend notifications (#3588)
+
+* Avoid including MLS application messages in the sender client's event stream. (#3379)
+
+* Avoid empty pushes when chunking pushes in galley (#PR_NOT_FOUND)
+
+* Introduce a Galley DB table for subconversations (#2869)
+
+* Support mapping MLS group IDs to subconversations (#2869)
+
+* change version and conversation type to 16 bit in group ID serialisation (#3353)
+
+* Brig does not perform key package ref mapping anymore. Claimed key packages are simply removed from the `mls_key_packages` table. The `mls_key_package_refs` table is now unused, and will be removed in the future. (#3172)
+
+* Add intermediate "mixed" protocol for migrating from Proteus to MLS (#3292)
+
+* - Do not perform client checks for add and remove proposals in mixed conversations
+  - Restrict protocol updates to team conversations
+  - Disallow MLS application messages in mixed conversations
+  - Send remove proposals when users leave mixed conversations (#3303)
+
+* New cron job to save data usable to watch the progress of the Proteus to MLS migration in S3 bucket.
+
+  **IMPORTANT:** This cron job is _not_ meant for general use! It can leak data about one team to other teams. (#3579)
+
+* Subconversations are now created on their first commit (#3355)
+
+* Propagate messages in MLS subconversations (#2937)
+
+* Move some MLS tests to new integration suite (#3286)
+
+* Check validity of notification IDs in the notification API (#3550)
+
+* stern: Optimize RAM usage of /i/users/meta-info (#3522)
+
+* Additional integration test for federated connections (#3538)
+
+* The bot API is now migrated to servant (#3540)
+
+* `rusty-jwt-tools` is upgraded to version 0.5.0 (#3572)
+
+* Refactored schema version tracking from manually managed to automatic. (#3643)
+
+* Avoid unnecessary error logs on service shutdown (#3592)
+
+* Introduce an effect for subconversations (#2869)
+
+* Via the update path update the key package of the committer in epoch 0 of a subconversation (#2975)
+
+* Add more tests for joining a subconversation (#2974)
+
+* Added `/tools/db/repair-brig-clients-table` to clean up after the fix in #3504 (#3507)
+
+* Distinguish between update and upsert cassandra commands (follow-up to #3504) (#3513)
+
+* Truncate `galley.mls_group_member_client` table and drop `galley.member_client` table.
+
+  The data in `mls_group_member_client` could contain nulls from client testing in prod. So, its OK to truncate it.
+  The `member_client` table is unused. (#3648)
+
+* All integration tests can generate XML reports.
+
+  To generate the report in brig-integration, galley-integration,
+  cargohold-integration, gundeck-integration, stern-integration and the new
+  integration suite pass `--xml=<outfile>` to generate the XML file.
+
+  For spar-integration and federator-integration pass `-f junit` and set
+  `JUNIT_OUTPUT_DIRECTORY` and `JUNIT_SUITE_NAME` environment variables. The XML
+  report will be generated at `$JUNIT_OUTPUT_DIRECTORY/junit.xml`.
+
+  (#3568, #3633)
+
+
+## Federation changes
+
+
+* Add subconversation ID to onMLSMessageSent request payload. (#3270)
+
+* Derive group ID from qualified conversation ID and, if applicable,
+  subconversation ID.
+
+  Retire mapping from group IDs to conversation IDs. (group_id_conv_id)
+
+  Remove federation endpoints
+  - on-new-remote-conversation,
+  - on-new-remote-subconversation, and
+  - on-delete-mls-conversation
+  which were used to synchronise the group to conversation mapping. (#3309)
+
+* Reorganise the federation API such that queueing notification endpoints are separate from synchronous endpoints. Also simplify queueing federation notification endpoints. (#3647)
+
+* Introduce an endpoint for resetting a remote subconversation (#2964)
+
+* Split federation endpoint into on-new-remote-conversation and on-new-remote-subconversation
+  Call on-new-remote-subconversation when a new subconversation is created
+  Call on-new-remote-subconversation for all existing subconversations when a new backend gets involved
+  Call on-new-remote-subconversation when a subconversation is reset (#2997)
+
+* federator: Allow setting TCP connection timeout for HTTP2 requests
+
+  The helm chart defaults it to 5s which should be best for most installations. (#3595)
+
+* Constrain which federation endpoints can be used via the queueing federation client (#3629)
+
+* There is a breaking change in the "on-mls-message-sent" federation endpoint due to queueing. Now that there is retrying because of queueing, the endpoint can no longer respond with a list of unreachable users. (#3629)
+
+* Remote MLS messages get queued via RabbitMQ (#PR_NOT_FOUND)
+
+
+# [2023-08-16] (Chart Release 4.38.0)
+
+## Bug fixes and other updates
+
+* Fix syntax error in cassandra update to `brig.client`. (#3508)
+
+
+# [2023-08-16] (Chart Release 4.37.0)
+
+## API changes
+
+
+* Conversation creation endpoints can now return `unreachable_backends` error responses with status code 533 if any of the involved backends are unreachable. The conversation is not created in that case. (#3486)
+
+
+## Bug fixes and other updates
+
+
+* Make sure cassandra updates do not re-introduce removed content. (#3504)
+
+
+## Federation changes
+
+
+* Return `unreachable_backends` error when some backends of newly added users to a conversation are not reachable (#3496)
+
+
+# [2023-08-11] (Chart Release 4.36.0)
+
+## Release notes
+
+
+* **federation only** Introduce background-worker
+
+  This release introduces a new component: background-worker. This is currently
+  only used to federation-related tasks. Enabling federation in
+  the wire-server helm chart automatically installs this component.
+
+  When federation is enabled, wire-server will require running RabbitMQ. The helm
+  chart in `rabbitmq` can be used to install RabbitMQ. Please refer to the
+  documentation at https://docs.wire.com to install RabbitMQ in Kubernetes. These
+  new configurations are required:
+
+  ```yaml
+  brig:
+    config:
+      rabbitmq:
+        host: rabbitmq
+        port: 5672
+        vHost: /
+    secrets:
+      rabbitmq:
+        username: <YOUR_USERNAME>
+        password: <YOUR_PASSWORD>
+  galley:
+    config:
+      rabbitmq:
+        host: rabbitmq
+        port: 5672
+        vHost: /
+    secrets:
+      rabbitmq:
+        username: <YOUR_USERNAME>
+        password: <YOUR_PASSWORD>
+  background-worker:
+    config:
+      rabbitmq:
+        host: rabbitmq
+        port: 5672
+        vHost: /
+        adminPort: 15672
+    secrets:
+      rabbitmq:
+        username: <YOUR_USERNAME>
+        password: <YOUR_PASSWORD>
+  ```
+
+  The above are the default values (except for secrets, which do not have
+  defaults), if they work they are not required to be configured.
+  (#3276, #3314, #3333, #3366, #3383, #3391)
+
+* **Federation only** A few helm values related to federation have been renamed, no action is required if federation was disabled.
+  If federation was enabled these values must be renamed in the wire-server chart:
+  - tags.federator -> tags.federation
+  - brig.enableFederator -> brig.enableFederation
+  - galley.enableFederator -> galley.enableFederation
+  - cargohold.enableFederator -> galley.enableFederation
+
+  So, an old config which looked like this:
+
+  ```yaml
+  tags:
+    federator: true
+  brig:
+    enableFederator: true
+  galley:
+    enableFederator: true
+  cargohold:
+    enableFederator: true
+  ```
+
+  would now look like this:
+
+  ```yaml
+  tags:
+    federation: true
+  brig:
+    enableFederation: true
+  galley:
+    enableFederation: true
+  cargohold:
+    enableFederation: true
+  ```
+   (#3236)
+
+* **Federation only** From this release on, remote connections can be configured via an
+  internal REST API; the remote connections configured in the
+  values.yaml file(s) will be honored for a transition period, but will
+  be ignored starting in some future release.
+
+  YOU NEED TO UPDATE YOUR BRIG HELM VALUES BEFORE DEPLOYING THIS RELEASE.
+
+  Add the following to brig:
+
+  ```
+  brig:
+    config:
+      optSettings:
+        setFederationStrategy: allowNone # [allowAll | allowDynamic | allowNone]
+        setFederationDomainConfigsUpdateFreq: 10 # seconds
+  ```
+
+  `allowNone` is equivalent to `allowList` with empty list; `allowAll`
+  remains the same as before; `allowDynamic` is `allowList`, but the
+  list is now stored in cassandra, not the config file.
+
+  If your federator config values contain something like this:
+
+  ```
+      federationStrategy:
+        allowedDomains:
+        - red.example.com
+        - blue.example.com
+  ```
+
+  you need to make sure that the following lines are part of your brig
+  config (after the upgrade and until you have loaded the data into
+  casssandra, federation with those domains won't possible if you forget
+  this):
+
+  ```
+  brig:
+    config:
+      optSettings:
+        setFederationDomainConfigs:
+        - domain: red.example.com
+          search_policy: full_search
+        - domain: blue.example.com
+          search_policy: no_search
+  ```
+
+  The search policy for a remote backend can be:
+  - `no_search`: No users are returned by federated searches. default.
+  - `exact_handle_search`: Only users where the handle exactly matches are returned.
+  - `full_search`: Additionally to exact_handle_search, users are found by a freetext search on handle and display name.
+
+  Once the new release is deployed, you need to copy all the data from
+  the config files into `brig.federation_remotes` in cassandra [internal
+  CRUD
+  API](https://staging-nginz-https.zinfra.io/api-internal/swagger-ui/brig/);
+  look for `/i/federation/remotes`).
+
+  Once the upgrade has been deployed *and* cassandra has been filled
+  with the temporary contents of
+  `brig.config.optSettings.setFederationDomainConfigs`, it is safe to
+  remove the latter and the above lines from the federator config.
+
+  [See also.](http://docs.wire.com/understand/configure-federation.html#if-your-instance-has-been-federating-before) (#3260, #3384, #3389)
+
+* Upgrade team-settings version to 4.15.0-v0.31.16-0-8138d2e (#2180)
+
+* Upgrade webapp version to 2023-07-13-production.0-v0.31.16-0-a9b67c6 (#2302)
+
+* Update email templates from https://github.com/wireapp/wire-emails (#3386)
+
+* Removed brig configuration value from gundeck. (#3404)
+
+
+## API changes
+
+
+* Updating conversation meta-data APIs to be fault tolerant of unavailable federation servers. (#3229)
+
+* Adding users in Proteus will only succeed if all federated backends hosting the
+  users are available. Otherwise, the endpoint will fail with a Federation error,
+  enumerating all unavailable domains. (#3449)
+
+* Added a new notification event type, "federation.delete". (#3397)
+  This event contains a single domain for a remote server that the local server is de-federating from.
+  This notification is sent twice during de-federation. Once before and once after cleaning up and removing references to the remote server from the local database.
+
+* list unavailable backends as JSON on federation-unreachable-domains-error
+  - extend `federation-unreachable-domains-error` by `FederationErrorData`
+  - add `domains` field in `FederationErrorData`, containing the list of failing
+    domains
+  - deprecate `domain` field in `FederationErrorData` which now contains the first
+    element of `domains` (#3407)
+
+* Throw when remote users to be added to an MLS conversation are unreachable (#3322)
+
+* The `connection-update` internal Brig endpoint now has a different JSON format for its request body. See the swagger documentation for details. (#3458)
+
+* Client objects have gained an optional `last_active` field. Whenever a client fetches notifications via `GET /notifications`, as long as it provides a client parameter, the `last_active` field of that client is updated, and set to the current timestamp, rounded to the next multiple of a week. (#3409)
+
+* The `POST /conversations` endpoint now in case of the Proteus protocol gives a 503 error response listing unreachable backends in case there were any, instead of a 2xx response by adding only members from reachable backends. (#3479)
+
+* User objects have gained a `supported_protocols` field. Users can set it to any subset of `["proteus", "mls"]` using `PUT /self/supported-protocols`. There is also a new endpoint `GET /users/:domain/:id/supported-protocols`. The backend does not assign any semantics to this field, but it is intended to be used to coordinate migration to MLS across the clients of a user, as well as between two users participating in a 1-1 conversation. (#3326)
+
+* Several federation Galley endpoints have a breaking change in their response types: "leave-conversation", "update-conversation" and "send-mls-message". They have been extended with information related to unreachable users. (#3248)
+
+
+## Features
+
+
+* Add federation options to the `coturn` Helm chart including DTLS support. The options themselves are strongly inspired by the `restund` Helm chart. (#3283)
+
+* Let cargohold redirect to different s3 download endpoints according to a `multiIngress` configuration. This is part of a larger multi-ingress story where one backend can pretend to be multiple ones by using different domains for different users. (#3264)
+
+* Introduce `nginx_conf.additional_external_env_domains` (*nginz* and *cannon*) setting to configure CORS headers for multiple domains. (#3368)
+
+* Add configuration options to setup instances of the `nginx-ingress-services` chart to act as additional ingresses (with sourrounding infrastructure) to provide additional domains for the same backend. (#3375)
+
+* Nonce base 64 encoding is now unpadded (#3255)
+
+* `MlsE2EIdConfig` does now contain an ACME discovery URL and `verificationExpiration` is now a duration. (#3237, #3244)
+
+* Functionality to determine the federation status between federating remote backends (#3290)
+
+* Prevent conversation creation if any two federated backends are not connected to each other (#3382)
+
+* Improve gundeck performance: notifications to multiple recipients are stored in a normalized manner. (#3403)
+
+* When a proteus message is send and a remote user's backend is offline, the message will be enqueued and reported as `failed_to_confirm_clients` (#3460, #3474)
+
+* Check if remote backends are connected on adding conversation members (#3483)
+
+* In a setting where remote participants are included in a freshly created Proteus conversation, the backend now sends a conversation.create and a conversation.member-join event per user once all remote participants are confirmed.  This fixes a bug where remote conv members would get false entries in the member lists in these events. (#3359)
+
+* Enable indexed billing members by default and remove the feature flag (#3434)
+
+* stern/backoffice: read, update, delete domain login redirects to custom backends (#3471)
+
+
+## Bug fixes and other updates
+
+
+* If role is not set ([], null, or field missing) in scim-put-user, do not change role to default in brig (#3488)
+
+* Do not accept federation traffic from not-federating backends (#3484)
+
+* Bump coturn default image to upstream coturn 4.6.2 + custom Wire code including a bugfix for a bug that resulted in unstable operation during higher load. (#3250)
+
+* Get the correct domain for DPoP access token generation (#3255)
+
+* Correct http host is passed to proxy request (#3263)
+
+* Use backend domain for DPoP access token request (#3267)
+
+* The DPoP access token is now base64 encoded (once) (#3269)
+
+* Fix `nginx.conf` for local integration tests (#3362)
+
+* Fix cross domain user search (#3420)
+
+* backoffice/stern
+  - Fixed `/i/user/meta-info` (#3436)
+  - Fixed `/i/user/meta-info` (#3281)
+  - Register/Update OAuth client via backoffice/stern (#3305)
+
+* Fix: When defederating, don't crash on already-deleted conversations. (#3478)
+
+* No `conversation.delete` event is sent to users during de-federation clean up (#3485)
+
+
+## Documentation
+
+
+* Improve the cassandra developer guidelines under https://docs.wire.com/developer/developer/cassandra-interaction.html (#3342)
+
+* Document crypto library dependencies and sources of randomness (#3254)
+
+* Add 'grepinclude' sphinx directive to document with some code snippets. (#3256)
+
+* swagger:
+  - Render `Named` names as "internal route ID" in swagger UI. (#3319)
+  - Make /api/swagger{-ui,.json} TOC html pages to all versions (#3259)
+  - Explain links to swagger docs better on docs.wire.com (#3388)
+  - Swagger docs for custom backends (#3415)
+
+* SSO Faq entry on CSP (#3398, #3491)
+
+
+
+## Internal changes
+
+
+* Export `Data.String.Conversions.cs` from `Imports` (#3320)
+
+* Metrics for federator are available at `GET /i/metrics` for both the internal and external servers. (#3467)
+
+* Add the status endpoint to both federator ports (#3443)
+
+* Better errors in golden tests (#3370)
+
+* In CI integration tests, use redis-ephemeral in master mode (may be reverted in the future, see PR details) (#3446)
+
+* Containers now run as non-root, to improve compatibility with default PodSecurityPolicies in more recent versions of Kubernetes. (#3352)
+
+* By default, the coturn helm chart will no longer log verbosely. This can be enabled if desired. (#3238)
+
+* Delete libraries api-bot and api-client. Also delete tools from api-simulation. (#3395)
+
+* Use feature singletons in TeamFeatureStore (#3308)
+
+* Adding a new internal API to Brig and Galley to defederate domains.  Background-Worker has been reworked to seperate AMQP channel handling from processing. This was done to allow a defederation worker to share the same connection management process with notification pusher. (#3378)
+
+* Improved websocket tests:
+  - better error reporting
+  - choose the correct backend when establishing a websocket connection (#3393)
+
+* /integration (#3293)
+  - Add convenience getJSON and getBody functions (#3293)
+  - baseRequest now adds Z headers automatically (#3293)
+  - Add liftIO versions of putStrLn etc (#3293)
+  - Add Show instances for MLSState (#3293)
+  - Implement test listing (#3301)
+  - Port MLS test framework (#3288)
+  - Support spawning multiple dynamic backends (#3316)
+  - Split App module in integration package (#3273)
+  - Test swagger docs (#3367)
+  - Add parametrised tests (#3296)
+
+* On CI runs, provide additional context when 'helmfile install' fails. (#3400)
+
+* [hscim] make `jsonLower` fail on duplicate fields (#3346)
+
+* Clean up output and logs (#3371)
+  - integration: Remove debug messages from ModService tests
+  - Do not log rabbit MQ connection failures on async exceptions
+  - cannon: Do not print uncaught SignalledToExit exceptions to stdout
+
+* End-to-end test for creating a DPoP access token for the E2EID client certificate enrollment (#3255)
+
+* backoffice/stern
+  - more integration tests and fixes (#3232, #3239)
+  - `stern` is added to the new run-services implementation for the integration tests (#3425)
+
+* Fixed eventually function in test for potentially less flakiness (#3240)
+
+* Script to bulk-change/-repair user's scim and brig email address (#3321, #3331)
+
+* Servantify brig internal api (#3346, #3338, #3339)
+
+* Updated rusty-jwt-tools and error mapping (#3348)
+
+* Reuse HTTP2 connections from brig, galley, cargohold and federator (#3120, #3233)
+
+* Add combinator for maps with arbitrary keys in `schema-profunctor` (#3372)
+
+* Introduce SearchContacts permission (#3252)
+
+* All wire-server containers now run in a restricted securityContext when run on k8s >= 1.24 (#3351)
+
+* Adding graceful shutdown handling to background-worker to allow it to finish processing its current message before the service quits. (#3421)
+
+
+# [2023-04-17] (Chart Release 4.35.0)
+
+## Release notes
+
+
+* Wire cloud operators only: Before deploying apply the changes from https://github.com/zinfra/cailleach/pull/1586 to production as well. (#3146)
+
+* New 'ingress-nginx-controller' wrapper chart compatible with kubernetes versions [1.23 - 1.26]. The old one 'nginx-ingress-controller' (compatible only up to k8s 1.19) is now DEPRECATED.
+  We advise to upgrade your version of kubernetes in use to 1.23 or higher (we tested on kubernetes version 1.26), and to make use of the new ingress controller chart. Main features:
+  - up-to-date nginx version ('1.21.6')
+  - TLS 1.3 support (including allowing specifying which cipher suites to use)
+  - security fixes
+  - no more accidental logging of Wire access tokens under specific circumstances
+
+  The 'kind: Ingress' resources installed via 'nginx-ingress-services' chart remain compatible with both the old and the new ingress controller, and k8s versions [1.18 - 1.26]. In case you upgrade an existing kubernetes cluster (not recommended), you may need to first uninstall the old controller before installing the new controller chart.
+
+  In case you have custom overrides, you need to modify the directory name and top-level configuration key:
+
+  ```diff
+  # If you have overrides for the controller chart (such as cipher suites), ensure to rename file and top-level key:
+  -# nginx-ingress-controller/values.yaml
+  +# ingress-nginx-controller/values.yaml
+  -nginx-ingress:
+  +ingress-nginx:
+     controller:
+       # ...
+  ```
+
+  and double-check if all overrides you use are indeed provided under the same name by the upstream chart. See also the default overrides in [the default values.yaml](https://github.com/wireapp/wire-server/blob/develop/charts/ingress-nginx-controller/values.yaml).
+
+  In case you use helmfile change your ingress controller like this:
+
+  ```diff
+  # helmfile.yaml
+  releases:
+  -  - name: 'nginx-ingress-controller'
+  +  - name: 'ingress-nginx-controller'
+       namespace: 'wire'
+  -    chart: 'wire/nginx-ingress-controller'
+  +    chart: 'wire/ingress-nginx-controller'
+       version: 'CHANGE_ME'
+  ```
+
+  For more information read the documentation under https://docs.wire.com/how-to/install/ingress.html (or go to https://docs.wire.com and search for "ingress-nginx-controller") (#3140)
+
+* If you are using OAuth (`optSettings.setOAuthEnabled: true` in brig config): before the deployment of wire-server the private and public keys for OAuth have to be provided for `brig` and `nginz` (see `docs/src/developer/reference/oauth.md` for more information) (#2989)
+
+* Upgrade webapp version to 2023-04-11-production.0-v0.31.13-0-bb91157 (#2302)
+
+
+## API changes
+
+
+* Adding a new version of /list-users that allows for partial success. (#3117)
+
+* Added a `failed_to_send` field to response when sending mls messages. (#3081)
+
+* List failed-to-add remote users in response to `POST /conversations` (#3150)
+
+* Updating the V4 version of /users/list-prekeys to return partial successes, listing users that could not be listed. (#3108)
+
+* Non-binding team endpoints are removed from API version V4 (#3213)
+
+
+## Features
+
+
+* Add TLS and basic authentication to the inbucket (fake webmailer) ingress. (#3161)
+
+* OAuth support for authorization of a curated list of 3rd party applications (see <https://docs.wire.com/developer/reference/oauth.html> for details) (#2989)
+
+* Enforce a minimum length of 8 characters when setting a new password (#3137)
+
+* Optional password for guest links (#3149)
+
+* Authorization Code Flow with PKCE support (#3165)
+
+* `conversations/join` endpoint rate limited per IP address (#3202)
+
+
+## Bug fixes and other updates
+
+
+* coturn helm chart: use a memory-backed folder to store sqllite DB to improve performance (#3220)
+
+* Coturn helm chart: Increase the default timeout of liveness/readiness probe and make it configurable (#3218)
+
+* When using the (now deprecated) ingress controller on older versions of kubernetes, ensure query parameters are not logged in the ingress logs (#3139)
+
+* Fix version parsing in swagger-ui end-points (#3152)
+
+* Fix a rate-limit exemption whereby authenticated endpoints did not get the unlimited_requests_endpoint, if set, applied. This is a concern for the webapp and calls to /assets, which can happen in larger numbers on initial loading. A previous change in [this PR](https://github.com/wireapp/wire-server/pull/2786) had no effect. This PR also increases default rate limits, to compensate for [new ingress controller chart](https://github.com/wireapp/wire-server/pull/3140)'s default topologyAwareRouting. (#3138, #3201)
+
+
+## Documentation
+
+
+* Add a client API version bump checklist (#3135)
+
+* Fix the Swagger documentation for the failed_to_send field in the response of the Proteus message sending endpoint (#3223)
+
+* Extend docs to support render plantuml directly, rewrote the saml flow diagram in plantuml (#3226)
+
+* Allow swagger on disabled versions. (#3196)
+
+* Documentation of setting up SSO integration with Okta was outdated with images from Okta Classic UI, the new version was updated using Oktas latest design. (#3175)
+
+
+## Internal changes
+
+
+* When sending a push message, stop deleting the push token and start recreating
+  ARN when ARN is reported as invalid on AWS, but push token still is present in
+  Cassandra. This allows on-demand migrations from one AWS account used for push
+  notifications to another one. (#3162)
+
+* We don't explicitly set with-compiler inside the cabal.project file anymore, because the version of GHC is controlled by Nix, and our nixpkgs pin. (#3209)
+
+* - integration tests on CI will use either the old or the new ingress controller; depending on which kubernetes version they run on.
+  - upgrade `kubectl` to default from the nixpkgs channel (currently `1.26`) by removing the manual version pin on 1.19
+  - upgrade `helmfile` to default from the nixpkgs channel by removing the manual version pin
+  - upgrade `helm` to default from the nixpkgs channel by removing the manual version pin
+  - add `kubelogin-oidc` so the kubectl in this environment can also talk to kubernetes clusters using OIDC (#3140)
+
+* Make new record syntax a language default (#3192)
+
+* nixpkgs has been bumped to a more recent checkout (8c619a1f3cedd16ea172146e30645e703d21bfc1 -> 402cc3633cc60dfc50378197305c984518b30773, 2023-02-12 -> 2023-03-28). (#3206)
+
+* Introduce VersionNumber newtype (see `/libs/wire-api/src/Wire/API/Routes/Version.hs` for explanation) (#3075)
+
+* Fix a memory leak in `gundeck` when Redis is offline (#3136)
+
+* Rust library `rusty-jwt-tools` upgraded to latest version (#3142)
+
+* Updated rusty-jwt-tools to version 0.3.4 (#3194)
+
+* Integration tests for backoffice/stern (#3216)
+
+* ormolu: don't redundantly add language extensions from dead package-defaults.yaml (#3193)
+
+* Stop support for versions on internal APIs (#3200)
+
+* helm charts: bump kubectl docker images from 1.19.7 to 1.24.12 (#3221)
+
+* Add an option (`UPLOAD_LOGS`) to upload integration test logs to AWS S3. (#3169)
+
+
+## Federation changes
+
+
+* Do not cause denial of service when creating a conversation with users from an unreachable backend (#3150)
+
+* Report federated Proteus message sending errors to clients (#3097)
+
+* Fix bug with asset downloads and large federated responses (#3154)
+
+
+# [2023-03-06] (Chart Release 4.34.0)
+
+## Release notes
+
+
+* In (the unlikely) case your server config file contains `setWhitelist:`, you need to change this before the upgrade!  It used to refer to a whitelisting service, which is now replaced with a local list of allowed domains and phone numbers.  See [docs](https://docs.wire.com/developer/reference/user/activation.html?highlight=whitelist#phone-email-whitelist) for details.  Migration path: add new config fields; upgrade, remove old config fields. (#3043)
+
+* The coturn Helm chart has been promoted to *beta* level stability. (#3078)
+
+
+## API changes
+
+
+* API v3 is now supported. The new MLS endpoints introduced in API v3 have been removed, and are now only available under v4. (#3122)
+
+
+## Features
+
+
+* Add internal endpoints of `cargohold`, `galley`, `legalhold` and `spar` to the Swagger docs for internal endpoints. (#3007)
+
+* The coturn container image included in the coturn Helm chart was updated to
+  version `4.6.0-wireapp.4`.
+
+  With this version of coturn, the Prometheus metrics endpoint has been
+  updated, and the `turn_active_allocations` metric label has been *renamed* to
+  `turn_total_allocations`. (#3078)
+
+* Better error message for invalid ID in a credential when uploading MLS key packages (#3102)
+
+* Add Swagger documentation for internal endpoints. It's reachable at the path `/v<n>/api-internal/swagger{-ui,.json}`. (#3003)
+
+* Render one Swagger page per internal endpoint. This superseeds the previous Swagger docs page for all internal endpoints. (#3094)
+
+* Feature flag for Outlook calendar integration (#3025)
+
+* Team feature setting for MLS end-to-end identity was added and server setting `setEnableMls` is exposed via new authorized endpoint `GET /system/settings` (#3082)
+
+
+## Bug fixes and other updates
+
+
+* The container image used for handling online TLS certificate updates in the
+  coturn Helm chart was updated to a version with metadata compatible with
+  containerd. (#3078)
+
+* Fix a bug in the helm chart's nginx-ingress-services / federator Ingress resource introduced in the last release. (#3034)
+
+* Remove overly restricte api check (#3131)
+
+* Typing indicators not working accross federated backends (#3118)
+
+
+## Documentation
+
+
+* Extend the docs on the federation error type (#3045)
+
+* Update SAML/SCIM docs (#3038)
+
+
+## Internal changes
+
+
+* - use exponential backoff for retrying requests to Amazon
+  - also retry in case of server-side rate limiting by Amazon (#3121)
+
+* Also run the 'backoffice' pod in CI (to test it can successfully start) (#3130)
+
+* Make brig-schema a little faster by merging the first 34 schema migrations on fresh installations. (#3099)
+
+* Deflake integration test: metrics (#3053)
+
+* Lower the log level of federator inotify (#3056)
+
+* use Wai's settings for graceful shutdown (#3069)
+
+* CI integration setup time should be reduced: tweak the way cassandra-ephemeral is started (#3052)
+
+* charts: Mark all service/secret/configmap test resources to be re-created by defining them as helm hooks (#3037, #3049)
+
+* New integration test script with support for running end2end tests locally (#3062)
+
+* Bump nixpkgs to latest commit on nixpkgs-unstable branch (#3084)
+
+* Add config to allow to run helm tests for different services in parallel; improve integration test output logs (#3040)
+
+*  Run brig and galley integration tests concurrently (#2825)
+
+* Add wrapper for bitnami/postgresql chart. (#3012)
+
+* Branch on performAction tags for finer-grained CallsFed constraints (#3030)
+
+* Fixed broken stern endpoint `POST i/user/meta-info` (#3035)
+
+* Make stern fail on startup if supported backend api version needs bumping (#3035)
+
+* Automatically track CallsFed constraints via a GHC plugin (#3083)
+
+* Rust library `rusty-jwt-tools` upgraded to latest version (#3112)
+
+* Fixed test of jwt-tools Rust FFI (#3125)
+
+* Enabling warnings for redundant constraints and removing the redundant
+  constraints. (#3009)
+
+* Migrate `/teams/notifications` to use the Servant library. (#3020)
+
+* Split polysemy `Members` constraints into multiple `Member` constraints (#3093)
+
+
+## Federation changes
+
+
+* Use `HsOpenSSL` instead of `tls` for federation communication. (#3051)
+
+
+# [2023-01-26] (Chart Release 4.31.0)
+
+## Release notes
+
+
+* wire-server helm charts using Ingress resources are now compatible with kubernetes versions 1.22, 1.23 and 1.24 (but remain compatible with older versions of kubernetes).
+
+  If you upgrade to this version of helm charts and/or you upgrade your version of kubernetes while wire-server is deployed, you may find that `helm update` or `helmfile apply/sync` gives an error like this:
+
+  > Error: UPGRADE FAILED: current release manifest contains removed kubernetes api(s) for this kubernetes version and it is therefore unable to build the kubernetes objects for performing the diff. error from kubernetes: unable to recognize "": no matches for kind "Ingress" in version "extensions/v1beta1"
+
+  In which case you can use the [helm mapkubeapis plugin](https://github.com/helm/helm-mapkubeapis) to upgrade an existing release with the following command:
+
+  ```sh
+  # install plugin version 0.1.0 (more recent may not work)
+  helm plugin install --version v0.1.0 https://github.com/helm/helm-mapkubeapis
+  # adjust helm release name and namespace as required
+  helm mapkubeapis --namespace wire nginx-ingress-services
+  ```
+
+  Alternatively, if a few minutes of downtime are not a problem; you can `helm delete` a release and re-install it again, which will work without the above plugin. (#3002)
+
+* Upgrade team-settings version to 4.14.0-v0.31.9-0-bf82b46 (#2180)
+
+* Upgrade webapp version to 2023-01-24-production.0-v0.31.9-0-17b742f (#2302)
+
+
+## API changes
+
+
+* The unqualified `GET /conversations/:id` endpoint has been removed from API v3, and is restored to the previous behaviour of returning a Conversation using the v2 schema. Similarly, its qualified counterpart `GET /conversations/:domain/:id` now returns a v2 Conversation when accessed through API v2. (#2992)
+
+
+## Bug fixes and other updates
+
+
+* Fix pagination in team user search (make search key unique) (#2968)
+
+* Update `inbucket` (fake smtp server) chart dependency: The prior version relied on an image that has been removed from docker hub. Thus, our own `inbucket` chart could not be deployed anymore. (#2998)
+
+
+## Documentation
+
+
+* Add sphinx-copybutton plugin to make copying snippets of code from docs.wire.com easier. (#2900)
+
+* Hook federated API call documentation into docs.wire.com (manually). (#2988)
+
+* Tool for dumping fed call graphs (dot/graphviz and csv); see README for details (#2973)
+
+
+## Internal changes
+
+
+* Add Helm chart to configure clusters managed by k8ssandra-operator for test environments. (#2981)
+
+* Fix kind setup for running end-to-end federation tests locally. (#3008)
+
+* Fix Makefile target kind-restart-all. (#3015)
+
+* Add combinators for creating mocked federator responses in integration tests (#3014)
+
+* Add two integration tests arounds last prekeys (#2694)
+
+* Fix `make clean` (#2965, #2978)
+
+* Make ID tags more readable by expanding abbreviations to full names. (#2991)
+
+* Unused old swagger code removed from stern and team features (#3017)
+
+* Refactor Writetime from Int64 to wrapper of UTCTime (#2994)
+
+* Restructure docs.wire.com (#2986)
+
+* Fixed flaky team user search integration test (#2996)
+
+
+# [2023-01-12] (Chart Release 4.30.0)
+
+## Release notes
+
+
+* This realease migrates data from `galley.member_client` to `galley.mls_group_member_client`. When upgrading wire-server no manual steps are required. (#2859)
+
+* Upgrade webapp version to 2022-12-19-production.0-v0.31.9-0-6b2f2bf (#2302)
+
+
+## API changes
+
+
+* - The endpoints `POST /conversations/list` and `GET /conversations` have been removed. Use `POST /conversations/list-ids` followed by `POST /conversations/list` instead.
+  - The endpoint `PUT /conversations/:id/access` has been removed. Use its qualified counterpart instead.
+  - The field `access_role_v2` in the `Conversation` type, in the request body of `POST /conversations`, and in the request body of `PUT /conversations/:domain/:id/access` has been removed. Its content is now contained in the `access_role` field instead. It replaces the legacy access role, previously contained in the `access_role` field.
+  - Clients implementing the V3 API must be prepared to handle a change in the format of the conversation.access_update event. Namely, the field access_role_v2 has become optional. When missing, its value is to be found in the field access_role. (#2841)
+
+* Added a domain parameter to the typing indicator status update API (#2892)
+
+* Support MLS self-conversations via a new endpoint `GET /conversations/mls-self`. This removes the `PUT` counterpart introduced in #2730 (#2839)
+
+* List the MLS self-conversation automatically without needing to call `GET /conversations/mls-self` first (#2856)
+
+* Fail early in galley when the MLS removal key is not configured (#2899)
+
+* Introduce a flag in brig to enable MLS explicitly. When this flag is set to false or absent, MLS functionality is completely disabled and all MLS endpoints fail immediately. (#2913)
+
+* Conversation events may have a "subconv" field for events that originate in a MLS subconversation (#2933)
+
+* `GET /system/settings/unauthorized` returns a curated set of system settings from brig. The endpoint is reachable without authentication/authorization. It's meant to be used by apps to adjust their behavior (e.g. to show a registration dialog if registrations are enabled on the backend.) Currently, only the `setRestrictUserCreation` flag is exported. Other options may be added in future (in consultation with the security department.) (#2903)
+
+
+## Features
+
+
+* The coturn Helm chart now has a `.tls.ciphers` option to allow setting
+  the cipher list for TLS connections, when TLS is enabled. By default,
+  this option is set to a cipher list which is compliant with [BSI
+  TR-02102-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-2.pdf). (#2924)
+
+* **Nginz helm chart**: The list of upstreams is split into `nginx_conf.upstreams` and
+  `nginx_conf.extra_upstreams`. Extra upstreams are disabled by default. They can
+  be enabled by adding their name (entry's key) to
+  `nginx_conf.enabled_extra_upstreams`. `nginx_conf.ignored_upstreams` is only
+  applied to upstreams from `nginx_conf.upstreams`. In the default configuration
+  of `nginz` extra upstreams are `ibis`, `galeb`, `calling-test` and `proxy`. If one
+  of those is deployed, its name has be be added to
+  `nginx_conf.enabled_extra_upstreams` (otherwise, it won't be reachable). Unless
+  `nginx_conf.upstreams` hasn't been changed manually (overriding its default),
+  this should be the only needed migration step. (#2849)
+
+* A team member's role can now be provisioned via SCIM (#2851, #2855)
+
+* Team search endpoint now supports pagination (#2898, #2895)
+
+* Introduce optional disabledAPIVersions configuration setting (#2951)
+
+* Add more logs to SMTP mail sending. Ensure that logs are written before the application fails due to SMTP misconfiguration. (#2818)
+
+* Added typing indicator status propagation to federated environments (#2892)
+
+* Allow vhost style addressing for S3 as path style is not supported for newer buckets.
+
+  More info: https://aws.amazon.com/blogs/aws/amazon-s3-path-deprecation-plan-the-rest-of-the-story/ (#2955)
+
+
+## Bug fixes and other updates
+
+
+* Fix typo for Servicemonitor enable var in default values for helm charts. (#2896)
+
+* The parser for the AWS/SNS error message to explain that an endpoint is already in use was incorrect. This lead to an "invalid token" error when registering push tokens for multiple user accounts (user ids) instead of updating the SNS endpoint with an additional user id. (#2921)
+
+* Avoid client deletion edge case condition which can lead to inconsistent data between brig and galley's clients tables. (#2830)
+
+* Conversations inside events are now serialised using the format of API V2 (#2971)
+
+* Do not throw 500 when listing conversations and MLS is not configured (#2893)
+
+* Do not list MLS self-conversation in client API v1 and v2 if it exists (#2872)
+
+* Limit 2FA code retries to 3 attempts (#2960)
+
+* Fix bug in MLS user removal from conversation: the list of removed clients has to be compared with those in the conversation, not the list of *all* clients of that user (#2817)
+
+* Due to `sftd` changing how configuration is handled for "multi-SFT" calling (starting with version 3.1.10), new options have been added to the `sftd` Helm chart for compatibility with these newer versions. (#2886)
+
+* For sftd/coturn/restund, fixed a bug in external ip address lookup, in case Kubernetes Node Name doesn't equal hostname. (#2837)
+
+* Requesting a new token with the client_id now works correctly when the old token is part of the request (#2860)
+
+
+## Documentation
+
+
+* Add extra section to the deeplink docs to explain the socks proxy support while login. (#2885)
+
+* Describe the auth cookie throttling mechanism. And overhaul the description of auth cookies in general. (#2941)
+
+* PR guidelines docs are updated with correct helm configuration syntax (#2889)
+
+
+## Internal changes
+
+
+* Log AWS / SNS invalid token responses. This is helpful for native push notification debugging purposes. (#2908)
+
+* Add tests for invitation urls in team invitation responses. These depend on the settings of galley. (#2797)
+
+* brig: Allow multiple threads to run simultaneously (#2972)
+
+* Remove support for compiling local docker images with buildah. Nix is used to build docker images these days (#2822)
+
+* Nix-created docker images: add some debugging tools in the containers, and add 'make build-image-<packagename>' for convenience (#2829)
+
+* Added typeclasses to track uses of federated calls across the codebase. (#2940)
+
+* Split galley API routes and handler definitions into several modules (#2820)
+
+* Default intraListing to true. This means that the list of clients, so far saved in both brig's and galley's databases, will still be written to both, but only read from brig's database. This avoids cases where these two tables go out of sync. Brig becomes the source of truth for clients. In the future, if this holds, code and data for galley's clients table can be removed. (#2847)
+
+* Introduce the `MakesFederatedCall` Servant combinator (#2950)
+
+* Bump nixpkgs to latest unstable. Stop using forked nixpkgs. (#2828)
+
+* Optimize memory usage while creating large conversations (#2970)
+
+* Reduce Polysemy-induced high memory requirements (#2947)
+
+* Brig calling API is now migrated to servant (#2815)
+
+* Fixed flaky feature TTL integration test (#2823)
+
+* Brig teams API is now migrated to servant (#2824)
+
+* Add 'inconsistencies' tool to check for, and repair certain kinds of data inconsistencies across different cassandra tables. (#2840)
+
+* Backoffice Swagger 2.x docs is exposed on `/` and the old Swagger has been removed. Backoffice helm chart only runs stern without an extra nginx. (#2846)
+
+* Give proxy service a servant routing table for swagger (not for replacing wai-route; see comments in source code) (#2848)
+
+* Stern API endpoint `GET ejpd-info` has now the correct HTTP method (#2850)
+
+* External commits: add additional checks (#2852)
+
+* Golden tests for conversation and feature config event schemas (#2861)
+
+* Add startup probe to brig helm chart. (#2878)
+
+* Track federated calls in types across the codebase. (#2940)
+
+* Update nix pins to point at polysemy-1.8.0.0 (#2949)
+
+* Add MakesFederatedCall combinators to Galley (#2957)
+
+* Fix `make clean`; allow new data constructors in `ToSchema Version` instance (#2965)
+
+* Refactor and simplify MLS message handling logic (#2844)
+
+* Remove cassandra queries to the user_keys_hash table, as they are never read anymore since 'onboarding' / auto-connect was removed in https://github.com/wireapp/wire-server/pull/1005 (#2902)
+
+* Replay external backend proposals after forwarding external commits.
+  One column added to Galley's mls_proposal_refs. (#2842)
+
+* Remove an unused effect for remote conversation listing (#2954)
+
+* Introduce types for subconversations (#2925)
+
+* Use treefmt to ensure consistent formatting of .nix files, use for shellcheck too (#2831)
+
+
+## Federation changes
+
+
+* Honour MLS flag in brig's federation API (#2946)
+
+* Split the Proteus and MLS message sending requests into separate types. The MLS request now supports MLS subconversations. This is a federation API breaking change. (#2925)
+
+* Injects federated calls into the `x-wire-makes-federated-calls-to` extension of the swagger Operations (#2950)
+
+
+# [2022-12-09] (Chart Release 4.29.0)
+
+## Bug fixes and other updates
+
+* Prevention of storing unnecessary data in the database if adding a bot to a conversation fails. (#2870)
+
+## Internal changes
+
+* bump nginx-module-vts from v0.1.15 to v0.2.1 (#2827)
+* Build nginz and nginz_disco docker images using nix (#2796)
+
+# [2022-11-03] (Chart Release 4.26.0)
+
+## Release notes
+
+
+* If you have not upgraded to [release 2021-03-21 (Chart Release 2.103.0)](https://github.com/wireapp/wire-server/releases/tag/v2021-03-21) yet, please do that now!
+
+  NB: we only support releases 6 months back, so this should not be an issue.  But in this particular case we are positive that things will break if you don't do an intermediate upgrade. (#2768)
+
+* Build docker images using nix derivations instead of Dockerfiles (#2331, #2771, #2772, #2775, #2776)
+
+* Upgrade team-settings version to 4.13.0-v0.31.5-0-4754212 (#2180)
+
+* Upgrade webapp version to 2022-11-02-production.0-v0.31.9-0-337e400 (#2302)
+
+* The experimental wire-server-metrics helm chart has been removed.
+
+  These were mostly a wrapper around prometheus operator. It makes more sense to
+  refer to the upstream docs of Prometheus Operator or Grafana Agent Operator for
+  installation instead. (#2740)
+
+
+## API changes
+
+
+* Do not expose swagger-ui on prod systems (to minimize attack surface) (#2800)
+
+* Change mime type of body of /v3/mls/commit-bundles endpoint (#2773)
+
+* Stop rate-limiting asset-signed-url requests on /assets/.* (#2786)
+
+* The `/access` endpoint now takes an optional `client_id` query parameter. The first time it is provided, a new user token will be generated containing the given client ID. Successive invocations of `/access` will ignore the `client_id` parameter. Some endpoints can now potentially require a client ID as part of the access token. When trying to invoke them with an access token that does not contain a client ID, an authentication error will occur. (#2764)
+
+
+## Features
+
+
+* Introduce support for external commits in MLS (#2765)
+
+* The `GET /teams/{tid}/members` endpoint now supports pagination (#2802)
+
+
+## Bug fixes and other updates
+
+
+* Clients without any prekeys are not deleted completely (#2758)
+
+
+## Documentation
+
+
+* tentatively allow `GET /api/event-notification-schemas` for json schemas of server-initiated events (missing pieces tracked in https://wearezeta.atlassian.net/browse/FS-1008) (#2739)
+
+* Fix copyright date on docs.wire.com (#2792)
+
+* Improve and cross-link documentation on SNS / push notifications. (#2781)
+
+* Add extension sphinx-reredirects and configuration to generate simple JavaScript based redirects to new locations of previously inconsistently named files/URLs. (#2811)
+
+
+## Internal changes
+
+
+* Convert brig's auth endpoints to servant (#2750)
+
+* Remove deprecated table for storing scim external_ids.
+
+  Data has been migrated away in [release 2021-03-21 (Chart Release 2.103.0)](https://github.com/wireapp/wire-server/releases/tag/v2021-03-21) (see `/services/spar/migrate-data/src/Spar/DataMigration/V1_ExternalIds.hs`); last time it has been touched in production is before upgrade to [release 2021-03-23 (Chart Release 2.104.0)](https://github.com/wireapp/wire-server/releases/tag/v2021-03-23). (#2768)
+
+* Refactor some internal Scim user tests (#2762)
+
+* Reduce the payload size of internal `client.delete` event (#2807, #2816)
+
+* Bump servant-swagger-ui package. (#2747)
+
+* Increase charts/galley memory limit to 500M. (#2798)
+
+* Add RPC, ServiceRPC and GalleyProvider effects to brig (#2653)
+
+* Use locally build schema binaries for db migrations and execute them right before running integration tests. (#2791)
+
+* Rename the make targets from `db-migrate-package` and `db-reset-package` to `db-migrate` and `db-reset` and allow migrating and resetting all keyspaces. (#2791)
+
+* Add a Make target for ghci (#2749)
+
+* Upgrade nginz/nginx to 1.22.1 (#2777)
+
+* The dev environment provided by nix now contains all the haskell packages
+  compiled by nix. This could casue linker errors while compiling haskell code in
+  this repo. One way to get resolve them is to delete the 'dist-newstyle'
+  directory. (#2331)
+
+* Implemented a new intersperse combinator for Polysemy (#2767)
+
+* Add a Concurrency effect for Polysemy (#2748)
+
+* Don't fail client deletion when mls remove key is undefined (#2738)
+
+* Migrate stern to swagger2-ui (remaining backwards compatible with circulating backoffice images) (see also #2742 from last release) (#2744)
+
+* Gundeck push token API and notification API is migrated to Servant (#2769)
+
+* Delete `deploy/services-demo` directory (#2789)
+
+* Upgrade Servant to 0.19 (#2809)
+
+
+# [2022-10-04] (Chart Release 4.25.0)
+
+## Release notes
+
+
+* Upgrade webapp version to 2022-10-04-production.0-v0.31.2-0-a438b30 (#2302)
+
+
+## API changes
+
+
+* Remove /legalhold/conversation alias from v2 (#2734)
+
+* Make v2 a supported version and start v3 (#2734)
+
+
+## Features
+
+
+* Allow deletion of MLS team conversations (#2733)
+
+
+## Bug fixes and other updates
+
+
+* Revert synchronous semantics of client deletion endpoint (#2737)
+
+
+## Documentation
+
+
+* JCT-146 - update outdated info
+  SER-211 - update new info regarding nodetool use (#2736)
+
+
+## Internal changes
+
+
+* Skeleton implementation of new endpoint for JWT DPoP access token generation (#2652, #2686)
+
+* Add swagger2-ui to stern (#2742 ...)
+
+
+# [2022-09-27] (Chart Release 4.24.0)
+
+## Release notes
+
+
+* For users of the (currently alpha) coturn Helm chart, **manual action is
+  required** when upgrading to this version. The labels applied to the Kubernetes
+  manifests in this chart have changed, in order to match the conventions used
+  in the wire-server charts. However, this may mean that upgrading with Helm can
+  fail, due to changes to the `StatefulSet` included in this chart -- in this
+  case, the `StatefulSet` must be deleted before the chart is upgraded. (#2677)
+
+* wire-server helm charts: Adjust default CPU/Memory resources: Remove CPU limits to avoid CPU throttling; adjust request CPU and memory based on observed values. Overall this decreases the amount of CPU/memory that the wire-server chart needs to install/schedule pods. (#2675)
+
+* Upgrade team-settings version to 4.12.1-v0.31.5-0-0167ea4 (#2180)
+
+* Upgrade webapp version to 2022-09-20-production.0-v0.31.2-0-7f74074 (#2302)
+
+
+## API changes
+
+
+* Add new endpoint `/mls/commit-bundles` for submitting MLS `CommitBundle`s. A `CommitBundle` is a triple consisting of a commit message, an optional welcome message and a public group state. (#2688)
+
+* MLS: Store and expose group info via `GET /conversations/:domain/:id/groupinfo` (#2721)
+
+* Add /mls/public-keys to nginz chart (#2676)
+
+* Users being kicked out results in member-leave events originating from the user who caused the change in the conversation (#2724)
+
+* Leaving an MLS conversation is now possible using the regular endpoint `DELETE /conversations/{cnv_domain}/{cnv}/members/{usr_domain}/{usr}`. When a user leaves, the backend sends external remove proposals for all their clients in the corresponding MLS group. (#2667)
+
+* Validate remotely claimed key packages (#2692)
+
+
+## Features
+
+
+* The coturn chart now has support for exposing its metric endpoint with a
+  ServiceMonitor, which can be ingested by third-party metrics collection tools. (#2677)
+
+* Deleting clients creates MLS remove proposals (#2674)
+
+* External remove proposals are now sent to a group when a user is deleted (#2650)
+
+* Allow non-admins to commit add proposals in MLS conversations (#2691)
+
+* Optionally add invitation urls to the body of `/teams/{tid}/invitations`. This allows further processing; e.g. to send those links with custom emails or distribute them as QR codes. See [docs](https://docs.wire.com/developer/reference/config-options.html#expose-invitation-urls-to-team-admin) for details and privacy implications. (#2684)
+
+
+## Bug fixes and other updates
+
+
+* SCIM user deletion suffered from a couple of race conditions. The user in now first deleted in spar, because this process depends on data from brig. Then, the user is deleted in brig. If any error occurs, the SCIM deletion request can be made again. This change depends on brig being completely deployed before using the SCIM deletion endpoint in brig. In the unlikely event of using SCIM deletion during the deployment, these requests can be retried (in case of error). (#2637)
+
+* The 2nd factor password challenge team feature is disabled for SSO users (#2693)
+
+* Less surprising handling of SIGINT, SIGTERM for proxy, stern. Increase grace period for shutdown from 5s to 30s for all services.  (#2715)
+
+
+## Documentation
+
+
+* Drop Client model (unused) from old swagger.
+  Add a description and example data for mls_public_keys field in new swagger. (#2657)
+
+* Document user deactivation (aka suspension) with SCIM. (#2720)
+
+* Monitoring page showed wrong wrong configuration charts. Updated prometheus-operator to kube-prometheus-stack chart in the documentation.  (#2708)
+
+
+## Internal changes
+
+
+* Make client deletion asynchronous (#2669)
+
+* Allow external add proposals without previously uploading key packages. (#2661)
+
+* Allow legalhold tokens access to `/converations/<uuid>` endpoint (#2682, #2726)
+
+* Move Brig.Sem.* modules to Brig.Effects (consistency) (#2672)
+
+* The labels applied to resources in the coturn chart have been changed to
+  reflect the conventions in the wire-server charts. (#2677)
+
+* Drop the `managed` column from `team_conv` table in Galley (#2127)
+
+* Fix link in PR template (#2673)
+
+* In Gundeck's 'notifications' cassandra table, switch to [TWCS](https://cassandra.apache.org/doc/latest/cassandra/operating/compaction/twcs.html) compaction strategy, which should be more efficient for this workload, and possibly bring performance benefits to latencies.
+  It may be beneficial to run a manual compaction before rolling out this
+  change (but things should also work without this manual operation).
+  In case you have time, run the following from a cassandra machine before deploying this update: `nodetool compact gundeck notifications`. (#2615)
+
+* Add regular expression support to libzauth ACL language (#2714)
+
+* Make test API calls point to the most recent version by default (#2695)
+
+* Clients and key package refs in an MLS conversation are now stored in their own table. (#2667)
+
+* Refactor MLS test framework (#2678)
+
+* Update mls-test-cli to version 0.5 (#2685)
+
+* Added rusty-jwt-tools to docker images (#2686)
+
+* The account API is now migrated to servant. (#2699, #2700, #2701, #2702, #2703, #2704, #2705, #2707)
+
+* Update nginz and cannon ACLs to match api-versioned paths (#2725)
+
+* For wire-server cloud, on kubernetes 1.21+, favour topology-aware routing, which reduces unnecessary inter-availability-zone traffic, reducing latency and cloud provider cross-AZ traffic costs. (#2723)
+
+
+# [2022-09-01] (Chart Release 4.23.0)
+
+## Release notes
+
+
+* The internal endpoint `GET i/mls/clients` has been changed, and it now returns a list of `ClientInfo` instead of a list of `ClientId`. (#2631)
+
+
+## API changes
+
+
+* Fix key package error description (#2651)
+
+* Expose MLS public keys in a new endpoint `GET /mls/public-keys`. (#2602)
+
+
+## Features
+
+
+* The coturn chart now supports exposing the control port over TLS. (#2620)
+
+* Forward all MLS default proposal types (#2628)
+
+* New endpoints `HEAD` and `GET /nonce/clients` to request new nonces for client certificate requests (coming up soon). (#2641, #2655)
+
+## Bug fixes and other updates
+
+
+* Fix cql-io bug where restarting whole cassandra cluster could cause downtime. Upstream changes in https://gitlab.com/twittner/cql-io/-/merge_requests/20 (#2640)
+
+* Improve client check when adding clients to MLS conversations (#2631)
+
+
+## Documentation
+
+
+* Move developer docs onto docs.wire.com (instead of exposing them on github only) (#2622, #2649)
+
+* Add build instructions for developers (#2621)
+
+* Make target audience explicit on docs.wire.com (#2662)
+
+
+## Internal changes
+
+
+* Support for external Add proposals (#2567)
+
+* Add additional checks on incoming MLS messages:
+  * if the sender matches the authenticated user
+  * if the sender of message to a remote conversation is a member
+  * if the group ID of a remote conversation matches the local mapping (#2618)
+
+* Apply changes introduced by cabal-fmt. (#2624)
+
+* Remove some redudant constraints in brig (#2638)
+
+* Brig Polysemy: Port UserPendingActivationStore to polysemy (#2636)
+
+
+* Add make target `delete-cache-on-linker-errors` to delete all Haskell compilation related caches. This is useful in cases where the development environment gets into an inconsistent state. (#2623)
+
+
+* Move Paging effect from galley into polysemy-wire-zoo (#2648)
+
+* Fix broken hls-hlint-plugin in nix env (#2629)
+
+* Adjust developer PR template and document config and API procedures in-tree. (#2617)
+
+* Add mls-test-cli to builder image (#2626)
+
+* Add mls-test-cli to deps image (#2630)
+
+* mls-test-cli: Use Cargo.lock file when building (#2634)
+
+* Move common Arbitrary instances to types-common package for compilation speed (#2658)
+
+* `LoginId` migrated to schema-profunctor (#2633, #2645)
+
+* Improve cleaning rules in Makefile. (#2639)
+
+* Fix typos, dangling reference in source code haddocs, etc. (#2586)
+
+* Update the Elastic Search version used for running integration tests to the one that is delivered by wire-server-deploy. (#2656)
+
+
+## Federation changes
+
+
+* Add mlsPrivateKeyPaths setting to galley (#2602)
+
+
+# [2022-08-16] (Chart Release 4.22.0)
+
+## API changes
+
+
+* Drop the deprecated member removal endpoint (#2593)
+
+
+## Features
+
+
+* charts/cannon: Ensure HSTS headers are set for all endpoints (#2574)
+
+* Expired MLS key packages are deleted from the database (#2582)
+
+* Add support for MLS Remove proposals (#2561)
+
+* Human readable names for SAML IdPs (#2565)
+
+* The `preferredLanguage` field from SCIM now maps to the user locale in BRIG and will be set and updated on post SCIM user and on update SCIM user using SAML. (#2605)
+
+* For TLS1.2, by default, remove ECDHE-ECDSA-AES128-GCM-SHA256 and ECDHE-RSA-AES128-GCM-SHA256 ciphers for ingress traffic. (#2528)
+
+
+## Bug fixes and other updates
+
+
+* Allow deleting existing splash screens in `PUT /teams/:tid (see also PR#2474 in Release 4.18.0) (#2588)
+
+* Backoffice: Fix an issue where in some deployments ibis/galeb (Wire Cloud internal services) are unreachable from backoffice if deployed in a different namespace. (#2610)
+
+* Fix an issue for larger client requests on e.g. /list-users and /list-conversations, which were giving 413 errors for some users. Allow client requests of 256k by default (was 64k). (#2579)
+
+
+## Internal changes
+
+
+* Add shellcheck, libstdc++ to nix env; handle emacs auto-save files better (#2609)
+
+* Allow features to be set with HTTP method PATCH. This reflects a prior behavior
+  that is used by Ibis. Additionally, it's more consistent when all setters can be
+  called with PUT and PATCH. As this will fix calls by Ibis, the deployment order
+  doesn't matter. (#2575)
+
+* Brig Polysemization: introduce BlacklistStore and BlacklistPhonePrefixStore effects (#2590)
+
+* Add cabal-fmt development tool (#2601)
+
+* Reformat all cabal files with cabal-fmt (#2603)
+
+* Delete tools: bonanza and makedeb (#2600)
+
+* No more package.yaml / hpack, and stick with cabal files as the single (and only) source of truth (#2596)
+
+* Port Brig SearchAPI and UserRichInfo endpoints to Servant (#2580)
+
+* Added TTL data to stern feature flag GET endpoint. (#2564)
+
+* Prepare removing deprecated non-binding teams (no more used in integration tests) (#2514, #2607)
+
+* Add internal endpoint in Brig to update clients' key package refs in DB upon committing.
+  Brig should be deployed before Galley. (#2604)
+
+* Improved the resilience of provisioning new users via SAML by combining two persistence calls into one, preventing a creation failure from locking a user handle with no corresponding user. (#2526)
+
+
+## Federation changes
+
+
+* Fix TBS field in MLS Message type (#2599)
+
+
+# [2022-07-19] (Chart Release 4.21.0)
+
+## Release notes
+
+
+* Users of the (currently alpha) coturn Helm chart must **manually update
+  their configuration** due to changes in how the chart handles authentication
+  secrets. Please see below for further details. (#2553)
+
+
+## API changes
+
+
+* The response to POST /mls/messages adds a timestamp (#2560)
+
+
+## Features
+
+
+* charts/wire-server: default log format everywhere to StructuredJSON format (introduced in #1951 and #1959) (#2559)
+
+* The coturn chart now supports multiple authentication secrets, which permits
+  multiple backend instances to use the same TURN servers without needing to
+  share authentication secrets between the backend instances.
+
+  Correspondingly, the `.Values.secrets.zrestSecret` configuration option, which
+  took a single authentication secret as its argument, has been replaced with the
+  option `.Values.secrets.zrestSecrets` (note spelling!), which instead takes a
+  *list* of authentication secrets as its argument. (#2553)
+
+* Add support for bare MLS proposals (#2436)
+
+
+## Bug fixes and other updates
+
+
+* Fix a bug in charts/cannon. It's now possible to use a custom TLS certificate when enabling cannon's nginz sidecar container. (Previously only letsencrypt certificates worked, and were tested) (#2558)
+
+* Minor fixes in helmcharts:
+  - charts/nginz: Rate limit SSO endpoints less
+  - charts/nginz: Ensure rate limiting isn't commented out
+  - charts/galley: Honour .setttings.httpPoolSize
+  - charts/galley: Fix typo in settings.featureFlags.validateSAMLEmails
+  - charts/gundeck: Remove aws.connectionLimit
+  - charts/brig: Fix default brandLabelUrl and remove brandLabel (#2563)
+
+
+## Internal changes
+
+
+* Port brig UserHandle API to servant (#2556)
+
+* Bump timeout for integration tests to 15 minutes (from 10 minutes), as 10 minutes is no longer enough. (#2570)
+
+* Internal endpoints to `PATCH` feature status (#2555)
+
+*  Change the proposal hold time to 28 days (#2568)
+
+
+# [2022-07-12] (Chart Release 4.19.0)
+
+## Release notes
+
+
+* Deploy spar before galley (#2543)
+
+* Upgrade team-settings version to 4.11.0-v0.31.1-0-9e64150 (#2180)
+
+
+## API changes
+
+
+* Restore PUT /v2/connections endpoint (#2539)
+
+
+## Features
+
+
+* 2nd factor authentication code generation is rate limited now (#2522)
+
+* The team member CSV export now fills `created_on` for SCIM users (#2543)
+
+
+## Internal changes
+
+
+* Add Helm chart for inbucket. Inbucket is a SMTP server that does not relay, but instead display received mail in a webapp and make them accessible via an API. (#2544)
+
+* Bump saml2-web-sso (#2545, #2546)
+
+* use checkedConnectCluster to avoid dropping requests to Redis when Gundeck reconnects to the Redis cluster (#2542)
+
+* Do not log polysemy errors in Galley (#2531)
+
+* Remove old crypto-cli tool from the ubuntu image (#2538)
+
+
+## Federation changes
+
+
+* Added new-remote-conversation RPC, used to notify a backend of a remote conversation the first time any user from that backend is added to it. (#2378)
+
+* Added federation endpoint `send-mls-message` used to send messages to remote converesations (#2378)
+
+
+# [2022-07-05] (Chart Release 4.18.0)
+
+## Release notes
+
+
+* For users of the (currently alpha) coturn Helm chart:
+  **manual intervention may be required** when upgrading to
+  this version of the chart from a prior version, due to [a bug in
+  Kubernetes](https://github.com/kubernetes/kubernetes/issues/39188) which
+  may interfere with applying changes to pod and service port configuration
+  correctly.
+
+  If, after updating this chart, the coturn pods do not have both a `coturn-udp`
+  port and a `coturn-tcp` port, then the coturn `StatefulSet` must be manually
+  deleted from the cluster, and then recreated by re-running Helm. Similarly, if
+  the coturn `Service` does not have both a `coturn-udp` port and a `coturn-tcp`
+  port, this `Service` must also be deleted and recreated. (#2500)
+
+* The `nginz{-tcp,-http}` services have been unified into a `nginz` service, and
+  moved into the nginz chart.
+
+  The nginz-ingress-services chart simply targets the `nginz` service, so there's
+  no need to set matching `service.nginz.external{Http,Tcp}Port` inside the
+  `nginx-ingress-services` chart anymore.
+
+  The `config.http.httpPort` and `config.ws.wsPort` values in the `nginz` chart
+  still configure the ports the `nginz` service is listening on.
+
+  Metrics were moved from `config.http.httpPort` to a new `http-metrics` port.
+
+  The `nginz` chart also gained support for `metrics.serviceMonitor.enabled`,
+  creating a `ServiceMonitor` resource to scrape metrics, like for other wire
+  services.
+
+  (#2476)
+
+* Upgrade webapp version to 2022-06-30-production.0-v0.30.5-0-3e2aaf6 (#2302)
+
+* In the helm charts, the `wireService` label has been removed.
+
+  In some cases, we were already setting the `app` label too.
+
+  Now we consistently use the `app` label to label different wire services.
+
+  The `wireService` label was also used in the `spec.selector.matchLabels` field
+  on existing `Deployment` / `StatefulSet` resources.
+  As these fields being immutable, changing them isn't possible without recreation.
+
+  If you encounter an issue like
+
+  > field is immutable && cannot patch "*" with kind *
+
+  you need to manually delete these StatefulSet and Deployment resources, and apply helm again, which will recreate them.
+
+  This means downtime, so plan a maintenance window for it.
+
+  The `wire-server-metrics` chart was previously running some custom
+  configuration to automatically add all payloads with a `wireService` label into
+  metrics scraping.
+
+  With the removal of the `wireService` label, this custom configuration has been
+  removed.
+
+  Instead, all services that expose metrics will now create `ServiceMonitor`
+  resources, if their helm chart is applied with `metrics.serviceMonitor.enabled`
+  set to true.
+
+  This prevents scraping agents from querying services that don't expose metrics
+  at /i/metrics unnecessarily.
+
+  Additionally, makes it easier to run other metric scraping operators, like
+  `grafana-agent-operator`, without the need to also create some custom
+  `wireService` label config there.
+
+  Generally, if you have any monitoring solution installed in your cluster that
+  uses the Prometheus CRDs, set `metrics.serviceMonitor.enable` for the following charts:
+
+   - brig
+   - cannon
+   - cargohold
+   - galley
+   - gundeck
+   - proxy
+   - spar (#2413)
+
+
+## API changes
+
+
+* The request body of `POST /conversations` endpoint can now contain an optional `creator_client` field. The `creator_client` field is only relevant for MLS conversations, in which case it must be set to the ID of the client making the request. (#2486)
+
+* Retire deprecated feature config API endpoints for API version V2 (#2492)
+
+
+## Features
+
+
+* Prevent race conditions in concurrent MLS commit requests. (#2525)
+
+* charts/wire-server: Optionally include backoffice (#2490)
+
+* The coturn chart has new functionality to enable graceful pod termination, by
+  waiting for all active allocations on a coturn instance to drain first. When
+  combined with a suitable external service discovery mechanism which can steer
+  client traffic away from terminating coturn pods, this can be used to implement
+  graceful rolling restarts of clusters of coturn instances. (#2456)
+
+* `./deploy/services-demo/create_team_members.sh` creates users with given roles now (#2137)
+
+* MLS implementation progress:
+   - Remote users can be added to MLS conversations
+   - MLS messages (both handshake and application) are now propagates to remote
+     conversation participants. (#2415)
+
+* charts/nginz: Serve swagger-ui for viewing swagger-1.2 docs (#2466)
+
+* `GET teams/:tid` response now contains an optional field `splash_screen` which contains the asset key of the team's splash screen. `PUT teams/:tid` now supports updating the splash screen asset key. (#2474)
+
+* Missing feature config mapping added (#2494)
+
+* Add MLS team feature configuration (#2499)
+
+* Team feature API now includes endpoints to get and set the `searchVisibilityInbound` feature (#2503)
+
+
+## Bug fixes and other updates
+
+
+* charts/backoffice: Fix version of frontend and auto-bump version of stern on every release (#2490)
+
+* The service definitions in the coturn Helm chart were missing the control plane
+  UDP port used by coturn. (#2500)
+
+* In nginx-ingress-services chart, when enabling useCertManager, now correctly creates the required issuer by default. (#2532)
+
+* Fix handling of creator client in MLS conversations (#2486)
+
+* Fix all clients having the same MLS public key (#2501)
+
+* A user now cannot delete an identity provider that they are authenticated with any more (#2519)
+
+
+## Internal changes
+
+
+* brig-types: remove all re-exports (#2505)
+
+* Fixed flakiness of email update test, related to the test user account being suspended, causing subsequent runs of the test to fail. (#2497)
+
+* galley-types: remove all re-exports (#2504)
+
+* Enforce some IdP invariants (#2533)
+
+* Switch to new MLS test CLI (https://github.com/wireapp/mls-test-cli) (#2508)
+
+* Forward /i/users/:uid/features/:feature to brig (#2468)
+
+* charts/nginz: Forward `/i/legalhold/whitelisted-teams` to galley instead of brig (#2460)
+
+* make the ldap-scim-bridge chart deployable once per team, and improve docs. (#1843)
+
+* Refactored and simplified the feature config API (#2435)
+
+* Removed deprecated internal feature config API endpoints (#2496)
+
+* Deactivated gundeck's integration tests for local steps (`make ci`). (#2510)
+
+* retry gundeck's Redis connection in case of network errors such as IP changes or network outages (#2512)
+
+* Add AWS security token metrics to all services (#2473)
+
+
+# [2022-06-14] (Chart Release 4.14.0)
+
+## Release notes
+
+
+* Upgrade team-settings version to 4.10.0-v0.29.7-0-3be8ca3 (#2180)
+
+* Upgrade webapp version to 2022-06-13-production.0-v0.29.7-0-2819b90 (#2302)
+
+
+## Documentation
+
+
+* Docs for guest links server and team feature settings added (#2480)
+
+## Internal changes
+
+
+* All feature configs like guest links e.g. can now be overridden in the helm configuration, so that they can be disabled/enabled and configured server wide (#2479)
+
+
+
+# [2022-06-08] (Chart Release 4.13.0)
+
+## Release notes
+
+
+* The `.cannon.drainTimeout` setting on the wire-server helm chart has been
+  removed and replaced with `.cannon.config.drainOpts`. (#2416)
+
+* Note for wire.com operators: deploy nginz (#2439)
+
+
+## API changes
+
+
+* The back-office (aka stern) team feature API now accenpts an optional TTL parameter (in days), so features can be activated for a limited period. (#2417)
+
+* Disable rate limiting for /api-version (#2439)
+
+
+## Features
+
+
+* Drain websockets in a controlled fashion when cannon receives a SIGTERM or
+  SIGINT. Instead of waiting for connections to close on their own, the websockets
+  are now severed at a controlled pace. This allows for quicker rollouts of new
+  versions. (#2416)
+
+* Optionally allow to run cannon with its own nginz inside the same pod; and connect to a load balancer directly.
+  This allows the cannon-slow-drain behaviour implemented in #2416 to take effect by not having other intermediate network hops which could break websocket connections all at once.
+  Some (internal) context: https://wearezeta.atlassian.net/wiki/spaces/PS/pages/585564424/How+to+gracefully+drain+cannon+but+not+so+slowly
+  For details on how to configure this, see docs/src/how-to/install/configuration-options.rst (#2421)
+
+* Support running brig with GeoIP database when using helm charts (#2406)
+
+* charts/nginz: Add upstream configuration for galeb (#2444)
+
+* charts/nginz: Allow upstreams to be in other namespaces (#2444)
+
+* CSV export in team management now includes the number of devices per user (#2407)
+
+
+## Bug fixes and other updates
+
+
+* charts/nginz: Resolve collision between brig and galeb endpoints. Ensure
+  /self/consent and /signatures endpoints are configured in all environments (#2457)
+
+* When an IdP issuer (aka entity ID) is updated, the old issuer was still marked as "in use". (#2400)
+
+* On actions that require re-authentication a password is not required if the user has SAML credentials (#2430, #2434, #2437)
+
+* Use SCIM's preferred language as a fallback when privisioning users without a locale. (#2445)
+
+
+## Documentation
+
+
+* Feature configs should have different swagger schema names (#2425)
+
+
+## Internal changes
+
+
+* `AllFeatureConfigs` is now typed (#2403)
+
+* Type class for default team feature status (#2404)
+
+* charts/{redis-ephemeral,legalhold}: Use old index for bitnami repo as the new index doesn't have old versions of postgresql and redis helm charts (#2448)
+
+* Bump haskell/zlib version to 0.6.3.0 (#2431)
+
+* New internal brig endpoints for MLS KeyPackage -> Conversation association query/update (#2375)
+
+* galley: refactor withSettingsOverrides (#2381)
+
+* charts/{nginz,cannon}: Increase map_hash_bucket_size for nginx to 128 (#2443)
+
+* charts/{cannon,nginz}: values listed in
+  `nginx_conf.randomport_allowlisted_origins` must be full hostnames. Hostnames
+  listed here will be allowlisted with and without TLS. (#2438)
+
+* Remove binding of users to saml idps using saml (this has never been picked up by clients; use scim instead) (#2441)
+
+* Remove golden test case generator
+
+   (#2442)
+
+* Convert Team CSV endpoint to Servant (#2419)
+
+
+## Federation changes
+
+
+* Send only the raw welcome message in the Galley "mls-welcome" federation endpoint (#2412)
+
+
+# [2022-05-18] (Chart Release 4.12.0)
+
+## Release notes
+
+
+* If using [cert-manager](https://github.com/cert-manager/cert-manager), you need to have least version 1.0.0 (1.8.0 works at the time of writing) installed. Older cert-manager 0.15.X will no longer work. (#2401)
+
+* Upgrade team-settings version to 4.9.0-v0.29.7-0-142a76f (#2180)
+
+
+## API changes
+
+
+* Start version 2 of the public API. Main changes:
+
+   - Asset endpoints have lost their `v3` and `v4` suffixes. So for example
+     `/assets/v3` has been replaced by `/assets`.
+   - `GET /conversations/:conv/assets/:id` and `GET
+     /conversations/:conv/otr/assets/:id` have been removed.
+   - `GET /assets/:key/v3` has been removed. Use the qualified endpoint `GET
+     /assets/:domain/:key` instead.
+   - `DELETE /assets/:key/v3` has been removed. Use the qualified endpoint
+     `DELETE /assets/:domain/:key` instead.
+   - `GET /connections` has been removed. Use `POST /list-connections` instead.
+   - `POST /connections` has been removed. Use `POST /connections/:domain/:user` instead.
+   - `PUT /connections/:domain/:user` has been removed: use `POST` instead.
+   - `GET /conversations` has been removed. Use `POST /conversations/list-ids`
+     followed by `POST /conversations/list` instead.
+   - `POST /conversations/list/v2` has been replaced by `POST
+     /conversations/list`.
+   - `POST /conversations/:domain/:conv/members/v2` has lost its `v2` suffix, so
+     it is now `POST /conversations/:domain/:conv/members`.
+   - `GET /users`, `GET /users/by-handle` and `GET /users/handles` have been
+     removed. Use `POST /search/contacts` instead.
+   - `GET /users/:id` has been removed. Use the qualified endpoint `GET
+     /users/:domain/:id` instead.
+   - `GET /users/:id/clients` has been removed. Use the qualified endpoint `GET
+     /users/:domain/:id/clients` instead.
+   - `GET /users/:id/clients/:client` has been removed. Use the qualified
+     endpoint `GET /users/:domain/:id/clients/:client` instead.
+
+  Swagger documentation for the previous version of the API can be accessed at
+  `/v1/api/swagger-ui`. (#2297)
+
+* A new field `development` has been added to the object returned by `GET
+  /api-version`. Versions listed there are considered in flux, meaning that the
+  corresponding API contracts can change arbitrarily over time. Clients are free
+  to use development versions, as long as they are also listed in `supported`,
+  and failures due to incompatibilities are acceptable (e.g. in testing
+  environments). Backends are the authoritative source on whether a development
+  version can be used at all. If a development version should not be used, the
+  backend will not list it among the supported versions at all. (#2297)
+
+
+## Features
+
+
+* charts: Various new values can now be configured and some got changed
+
+  Allow new configurations in the brig chart:
+  * `config.emailSMS.user.invitationUrl`
+  * `config.emailSMS.team.tInvitationUrl`
+  * `config.emailSMS.team.tActivationUrl`
+  * `config.emailSMS.team.tCreatorWelcomeUrl`
+  * `config.emailSMS.team.tMemberWelcomeUrl`
+  * `config.setProviderSearchFilter`
+  * `config.setWhitelist`
+  * `config.setFeatureFlags`
+  * `config.setCustomerExtensions`
+
+  If any values in config.emailSMS.team are specified, all must be specified.
+
+  Allow new configurations in the gundeck chart:
+  * `config.perNativePushConcurrency`
+  * `config.maxConcurrentNativePushes.soft`
+  * `config.maxConcurrentNativePushes.hard`
+
+  Other changes:
+  * Default `maxTeamSize` changed to 10000 from 500. (#2347)
+
+* charts/nginx-ingress-services: Allow more fine-grained control over what services are installed. Upgrade Certificate/Issuer resources to 'cert-manager.io/v1' (#2401)
+
+* MLS implementation progress:
+
+   - remote key package claim is now supported (#2353)
+
+* charts/{brig,cargohold,galley,gundeck}: Allow not configuring AWS credentials and allow using a special service account.
+  This way, when operating wire in AWS cloud either instance profiles or IAM role attached to a service account can be used to communicate with AWS. (#2347)
+
+* Implement TURN service discovery using SRV records (#2389)
+
+
+## Bug fixes and other updates
+
+
+* When `config.enablePayment` and `FEATURE_ENABLE_PAYMENT` (`envVars`) were set,
+  the team-settings feature flag `FEATURE_ENABLE_PAYMENT` was rendered two times.
+  The new behavior is to give the `envVars` entry priority. I.e. when it's set,
+  it's used instead of the `config.enablePayment` value. (#2332)
+
+* Modify the nginz access control configuration to prevent clients connecting
+  to listeners with PROXY protocol enabled (such as the websocket listener) from
+  accessing a private metrics endpoint. (#2307)
+
+* Verification email is sent when external id is updated via SCIM (#2374)
+
+
+## Documentation
+
+
+* Move old /docs to /docs/legacy (leaving references). (#2328)
+
+* Fixup for #2321 (#2323)
+
+* Add pagination docs to `POST /list-connections` (#2369)
+
+* Documentation for the 2nd factor password challenge feature (#2329)
+
+* Documentation on how to enforce desktop application only for web app (#2334)
+
+* Documentation on how to enforce constant bit rate for all calls (#2336)
+
+* Documentation on how to disable media plugins for the web app (#2337)
+
+* Documentation on how to extra entropy in the web app (#2338)
+
+* Documentation on how to set the instance connection parameters and proxy settings (#2340)
+
+* Merged SAML/SCIM docs with its main documentation (#2356)
+
+
+## Internal changes
+
+
+* View and change team feature permissions apply to all features now (#2402)
+
+* Add sed to direnv (#2319)
+
+* Add python3 to nix development environment. It's needed by hack/bin/serve-charts.sh . (#2333)
+
+* Add a target to the Makefile to run ShellCheck. I.e. to run a linter on shell scripts. This will be used in the CI. For now, all scripts with linter issues are excluded from this check. (#2361)
+
+* Drop snappy support from bonanza (#2350)
+
+* Use cabal in buildah-based builds (#2341)
+
+* Fix flakyness of path traversal test (#2387)
+
+* Github Actions: disable mac builds (#2355)
+
+* Apply `versionMiddleware` last. This makes sure that every other middleware sees
+  the rewritten (unversioned) path. In particular, the prometheus middleware will
+  now only see paths it knows about, which prevents it from reporting "N/A" as the
+  path. (#2316)
+
+* Upgrade version of libzauth dependencies, notably sodiumoxide bindings to libsodium, and fix resulting errors and warnings. (#2327)
+
+* libzauth: Update sha256 for source in nix expression (#2354)
+
+* Log IO exceptions in Galley and Brig (#2385)
+
+* Generalise and move the Logger effect (#2306)
+
+* Fix a comment in a Makefile target (#2330)
+
+* Fix flaky MLS conversation creation test (#2386)
+
+* Fix flaky key package test (#2384)
+
+* Fix locale variables in Nix and .envrc (#2393)
+
+* Team Member API has been migrated to Servant (#2309)
+
+* Integration test for edge case: change external id before account registration (#2396)
+
+* Allow specifying 'redisAdditionalWrite' for a secondary redis to which gundeck will write in the context of a redis migration without downtime. (#2304)
+
+* Start TURN discovery only when the app starts and not when the Env is created (#2376)
+
+* Avoid using IN queries for fetching multiple conversations (#2397)
+
+* Remove oromolu GH action (has been moved to concourse https://github.com/zinfra/cailleach/pull/1033) (#2320)
+
+* Remove unused data type AllowedUserSearch (#2373)
+
+* docs: add latex to docs and publish pdf if exists (#2321)
+
+
+## Federation changes
+
+
+* We now fetch version information from other backends and negotiate a version to use. (#2297)
+
+* Fix assertion in testWelcomeNoKey (#2372)
+
+* Support remote welcome messages (#2368)
+
+* Implement remote admin action: Update receipt mode (#2141)
+
+
+# [2022-05-04] (Chart Release 4.11.0)
+
+## Release notes
+
+
+* Upgrade webapp version to 2022-05-04-production.0-v0.29.7-0-a6f2ded (#2302)
+
+
+# [2022-04-25] (Chart Release 4.10.0)
+
+## Release notes
+
+
+* Note for wire.com operators: deploy nginz (#2270)
+
+* Wire cloud operators: [Update brig's ES index mapping before deploying. After deploying, run a re-index](https://github.com/wireapp/wire-server/blob/master/docs/reference/elastic-search.md) (#2213, #2220)
+
+* Upgrade webapp version to [2022-04-21-production.0](https://github.com/wireapp/wire-webapp/releases/tag/2022-04-21-production.0) (#2302)
+
+* Upgrade team-settings version to [4.7.0-v0.29.7-0-74b81b8](https://github.com/wireapp/wire-team-settings/releases/tag/v4.7.0) (#2180)
+
+
+## Features
+
+
+* [helm-charts] Allow filtering cassandra nodes by datacenter (#2273)
+
+* MLS implementation progress:
+   - commit messages containing add proposals are now processed (#2247)
+   - do initial validation and forwarding of all types of messages via POST /mls/messages (#2253)
+   - fixed bug where users could not be added to MLS conversations if they had non-MLS clients (#2290)
+   - MLS/Proteus mismatches (e.g. sending a proteus message to an MLS conversation) are now handled (#2278)
+   - the `POST /mls/key-packages/claim` endpoint gained a `skip_own` query parameter, which can be used to avoid claiming a key package for the requesting client itself (#2287)
+
+* The user profiles that are returned by a team admin search now contain the additional fields SAML NameID, IdP Issuer, and SCIM externalId (#2213), and  unvalidated email address (#2220)
+
+* *  Avoid dropping messages when redis is down. (#2295)
+
+
+## Bug fixes and other updates
+
+
+* Add missing helm chart mapping for inbound search visibility (#2265)
+
+* Fix bug: User search endpoint hides exact handle results in SearchVisibilityNoNameOutsideTeam setting (#2280)
+
+* backoffice app (aka stern):
+    - Suspending a non-existing user now returns 404 and does not create an empty entry in the DB (#2267)
+    - Support for deleting teams with more than one member (#2275)
+    - Fix update of user email (#2281)
+
+
+## Documentation
+
+
+* Import wire-docs to docs/ (see also #2258)
+
+
+## Internal changes
+
+
+* Migrate API routes from wai-route to servant for better Swagger (#2284, #2277, #2266, #2286, #2294, #2244
+
+* Update nginx to latest stable: v1.20.2 (#2289)
+
+* Allow additional origins at random ports in nginz Helm chart. This is useful for
+  testing with an HTTP proxy. It should not be used in production. (#2283)
+
+* makdeb and bonanza: remove stack-based Makefiles (#2311)
+
+* Add `skip_reauth` param to internal API for creating clients. This is intended to be used in test. (#2260)
+
+* Removes an unused function in Brig and relocates another one (#2305)
+
+* Print more logs while migrating data in Elasticsearch (#2279)
+
+* Replace the base monad in Brig with the Polysemy Sem monad (#2264, #2288)
+
+* Move the Random effect from Spar to the polysemy-wire-zoo library (#2303)
+
+* Move the Now effect from Spar to a library (#2292)
+
+* Improve readability of user search test cases (#2276)
+
+* Chart/gundeck's 'bulkpush' optimization is now activated by default (after using it in production for some time) (#2293)
+
+* Add an alpha version of a Helm chart for coturn. (#2209)
+
+* Document error handling and simplify error logging (#2274)
+
+* Improve speed of reindexing by increasing the batch size of processing users. (#2200)
+
+* Fix federator integration tests (#2298)
+
+* Switch the Haskell driver used in Gundeck to connect to Redis from 'redis-io' to '[hedis](https://hackage.haskell.org/package/hedis)', which now supports cluster mode. (#2151)
+
+* Various Galley MLS test improvements and cleanups (#2278)
+
+* Flag for sending a validation email when updating a user's email address via backoffice/stern (#2301)
+
+* Remove stack from all builder docker images (#2312)
+
+* Make internal search-visibility endpoint available to staging environments (#2282)
+
+* Remove TemplateHaskell as a global default extension (#2291)
+
+
+# [2022-04-04] (Chart Release 4.9.0)
+
+## Release notes
+
+
+* Note for wire.com operators: deploy nginz (#2175)
+
+* Deploy galley before brig (#2248)
+
+* Wire cloud operators: [Update brig's ES index mapping before deploying. After deploying run a reindex](https://github.com/wireapp/wire-server/blob/master/docs/reference/elastic-search.md). (#2241)
+
+* Upgrade webapp version to 2022-03-30-production.0-v0.29.2-0-d144552 (#2246)
+
+
+## API changes
+
+
+* New endpoint to get the status of the guest links feature for a conversation that potentially has been created by someone from another team. (#2231)
+
+
+## Features
+
+
+* Cross-team user search (#2208)
+
+* restund chart: add dtls support (#2227)
+
+* MLS implementation progress:
+
+   - welcome messages are now being propagated (#2175)
+
+* The bot API will be blocked if the 2nd factor authentication team feature is enabled. Please refer to [/docs/reference/config-options.md#2nd-factor-password-challenge](https://github.com/wireapp/wire-server/blob/develop/docs/reference/config-options.md#2nd-factor-password-challenge). (#2207)
+
+* Translations for 2nd factor authentication email templates (#2235)
+
+* Script for creating a team with owner via the public API (#2218)
+
+
+## Bug fixes and other updates
+
+
+* Conversation rename endpoints now return 204 instead of 404 when the conversation name is unchanged (#2239)
+
+* Revert temporary sftd bump (#2230)
+
+
+## Internal changes
+
+
+* Remove the MonadMask instance for AppT in Brig (#2259)
+
+* Remove the MonadUnliftIO instance for the app monad in Brig (#2233)
+
+* Bump hsaml2 version (#2221)
+
+* Fix: cabal-install-artefacts.sh fails if not run from root of wire-server (#2236)
+
+* Fix: pushing to cachix not working (#2257)
+
+* Cannon has been fully migrated to Servant (#2243)
+
+* Refactor conversation record and conversation creation functions. This removes a lot of duplication and makes the types of protocol-specific data in a conversation tighter. (#2234)
+
+   - Move conversation name size check to `NewConv`
+   - Make the `NewConversation` record (used as input to the data
+     function creating a conversation) contain a `ConversationMetadata`.
+   - Implement all "special" conversation creation in terms of a general `createConversation`
+   - Move protocol field from metadata to Conversation
+   - Restructure MLS fields in Conversation record
+   - Factor out metadata fields from Data.Conversation
+
+* Fix Docs: real-world domain used in examples (#2238)
+
+* The `CanThrow` combinator can now be used to set the corresponding error effects in polysemy handlers. (#2239)
+
+* Most error effects in Galley are now defined at the granularity of single error values. For example, a handler throwing `ConvNotFound` will now directly declare `ConvNotFound` (as a promoted constructor) among its error effects, instead of the generic `ConversationError` that was used before. Correspondingly, all such fine-grained Galley errors have been moved to wire-api as constructors of a single enumerated type `GalleyError`, and similarly for Brig, Cannon and Cargohold. (#2239)
+
+* Add a column for MLS clients to the Galley member table (#2245)
+
+* Pin direnv version in nix-hls.sh script (#2232)
+
+* nginx-ingress-services chart: allow for custom challenge solvers (#2222, #2229)
+
+* Remove unused debian Makefile targets (#2237)
+
+* Use local serial consistency for Cassandra lightweight transactions (#2251)
+
+
+# [2022-03-30] (Chart Release 4.8.0)
+
+## Release notes
+
+* Upgrade webapp version to 2022-03-30-production.0-v0.29.2-0-d144552 (#2246)
+# [2022-03-18] (Chart Release 4.7.0)
+
+## Release notes
+
+* Deploy Brig before Spar. (#2149)
+* If you are in a federated network of backends (currently beta), you need to update all participating instances at the same time. (#2173)
+
+## API changes
+
+* The `client` JSON object now has an additional field `mls_public_keys`, containing an object mapping signature schemes to public keys, e.g.
+  ```
+  {
+    ...
+    "mls_public_keys": { "ed25519": "GY+t1EQu0Zsm0r/zrm6zz9UpjPcAPyT5i8L1iaY3ypM=" }
+    ...
+  }
+  ```
+  At the moment, `ed25519` is the only supported signature scheme, corresponding to MLS ciphersuite 1.
+
+  When creating a new client with `POST /clients`, the field `mls_public_keys` can be set, and the corresponding public keys are bound to the device identity on the backend, and will be used to verify uploaded key packages with a matching signature scheme.
+
+  When updating a client with `PUT /clients/:client`, the field `mls_public_keys` can also be set, with a similar effect. If a given signature scheme already has a public key set for that device, the request will fail. (#2147)
+
+* Introduce an endpoint for creating an MLS conversation (#2150)
+
+* The `/billing` and `/teams/.*/billing` endpoints are now available on a versioned path (e.g. `/v1/billing`) (#2167)
+
+
+## Features
+
+
+* MLS implementation progress:
+
+   - key package refs are now mapped after being claimed (#2192)
+
+* 2nd factor authentication via 6 digit code, sent by email:
+   - for login, sent by email. The feature is disabled per default and can be enabled server or team wide. (#2142)
+   - for "create SCIM token". The feature is disabled per default and can be enabled server or team wide. (#2149)
+   - for "add new client" via 6 digit code, sent by email. This only happens inside the login flow (in particular, when logging in from a new device).  The code obtained for logging in is used a second time for adding the device. (#2186)
+   - 2nd factor authentication for "delete team" via 6 digit code, sent by email. (#2193)
+   - The `SndFactorPasswordChallenge` team feature is locked by default. (#2205)
+   - Details: [/docs/reference/config-options.md#2nd-factor-password-challenge](https://github.com/wireapp/wire-server/blob/develop/docs/reference/config-options.md#2nd-factor-password-challenge)
+
+## Bug fixes and other updates
+
+
+* Fix data consistency issue in import of users from TM invitation to SCIM-managed (#2201)
+
+* Use the same context string as openmls for key package ref calculation (#2216)
+
+* Ensure that only conversation admins can create invite links.  (Until now we have relied on clients to enforce this.) (#2211)
+
+
+## Internal changes
+
+
+* account-pages Helm chart: Add a "digest" image option (#2194)
+
+* Add more test mappings (#2185)
+
+* Internal endpoint for re-authentication (`GET "/i/users/:uid/reauthenticate"`) in brig has changed in a backwards compatible way. Spar depends on this change for creating a SCIM token with 2nd password challenge. (#2149)
+
+* Asset keys are now internally validated. (#2162)
+
+* Spar debugging; better internal combinators (#2214)
+
+* Remove the MonadClient instance of the Brig monad
+
+  - Lots of functions were generalized to run in a monad constrained by
+    MonadClient instead of running directly in Brig's `AppIO r` monad. (#2187)
+
+
+## Federation changes
+
+
+* Refactor conversation actions to an existential type consisting of a singleton tag (identifying the action) and a dedicated type for the action itself. Previously, actions were represented by a big sum type. The new approach enables us to describe the needed effects of an action much more precisely. The existential type is initialized by the Servant endpoints in a way to mimic the previous behavior. However, the messages between services changed. Thus, all federated backends need to run the same (new) version. The deployment order itself does not matter. (#2173)
+
+
+# [2022-03-09] (Chart Release 4.6.0)
+
+## Release notes
+
+
+* Upgrade team-settings version to 4.6.2-v0.29.7-0-4f43ee4 (#2180)
+
+
+# [2022-03-07] (Chart Release 4.5.0)
+
+## Release notes
+
+
+* For wire.com operators: make sure that nginz is deployed (#2166)
+
+
+## API changes
+
+
+* Add qualified broadcast endpoint (#2166)
+
+
+## Bug fixes and other updates
+
+
+* Always create spar credentials during SCIM provisioning when applicable (#2174)
+
+
+## Internal changes
+
+
+* Add tests for additional information returned by `GET /api-version` (#2159)
+
+* Clean up `Base64ByteString` implementation (#2170)
+
+* The `Event` record type does not contain a `type` field anymore (#2160)
+
+* Add MLS message types and corresponding deserialisers (#2145)
+
+* Servantify `POST /register` and `POST /i/users` endpoints (#2121)
+
+
+# [2022-03-01] (Chart Release 4.4.0)
+
+## Release notes
+
+
+* Upgrade webapp version to 2022-02-22-production.0-v0.29.2-0-abb34f5 (#2148)
+
+
+## API changes
+
+
+* The `api-version` endpoint now returns additional information about the backend:
+
+    - whether federation is supported (field `federation`);
+    - the federation domain (field `domain`).
+
+  Note that the federation domain is always set, even if federation is disabled. (#2146)
+
+* Add MLS key package API (#2102)
+
+
+## Internal changes
+
+
+* Bump aeson to v2.0.3.0 and update amazonka fork from upstream repository.  (#2153, #2157, #2163)
+
+* Add schema-profunctor instances for `QueuedNotification` and `QueuedNotificationList` (#2161)
+
+* Dockerfile.builder: Add cabal update (#2168)
+
+
+## Federation changes
+
+
+* Make restrictions on federated user search configurable by domain: `NoSearch`, `ExactHandleSearch` and `FullSearch`.
+  Details about the configuration are described in [config-options.md](docs/reference/config-options.md).
+  There are sane defaults (*deny to find any users as long as there is no other configuration for the domain*), so no measures have to be taken by on-premise customers (unless the default is not the desired behavior). (#2087)
+
+
+# [2022-02-21] (Chart Release 4.2.0)
+
+## Release notes
+
+* Upgrade team-settings version to 4.6.1-v0.29.3-0-28cbbd7 (#2106)
+* Upgrade webapp version to 2022-02-08-production.0-v0.29.2-0-4d437bb (#2107)
+* Change the default set of TLS ciphers (both for the client and the federation APIs) to be compliant to the recommendations of [TR-02102-2](https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-2.html). (#2112)
+* For wire.com operators: make sure that nginz is deployed. (#2116, #2124)
+* Optional team feature config `validateSAMLEmails` added to galley.yaml.
+  The feature was disabled by default before this release and is now enabled by default. The server wide default can be changed in galley.yaml. Please refer to [/docs/reference/config-options.md#validate-saml-emails](https://github.com/wireapp/wire-server/blob/develop/docs/reference/config-options.md#validate-saml-emails) (#2117)
+
+## API changes
+
+* Added minimal API version support: a list of supported API versions can be found at the endpoint `GET /api-version`. Versions can be selected by adding a prefix of the form `/vN` to every route, where `N` is the desired version number (so for example `/v1/conversations` to access version 1 of the `/conversations` endpoint). (#2116)
+* Delete `GET /self/name` endpoint (#2101)
+* New endpoint (`POST /verification-code/send`) for generating and sending a verification code for 2nd factor authentication actions. (#2124)
+
+## Features
+
+* Add freetext search results to "search-users" federation endpoint (#2085)
+
+## Bug fixes and other updates
+
+* Ensure empty responses show up without a schema in swagger. They were shown as empty arrays before. (#2104)
+* Require the guest links feature is enabled when someone joins by code. (#2084)
+* Escape disallowed characters at the beginning of CSV cells to prevent CSV injection vulnerability. (#2096)
+* The field `icon` in the body of the `PUT /team/:tid` endpoint is now typed to prevent potential injection attacks. (#2103)
+
+## Internal changes
+
+* Enforce conversation access roles more tightly on the backend (was previously only enforce on client): if a guests or non-team-members are not allowed, block guest link creation (new behavior) as well as ephemeral users joining (old behavior). (#2076)
+* Remove uses of servant-generics from brig (#2100, #2086)
+* Migrate more API end-points to servant. (#2016, #2081, #2091)
+* Introduce the row type variable in Brig monads (#2140)
+* Build ubuntu20 docker images with cabal instead of stack (#2119, #2060)
+* Drop managed conversations (#2125)
+* To investigate issues related to push notifications, adjust Gundeck `Debug` leveled logs to not print the message itself. So, that it can safely be turned on in production environments. Add a log entry when a bulk notification is pushed to Cannon. (#2053)
+* Add integration tests for scim/saml user creation (#2123)
+* Wrap stack with NIX_BUILD_SHELL set to LD_LIBRARY_PATH compatible shell (#2105)
+* Removed redundant `setDefaultTemplateLocale` config from the brig helm template. (#2099)
+* [not done yet, please do not enable] Optional team feature config `sndFactorPasswordChallenge` added to galley.yaml.
+  The feature is disabled by default. The server wide default can be changed in galley.yaml. Please refer to [/docs/reference/config-options.md#2nd-factor-password-challenge](https://github.com/wireapp/wire-server/blob/develop/docs/reference/config-options.md#2nd-factor-password-challenge) (#2138)
+* Prometheus: Ignore RawResponses (e.g. cannon's await responses) from metrics (#2108)
+* Refactor internal handlers for Proteus conversation creation (#2125)
+* Specify (in a test) how a message to a deleted legalhold device is refused to be sent. (#2131)
+
+## Federation changes
+
+* Add `setSftListAllServers` config flag to brig (#2139)
+* Revert restund to 0.4.17. (#2114)
+
+
+
+# [2022-02-02] (Chart Release 4.0.0)
+
+## Release notes
+
+
+* Upgrade webapp version to 2022-01-27-production.0-v0.28.29-0-42c9a1e (#2078)
+
+
+## Features
+
+
+* Allow brig's additionalWriteIndex to be on a different ElasticSearch cluster.
+  This allows migrating to a new ElasticSearch cluster. (#2063)
+
+* The file sharing team feature now has a server wide configurable lock status. For more information please refer to [/docs/reference/config-options.md#file-sharing](https://github.com/wireapp/wire-server/blob/develop/docs/reference/config-options.md#file-sharing). (#2059)
+
+
+## Internal changes
+
+
+* Remove non-existing functions from module export lists (#2095)
+
+* Rename Spar.Sem.IdP to Spar.Sem.IdPConfigStore (#2067)
+
+* Endpoints based on `MultiVerb` can now be made to return content types not listed in the `Accept` header (#2074)
+
+* The lock status of the file sharing team feature can be updated via the internal API (`PUT /i/teams/:tid/features/fileSharing/(un)?locked`). (#2059)
+
+* Servantify Galley Teams API (`GET /teams/:tid` and `DELETE /teams/:tid`). (#2092)
+
+* Add explicit export lists to all Spar.Sem modules (#2070)
+
+* Separate some Spar.Sem utility functions into their own module (#2069)
+
+
+# [2022-01-28] (Chart Release 2.125.0)
+
+## Release notes
+
+* Bump the webapp version. (#2082)
+
+## Internal changes
+
+* Additional integration testing for conversation access control. (#2057)
+
+
+# [2022-01-27] (Chart Release 2.124.0)
+
+## Release notes
+
+* The `nginz` chart now configures nginx to only allow cross-origin requests from an explicit allow list of subdomains. By default these are:
+
+  ```yaml
+  nginz:
+    nginx_conf:
+      allowlisted_origins:
+      - webapp
+      - teams
+      - account
+  ```
+
+  If you changed the names of these services, you must adjust those names in the nginz config as well. (#1630, #2073, 116988c62732)
+
+* Backend now separates conversation access control for guests and services. The old access roles are still supported but it is encouraged to upgrade clients since mapping between the old access roles and the new access roles is not isomorphic. For more details refer to the API changes below or the Swagger docs.
+  Old clients are fully supported; if new clients and old clients are mixed, to old clients, either guests of services may appear to be enable if they are not, which may lead to error messages (confusing but harmless). (#2035)
+
+## API changes
+
+* Endpoints that recently have accepted `access_role` in their payload will now accept `access_role_v2` as well which will take precedence over `access_role`. See Swagger docs for how values are mapped. Endpoints that recently have returned `access_role` in their payload will now additionally return the `access_role_v2` field. (#2035)
+
+## Features
+
+* Conversation access roles now distinguish between guests and services. (#2035)
+
+## Bug fixes and other updates
+
+* There is now an explicit CORS allow list for *all* endpoints. In previous releases, all subdomains were accepted, however they must now be listed explicitly. This is a **breaking change**, as now only known Javascript applications may access the backend. (#1630, #2073, 116988c62732)
+* Prevent 500s when SFTs are not reachable from Backend (#2077)
+
+## Internal changes
+
+* Bump hsaml2 package version (#2075)
+* Separate Spar.Data module into smaller Cassandra interpreters (#2064)
+* Fix some HLint issues in libs/wire-api. (#2065)
+* Fix broken build process of package "old-time" for some environments (#2056)
+* Refresh license headers (#2062)
+* Rename Spar.Sem.ScimTokenStore.GetByTeam to LookupByTeam (#2068)
+
+## Federation changes
+
+* Tag several federation tests cases for the M2 release (#2045)
+
+
+# [2022-01-18] (Chart Release 2.122.0)
+
+## Release notes
+
+* This release introduces a mandatory `federationDomain` configuration setting to cargohold. Please update your `values/wire-server/values.yaml` to set `cargohold.settings.federationDomain` to the same value as the corresponding option in galley (and brig). (#1990)
+* The brig server config option `setDefaultLocale` has been replaced by `setDefaultUserLocale` and `setDefaultTemplateLocale` (see docs/reference/config-options.md for details) (#2028)
+* From this release onwards, the images for haskell components (brig, galley,
+  cargohold, etc.) will be using Ubuntu 20.04 as the base. The images are about
+  30-35 MB larger than the previous alpine based images. (#1852)
+* Wire cloud operators: Make sure [#35](https://github.com/wireapp/ansible-sft/pull/35) is applied to all SFT servers before deploying. (#2030)
+
+## API changes
+
+* The deprecated endpoint `GET /teams` now ignores query parameters `ids`, `start` (#2027)
+* Add qualified v4 endpoints for downloading and deleting assets. The upload API is still on the same path, but the asset object it returns now contains a `domain` field. (#2002)
+* Remove resumable upload API (#1998)
+
+## Features
+
+* Allow configuring setDefaultLocale in brig using helm chart (#2025)
+* If the guest links team feature is disabled guest links will be revoked. (#1976)
+* Revoke guest links if feature is disabled. If the guest links team feature is disabled `get /conversations/join`, `post /conversations/:cnv/code`, and `get /conversations/:cnv/code` will return an error. (#1980)
+* Specialize `setDefaultLocale` to distinguish between default user locale and default template locale if the user's locale is n/a. (#2028)
+
+## Bug fixes and other updates
+
+* Fix an issue with remote asset streaming (#2037, #2038)
+
+## Documentation
+
+* Annotate a first batch of integration and unit tests to map them to externally-facing documentation (#1869)
+* Add the description to several test cases (#1991)
+* Improve documentation for stern tool and helm chart (#2032)
+
+## Internal changes
+
+* Replace servant-generic in Galley with a custom `Named` combinator (#2022)
+* The Swagger documentation module is not regenerated anymore if its content is unchanged (#2018)
+* cabal-run-integration.sh - remove Makefile indirection (#2044)
+* Fix test runner for global cabal make target (#1987)
+* The `cabal-install-artefacts.sh` script now creates the `dist` directory if it does not exist (#2007)
+* Set `purge: false` in fake-s3 chart (#1981)
+* Add missing backendTwo.carghold in integration.yaml (#2039)
+* Use GHC 8.10.7 and stack 2.7.3 for builds (#1852)
+* Fix non-controversial HLint issues in federator to improve code quality (#2011)
+* Added laws for DefaultSsoCode, Now, IdP and ScimExternalIdStore (#1940)
+* Moved specifications for Spar effects out of the test suite and into the library (#2005)
+* Tag integration tests for security audit. (#2000)
+* Upgrade nixpkgs pin used to provision developement dependencies (#1852)
+* Servantify Galley Teams API. (#2008, #2010, #2027)
+* When sending an activation code, the blocked domains are checked before the whitelist. This only affects the wire SaaS staging environment (there is no whitelist configuration in prod, and blocked domains are not applicable to on-prem installations). (#2023)
+* Add a helm chart that deploys [restund](https://docs.wire.com/understand/restund.html) (#2003)
+* Publish restund helm chart (#2036)
+* Improve optional field API in schema-profunctor (#1988)
+* Migrate the public API of Cannon to Servant. (There is an internal API that is not yet migrated.) (#2024)
+* sftd chart: Add multiSFT option, remove additionalArgs option (#1992)
+* sftd chart: Fix quoted args for multiSFT option (#1999)
+* `rangedSchema` does not need to be passed singletons explicitly anymore (#2017)
+* Split cannon benchmarks and tests (#1986)
+* Tag integration tests for certification. (#1985)
+* Tag integration tests for certification. (#2001)
+* New internal endpoint to configure the guest links team feature. (#1993)
+
+## Federation changes
+
+* Make federator capable of streaming responses (#1966)
+* Use `Named` routes for the federation API (#2033)
+* Fix Brig's configmap for SFT lookups (#2015)
+* SFTD chart: provide a /sft_servers_all.json url that can be used by brig to populate /calls/config/v2 (#2019)
+* Allow making HTTP-only requests to SFTs via an IPv4 address (#2026)
+* Replace IPv4-HTTP-only Approach to SFT Server Lookup with /sft_servers_all.json (#2030)
+* Extend GET /calls/config/v2 to include all SFT servers in federation (#2012)
+* Improve Brig's configuration for SFTs and fix a call to SFT servers (#2014)
+* Enable downloading assets from a remote (federated) cargohold instance via the v4 API. The content of remote assets is returned as stream with content type `application/octet-stream`. Please refer to the Swagger API documentation for more details. (#2004)
+
+# [2021-12-10] (Chart Release 2.121.0)
+
+## Release notes
+
+* If you have `selfDeletingMessages` configured in `galley.yaml`, add `lockStatus: unlocked`. (#1963)
+* Upgrade SFTD to 2.1.19. (#1983)
+
+## API changes
+
+* A new endpoint is added to Brig (`put /users/:uid/email`) that allows a team owner to initiate changing/setting a user email by (re-)sending an activation email. (#1948)
+* get team feature config for self deleting messages response includes lock status (#1963)
+* A new public Galley endpoint was added to dis-/enable the conversation guest link feature. The feature can only be configured through the public API if the lock status is unlocked in the server config. (#1964)
+* new internal endpoints for setting the lock status of self deleting messages (#1963)
+
+## Features
+
+* Team and server wide config for conversation guest link feature to configure feature status and lock status (#1964). If the feature is not configured on the server, the defaults will be:
+
+  ```txt
+    featureFlags:
+      ...
+      conversationGuestLinks:
+        defaults:
+          status: enabled
+          lockStatus: unlocked
+  ```
+* Lock status for the self deleting messages feature can be set internally by ibis and customer support (#1963)
+
+## Bug fixes and other updates
+
+* Correctly detect log level when rendering logs as structured JSON (#1959)
+
+## Documentation
+
+* Fix typo in swagger. (#1982)
+* Proposal for API versioning system. (#1958)
+* Update federation error documentation after changes to the federation API (#1956, #1975, #1978)
+
+## Internal changes
+
+* Suspend/unsuspend teams in backoffice/stern. (#1977)
+* Set request ID correctly in galley logs (#1967)
+* Improve cabal make targets: faster installation and better support for building and testing all packages (#1979)
+* sftd chart: add config key `additionalArgs` (#1972)
+
+## Federation changes
+
+* Add cargohold as a new federated component (#1973)
+
 
 # [2021-12-02]
 
@@ -43,7 +4120,7 @@
 * Errors when leaving a conversation are now correctly handled instead of resulting in a generic federation error. (#1928)
 
 
-# [2021-11-15]
+# [2021-11-15] (Chart Release 2.118.0)
 
 ## Release notes
 
@@ -88,7 +4165,7 @@
 * Add a one-to-one conversation test in getting conversations in the federation API (#1899)
 * Notify remote participants when a user leaves a conversation because they were deleted (#1891)
 
-# [2021-10-29]
+# [2021-10-29] (Chart Release 2.117.0)
 
 ## Release notes
 
@@ -150,7 +4227,7 @@
 * Make the conversation creator field in the `on-conversation-created` RPC unqualified. (#1858)
 * Update One2One conversation when connection status changes (#1850)
 
-# [2021-10-01]
+# [2021-10-01] (Chart Release 2.116.0)
 
 ## Release notes
 
@@ -243,7 +4320,7 @@
 * Added support for updating self member status of remote conversations (#1753)
 
 
-# [2021-09-14]
+# [2021-09-14] (Chart Release 2.115.0)
 
 ## API changes
 
@@ -283,7 +4360,7 @@
 * Ensure clients only receive messages meant for them in remote convs (#1739)
 
 
-# [2021-09-08]
+# [2021-09-08] (Chart Release 2.114.0)
 
 ## Release Notes
 
@@ -326,7 +4403,7 @@
 * The update conversation membership federation endpoint takes OriginDomainHeader (#1719)
 * Added new endpoint to allow fetching conversation metadata by qualified ids (#1703)
 
-# [2021-08-27]
+# [2021-08-27] (Chart Release 2.113.0)
 
 ## Release Notes
 
@@ -364,7 +4441,7 @@
 * Add an endpoint for removing a qualified user from a local conversation (#1697)
 
 
-# [2021-08-16]
+# [2021-08-16] (Chart Release 2.112.0)
 
 ## Release Notes
 
@@ -398,7 +4475,7 @@ This is a routine release requiring only the routine upgrade steps.
 * Added a mechanism to derive `AsUnion` instances automatically (#1693)
 * Integration test coverage (#1696, #1704)
 
-# [2021-08-02]
+# [2021-08-02] (Chart Release 2.111.0)
 
 ## Release Notes
 
@@ -449,7 +4526,7 @@ Upgrade nginz (#1658)
 * Renamed `DomainHeader` type to `OriginDomainHeader` (#1689)
 * Added golden tests for protobuf serialisation / deserialisation (#1644).
 
-# [2021-07-09]
+# [2021-07-09] (Chart Release 2.110.0)
 
 ## Release Notes
 
@@ -503,7 +4580,7 @@ This release requires a manual change in your galley configuration: `settings.co
 * Allow to change IdP Issuer name to previous name (#1615).
 
 
-# [2021-06-23]
+# [2021-06-23] (Chart Release 2.109.0)
 
 ## API Changes
 
@@ -555,7 +4632,7 @@ This release requires a manual change in your galley configuration: `settings.co
 * Galley/int: Expect remote call when creating conv with remotes (#1611)
 
 
-# [2021-06-08]
+# [2021-06-08] (Chart Release 2.108.0)
 
 ## Release Notes
 
@@ -608,7 +4685,7 @@ Deploy brig before galley (#1526, #1549)
 * Update Rich Info docs (#1544)
 
 
-# [2021-05-26]
+# [2021-05-26] (Chart Release 2.107.0)
 
 ## Release Notes
 
@@ -678,7 +4755,7 @@ changes.)
  - RFC: Schemas for documented bidirectional JSON encoding (#1474)
 
 
-# [2021-05-04]
+# [2021-05-04] (Chart Release 2.105.0)
 
 ## Features
  - [brig] New option to use a random prekey selection strategy to remove DynamoDB dependency (#1416, #1476)
@@ -715,7 +4792,7 @@ changes.)
  - [docs] Document testing strategy and patterns (#1472)
 
 
-# [2021-03-23]
+# [2021-03-23] (Chart Release 2.104.0)
 
 ## Features
 
@@ -755,7 +4832,7 @@ This is due to an internal data migration job (`spar-migrate-data`) that needs t
 
 * Migrate spar external id table (#1400, #1413, #1415, #1417)
 
-# [2021-03-02]
+# [2021-03-02] (Chart Release 2.102.0)
 
 ## Bug fixes and other updates
 
@@ -766,7 +4843,7 @@ This is due to an internal data migration job (`spar-migrate-data`) that needs t
 * Federation: Add qualified endpoints for prekey management (#1372)
 
 
-# [2021-02-25]
+# [2021-02-25] (Chart Release 2.101.0)
 
 ## Bug fixes and other updates
 
@@ -780,7 +4857,7 @@ This is due to an internal data migration job (`spar-migrate-data`) that needs t
 * Add migrate-external-ids tool (#1384)
 
 
-# [2021-02-16]
+# [2021-02-16] (Chart Release 2.99.12)
 
 ## Release Notes
 
@@ -822,7 +4899,7 @@ This release might require manual migration steps, see [ElasticSearch migration 
 * Add docs for deriving-swagger2 (#1373)
 
 
-# [2021-01-15]
+# [2021-01-15] (Chart Release 3.30.6)
 
 ## Release Notes
 
@@ -844,7 +4921,7 @@ This release contains bugfixes and internal changes.
 * Upgrade nixpkgs and niv (#1326)
 
 
-# [2021-01-12]
+# [2021-01-12] (Chart Release 2.97.0)
 
 ## Release Notes
 
@@ -862,7 +4939,7 @@ This release contains bugfixes and internal changes.
 * create_test_team_scim.sh script: fix arg parsing and invite (#1321)
 
 
-# [2021-01-06]
+# [2021-01-06] (Chart Release 2.95.18)
 
 ## Release Notes
 
@@ -891,7 +4968,7 @@ This release contains bugfixes and internal changes.
 * Cleanup stack.yaml. (#1312) (#1316)
 
 
-# [2020-12-21]
+# [2020-12-21] (Chart Release 2.95.0)
 
 ## Release Notes
 

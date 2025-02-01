@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,18 +18,18 @@
 module Test.Wire.API.Swagger (tests) where
 
 import Data.Aeson (ToJSON)
-import Data.Swagger (ToSchema, validatePrettyToJSON)
+import Data.OpenApi (ToSchema, validatePrettyToJSON)
 import Imports
-import qualified Test.Tasty as T
+import Test.Tasty qualified as T
 import Test.Tasty.QuickCheck (Arbitrary, counterexample, testProperty)
 import Type.Reflection (typeRep)
-import qualified Wire.API.User as User
-import qualified Wire.API.User.Client as Client
-import qualified Wire.API.User.Client.Prekey as Prekey
-import qualified Wire.API.User.Handle as Handle
-import qualified Wire.API.User.Search as Search
-import qualified Wire.API.UserMap as UserMap
-import qualified Wire.API.Wrapped as Wrapped
+import Wire.API.User qualified as User
+import Wire.API.User.Client qualified as Client
+import Wire.API.User.Client.Prekey qualified as Prekey
+import Wire.API.User.Handle qualified as Handle
+import Wire.API.User.Search qualified as Search
+import Wire.API.UserMap qualified as UserMap
+import Wire.API.Wrapped qualified as Wrapped
 
 tests :: T.TestTree
 tests =
@@ -56,7 +56,7 @@ tests =
       testToJSON @(Wrapped.Wrapped "some_user" User.User)
     ]
 
-testToJSON :: forall a. (Arbitrary a, Typeable a, ToJSON a, ToSchema a, Show a) => T.TestTree
+testToJSON :: forall a. (Arbitrary a, ToJSON a, ToSchema a, Show a) => T.TestTree
 testToJSON = testProperty msg trip
   where
     msg = show (typeRep @a)

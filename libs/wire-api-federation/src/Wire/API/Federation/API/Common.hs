@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,15 +18,19 @@
 module Wire.API.Federation.API.Common where
 
 import Data.Aeson
+import Data.OpenApi (ToSchema)
 import Imports
 import Test.QuickCheck
-import Wire.API.Arbitrary
+import Wire.Arbitrary
 
 -- | This is equivalent to '()', but JSONifies to an empty object instead of an
--- empty array.
+-- empty array. Returning an empty object gives us more flexibility, allowing
+-- us to expand the response without breaking compatibility.
 data EmptyResponse = EmptyResponse
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform EmptyResponse)
+
+instance ToSchema EmptyResponse
 
 instance FromJSON EmptyResponse where
   parseJSON = withObject "EmptyResponse" . const $ pure EmptyResponse

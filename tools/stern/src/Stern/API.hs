@@ -1,13 +1,13 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,46 +27,53 @@ module Stern.API
   )
 where
 
-import Brig.Types
 import Brig.Types.Intra
 import Control.Error
-import Control.Lens ((^.))
+import Control.Lens ((.~))
+import Control.Monad.Except
 import Data.Aeson hiding (Error, json)
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (emptyArray)
+import Data.ByteString (fromStrict)
 import Data.ByteString.Conversion
-import Data.ByteString.Lazy (fromStrict)
 import Data.Handle (Handle)
-import qualified Data.HashMap.Strict as M
 import Data.Id
-import Data.Predicate
+import Data.Proxy (Proxy (..))
 import Data.Range
-import Data.Swagger.Build.Api hiding (Response, def, min, response)
-import qualified Data.Swagger.Build.Api as Doc
+import Data.Schema hiding ((.=))
 import Data.Text (unpack)
-import qualified Data.Text as T
-import Data.Text.Encoding (decodeLatin1)
-import qualified Galley.Types.Teams.SearchVisibility as Team
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
+import Data.Text.Encoding.Error
+import Data.Text.Lazy qualified as LT
+import Data.Text.Lazy.Encoding qualified as LT
+import GHC.TypeLits (KnownSymbol)
 import Imports hiding (head)
 import Network.HTTP.Types
 import Network.Wai
-import Network.Wai.Handler.Warp
-import qualified Network.Wai.Middleware.Gzip as GZip
-import Network.Wai.Predicate hiding (Error, reason, setStatus)
-import Network.Wai.Routing hiding (trace)
-import Network.Wai.Utilities
-import qualified Network.Wai.Utilities.Server as Server
-import Network.Wai.Utilities.Swagger (document, mkSwaggerApi)
-import Stern.API.Predicates
+import Network.Wai.Utilities as Wai
+import Network.Wai.Utilities.Server
+import Network.Wai.Utilities.Server qualified as Server
+import Servant (NoContent (NoContent), ServerT, (:<|>) (..))
+import Servant qualified
+import Servant.Server qualified
+import Stern.API.Routes
 import Stern.App
-import qualified Stern.Intra as Intra
+import Stern.Intra qualified as Intra
 import Stern.Options
-import qualified Stern.Swagger as Doc
 import Stern.Types
-import System.Logger.Class hiding (Error, name, trace, (.=))
+import System.Logger.Class hiding (Error, flush, name, trace, (.=))
 import Util.Options
-import qualified Wire.API.Team.Feature as Public
-import qualified Wire.API.Team.SearchVisibility as Public
-import qualified Wire.Swagger as Doc
+import Wire.API.Connection
+import Wire.API.Internal.Notification (QueuedNotification)
+import Wire.API.Routes.Internal.Brig.Connection (ConnectionStatus)
+import Wire.API.Routes.Internal.Brig.EJPD qualified as EJPD
+import Wire.API.Routes.Internal.Galley.TeamsIntra qualified as Team
+import Wire.API.Routes.Named (Named (Named))
+import Wire.API.Team.Feature
+import Wire.API.Team.SearchVisibility
+import Wire.API.User
+import Wire.API.User.Search
 
 default (ByteString)
 
@@ -74,712 +81,405 @@ start :: Opts -> IO ()
 start o = do
   e <- newEnv o
   s <- Server.newSettings (server e)
-  runSettings s (pipeline e)
+  Server.runSettingsWithShutdown s (requestIdMiddleware e.appLogger defaultRequestIdHeaderName $ servantApp e) Nothing
   where
-    server e = Server.defaultServer (unpack $ (stern o) ^. epHost) ((stern o) ^. epPort) (e ^. applog) (e ^. metrics)
-    pipeline e = GZip.gzip GZip.def $ serve e
-    serve e r k = runHandler e r (Server.route (Server.compile sitemap) r k) k
+    server :: Env -> Server.Server
+    server e = Server.defaultServer (unpack o.stern.host) o.stern.port e.appLogger
 
-sitemap :: Routes Doc.ApiBuilder Handler ()
-sitemap = do
-  routes
-  apiDocs
+    servantApp :: Env -> Application
+    servantApp e0 req cont = do
+      let rid = getRequestId defaultRequestIdHeaderName req
+      let e = requestIdLens .~ rid $ e0
+      Servant.serve
+        ( Proxy
+            @( SwaggerDocsAPI
+                 :<|> SternAPIInternal
+                 :<|> SternAPI
+                 :<|> RedirectToSwaggerDocsAPI
+             )
+        )
+        ( swaggerDocs
+            :<|> sitemapInternal
+            :<|> sitemap e
+            :<|> sitemapRedirectToSwaggerDocs
+        )
+        req
+        cont
 
-routes :: Routes Doc.ApiBuilder Handler ()
-routes = do
-  -- Begin Internal
+-------------------------------------------------------------------------------
+-- servant API
 
-  get "/i/status" (continue $ const $ return empty) true
-  head "/i/status" (continue $ const $ return empty) true
+sitemap :: Stern.App.Env -> Servant.Server SternAPI
+sitemap env = Servant.Server.hoistServer (Proxy @SternAPI) nt sitemap'
+  where
+    nt :: forall x. Stern.App.Handler x -> Servant.Server.Handler x
+    nt m = Servant.Server.Handler . ExceptT $ do
+      fmapL renderError <$> Stern.App.runAppT env (runExceptT m)
 
-  -- End Internal
+    renderError :: Error -> Servant.Server.ServerError
+    renderError (Error code label message _ _) =
+      Servant.Server.ServerError
+        (statusCode code)
+        (LT.unpack label)
+        (LT.encodeUtf8 message)
+        [("Content-type", "application/json")]
 
-  post "/users/:uid/suspend" (continue suspendUser) $
-    capture "uid"
-  document "POST" "users/:uid/suspend" $ do
-    Doc.summary "Suspends user with this ID"
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      Doc.description "User ID"
-    Doc.response 200 "User successfully suspended" Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
+sitemap' :: ServerT SternAPI Handler
+sitemap' =
+  Named @"suspend-user" suspendUser
+    :<|> Named @"unsuspend-user" unsuspendUser
+    :<|> Named @"get-users-by-email" usersByEmail
+    :<|> Named @"get-users-by-ids" usersByIds
+    :<|> Named @"get-users-by-handles" usersByHandles
+    :<|> Named @"get-user-connections" userConnections
+    :<|> Named @"get-users-connections" usersConnections
+    :<|> Named @"search-users" searchOnBehalf
+    :<|> Named @"revoke-identity" revokeIdentity
+    :<|> Named @"put-email" changeEmail
+    :<|> Named @"delete-user" deleteUser
+    :<|> Named @"suspend-team" (setTeamStatusH Team.Suspended)
+    :<|> Named @"unsuspend-team" (setTeamStatusH Team.Active)
+    :<|> Named @"delete-team" deleteTeam
+    :<|> Named @"ejpd-info" ejpdInfoByHandles
+    :<|> Named @"head-user-blacklist" isUserKeyBlacklisted
+    :<|> Named @"post-user-blacklist" addBlacklist
+    :<|> Named @"delete-user-blacklist" deleteFromBlacklist
+    :<|> Named @"get-team-info-by-member-email" getTeamInfoByMemberEmail
+    :<|> Named @"get-team-info" getTeamInfo
+    :<|> Named @"get-team-admin-info" getTeamAdminInfo
+    :<|> Named @"get-route-legalhold-config" (mkFeatureGetRoute @LegalholdConfig)
+    :<|> Named @"put-route-legalhold-config" (mkFeaturePutRouteTrivialConfigNoTTL @LegalholdConfig)
+    :<|> Named @"get-route-sso-config" (mkFeatureGetRoute @SSOConfig)
+    :<|> Named @"put-route-sso-config" (mkFeaturePutRouteTrivialConfigNoTTL @SSOConfig)
+    :<|> Named @"get-route-search-visibility-available-config" (mkFeatureGetRoute @SearchVisibilityAvailableConfig)
+    :<|> Named @"put-route-search-visibility-available-config" (mkFeaturePutRouteTrivialConfigNoTTL @SearchVisibilityAvailableConfig)
+    :<|> Named @"get-route-validate-saml-emails-config" (mkFeatureGetRoute @ValidateSAMLEmailsConfig)
+    :<|> Named @"put-route-validate-saml-emails-config" (mkFeaturePutRouteTrivialConfigNoTTL @ValidateSAMLEmailsConfig)
+    :<|> Named @"get-route-digital-signatures-config" (mkFeatureGetRoute @DigitalSignaturesConfig)
+    :<|> Named @"put-route-digital-signatures-config" (mkFeaturePutRouteTrivialConfigNoTTL @DigitalSignaturesConfig)
+    :<|> Named @"get-route-file-sharing-config" (mkFeatureGetRoute @FileSharingConfig)
+    :<|> Named @"put-route-file-sharing-config" (mkFeaturePutRouteTrivialConfigNoTTL @FileSharingConfig)
+    :<|> Named @"get-route-classified-domains-config" (mkFeatureGetRoute @ClassifiedDomainsConfig)
+    :<|> Named @"get-route-conference-calling-config" (mkFeatureGetRoute @ConferenceCallingConfig)
+    :<|> Named @"put-route-conference-calling-config" (mkFeaturePutRouteTrivialConfigWithTTL @ConferenceCallingConfig)
+    :<|> Named @"get-route-applock-config" (mkFeatureGetRoute @AppLockConfig)
+    :<|> Named @"put-route-applock-config" (mkFeaturePutRoute @AppLockConfig)
+    :<|> Named @"get-route-mls-config" (mkFeatureGetRoute @MLSConfig)
+    :<|> Named @"put-route-mls-config" (mkFeaturePutRoute @MLSConfig)
+    :<|> Named @"get-search-visibility" getSearchVisibility
+    :<|> Named @"put-search-visibility" setSearchVisibility
+    :<|> Named @"get-route-outlook-cal-config" (mkFeatureGetRoute @OutlookCalIntegrationConfig)
+    :<|> Named @"lock-unlock-route-outlook-cal-config" (mkFeatureLockUnlockRouteTrivialConfigNoTTL @OutlookCalIntegrationConfig)
+    :<|> Named @"put-route-outlook-cal-config" (mkFeaturePutRouteTrivialConfigNoTTL @OutlookCalIntegrationConfig)
+    :<|> Named @"get-route-enforce-file-download-location" (mkFeatureGetRoute @EnforceFileDownloadLocationConfig)
+    :<|> Named @"lock-unlock-route-enforce-file-download-location" (mkFeatureLockUnlockRouteTrivialConfigNoTTL @EnforceFileDownloadLocationConfig)
+    :<|> Named @"put-route-enforce-file-download-location" (mkFeaturePutRoute @EnforceFileDownloadLocationConfig)
+    :<|> Named @"get-team-invoice" getTeamInvoice
+    :<|> Named @"get-team-billing-info" getTeamBillingInfo
+    :<|> Named @"put-team-billing-info" updateTeamBillingInfo
+    :<|> Named @"post-team-billing-info" setTeamBillingInfo
+    :<|> Named @"get-consent-log" getConsentLog
+    :<|> Named @"get-user-meta-info" getUserData
+    :<|> Named @"get-sso-domain-redirect" Intra.getSsoDomainRedirect
+    :<|> Named @"put-sso-domain-redirect" Intra.putSsoDomainRedirect
+    :<|> Named @"delete-sso-domain-redirect" Intra.deleteSsoDomainRedirect
+    :<|> Named @"register-oauth-client" Intra.registerOAuthClient
+    :<|> Named @"stern-get-oauth-client" Intra.getOAuthClient
+    :<|> Named @"update-oauth-client" Intra.updateOAuthClient
+    :<|> Named @"delete-oauth-client" Intra.deleteOAuthClient
+    :<|> Intra.enterpriseLogin
+    :<|> Named @"domain-registration-get" (mkFeatureGetRoute @DomainRegistrationConfig)
+    :<|> Named @"domain-registration-put" (mkFeaturePutRouteTrivialConfigNoTTL @DomainRegistrationConfig)
+    :<|> Named @"domain-registration-lock" (mkFeatureLockUnlockRouteTrivialConfigNoTTL @DomainRegistrationConfig)
 
-  post "/users/:uid/unsuspend" (continue unsuspendUser) $
-    capture "uid"
-  document "POST" "users/:uid/unsuspend" $ do
-    Doc.summary "Unsuspends user with this ID"
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      Doc.description "User ID"
-    Doc.response 200 "User successfully unsuspended" Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
+sitemapInternal :: Servant.Server SternAPIInternal
+sitemapInternal =
+  Named @"status" (pure Servant.NoContent)
 
-  get "/users" (continue usersByEmail) $
-    param "email"
-  document "GET" "users" $ do
-    Doc.summary "Displays user's info given an email address"
-    Doc.parameter Doc.Query "email" Doc.string' $
-      Doc.description "Email address"
-    Doc.response 200 "List of users" Doc.end
-
-  get
-    "/users"
-    (continue usersByPhone)
-    phoneParam
-  document "GET" "users" $ do
-    Doc.summary "Displays user's info given a phone number"
-    Doc.parameter Doc.Query "phone" Doc.string' $
-      Doc.description "Phone number"
-    Doc.response 200 "List of users" Doc.end
-
-  get "/users" (continue usersByIds) $
-    param "ids"
-  document "GET" "users" $ do
-    Doc.summary "Displays active users info given a list of ids"
-    Doc.parameter Doc.Query "ids" Doc.string' $
-      Doc.description "ID of the user"
-    Doc.response 200 "List of users" Doc.end
-
-  get "/users" (continue usersByHandles) $
-    param "handles"
-  document "GET" "users" $ do
-    Doc.summary "Displays active users info given a list of handles"
-    Doc.parameter Doc.Query "handles" Doc.string' $
-      Doc.description "Handle of the user"
-    Doc.response 200 "List of users" Doc.end
-
-  get "/users/:uid/connections" (continue userConnections) $
-    capture "uid"
-  document "GET" "users/:uid/connections" $ do
-    Doc.summary "Displays user's connections"
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      description "User ID"
-    Doc.response 200 "List of user's connections" Doc.end
-
-  get "/users/connections" (continue usersConnections) $
-    param "ids"
-  document "GET" "users/connections" $ do
-    Doc.summary "Displays users connections given a list of ids"
-    Doc.parameter Doc.Query "ids" Doc.string' $
-      Doc.description "IDs of the users"
-    Doc.response 200 "List of users connections" Doc.end
-
-  get "/users/:uid/search" (continue searchOnBehalf) $
-    capture "uid"
-      .&. def "" (query "q")
-      .&. def (unsafeRange 10) (query "size")
-  document "GET" "search" $ do
-    summary "Search for users on behalf of"
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      description "User ID"
-    Doc.parameter Query "q" string' $ do
-      description "Search query"
-      optional
-    Doc.parameter Query "size" int32' $ do
-      description "Number of results to return"
-      optional
-    Doc.response 200 "List of users" Doc.end
-
-  post "/users/revoke-identity" (continue revokeIdentity) $
-    param "email" ||| phoneParam
-  document "POST" "revokeIdentity" $ do
-    Doc.summary "Revoke a verified user identity."
-    Doc.notes
-      "Forcefully revokes a verified user identity. \
-      \WARNING: If the given identity is the only verified \
-      \user identity of an account, the account will be \
-      \deactivated (\"wireless\") and might thus become inaccessible. \
-      \If the given identity is not taken / verified, this is a no-op."
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "A verified email address"
-      Doc.optional
-    Doc.parameter Doc.Query "phone" Doc.string' $ do
-      Doc.description "A verified phone number (E.164 format)."
-      Doc.optional
-    Doc.response 200 "Identity revoked or not verified / taken." Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
-
-  put "/users/:uid/email" (continue changeEmail) $
-    contentType "application" "json"
-      .&. capture "uid"
-      .&. jsonRequest @EmailUpdate
-  document "PUT" "changeEmail" $ do
-    Doc.summary "Change a user's email address."
-    Doc.notes
-      "The new e-mail address must be verified \
-      \before the change takes effect."
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      Doc.description "User ID"
-    Doc.body (Doc.ref Doc.emailUpdate) $
-      Doc.description "JSON body"
-    Doc.response 200 "Change of email address initiated." Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
-
-  put "/users/:uid/phone" (continue changePhone) $
-    contentType "application" "json"
-      .&. capture "uid"
-      .&. jsonRequest @PhoneUpdate
-  document "PUT" "changePhone" $ do
-    Doc.summary "Change a user's phone number."
-    Doc.notes
-      "The new phone number must be verified \
-      \before the change takes effect."
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      Doc.description "User ID"
-    Doc.body (Doc.ref Doc.phoneUpdate) $
-      Doc.description "JSON body"
-    Doc.response 200 "Change of phone number initiated." Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
-
-  delete "/users/:uid" (continue deleteUser) $
-    capture "uid"
-      .&. (query "email" ||| phoneParam)
-  document "DELETE" "deleteUser" $ do
-    summary "Delete a user (irrevocable!)"
-    Doc.notes "Email or Phone must match UserId's (to prevent copy/paste mistakes)"
-    Doc.parameter Doc.Path "uid" Doc.bytes' $
-      description "User ID"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "Matching verified email address"
-      Doc.optional
-    Doc.parameter Doc.Query "phone" Doc.string' $ do
-      Doc.description "Matching verified phone number (E.164 format)."
-      Doc.optional
-    Doc.response 200 "Account deleted" Doc.end
-    Doc.response 400 "Bad request" (Doc.model Doc.errorModel)
-
-  delete "/teams/:tid" (continue deleteTeam) $
-    capture "tid"
-      .&. query "email"
-  document "DELETE" "deleteTeam" $ do
-    summary "Delete a team (irrevocable!) You can only delete teams with 1 user!"
-    Doc.notes "The email address of the user must be provided to prevent copy/paste mistakes"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "Matching verified remaining user address"
-    Doc.response 202 "Team scheduled for deletion" Doc.end
-    Doc.response 404 "No such user with that email" (Doc.model Doc.errorModel)
-    Doc.response 404 "No such binding team" (Doc.model Doc.errorModel)
-    Doc.response 403 "Only teams with 1 user can be deleted" (Doc.model Doc.errorModel)
-    Doc.response 404 "Binding team mismatch" (Doc.model Doc.errorModel)
-
-  get "/ejpd-info" (continue ejpdInfoByHandles) $
-    param "handles"
-      .&. def False (query "include_contacts")
-  document "GET" "ejpd-info" $ do
-    Doc.summary "internal wire.com process: https://wearezeta.atlassian.net/wiki/spaces/~463749889/pages/256738296/EJPD+official+requests+process"
-    Doc.parameter Doc.Query "handles" Doc.string' $
-      Doc.description "Handles of the user, separated by commas (NB: all chars need to be lower case!)"
-    Doc.parameter Doc.Query "include_contacts" Doc.bool' $ do
-      Doc.description "If 'true', this gives you more more exhaustive information about this user (including social network)"
-      Doc.optional
-    Doc.response 200 "Required information about the listed users (where found)" Doc.end
-
-  head "/users/blacklist" (continue isUserKeyBlacklisted) $
-    (query "email" ||| phoneParam)
-  document "HEAD" "checkBlacklistStatus" $ do
-    summary "Fetch blacklist information on a email/phone"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "An email address to check"
-      Doc.optional
-    Doc.parameter Doc.Query "phone" Doc.string' $ do
-      Doc.description "A phone to check"
-      Doc.optional
-    Doc.response 200 "The email/phone IS blacklisted" Doc.end
-    Doc.response 404 "The email/phone is NOT blacklisted" Doc.end
-
-  post "/users/blacklist" (continue addBlacklist) $
-    (query "email" ||| phoneParam)
-  document "POST" "addToBlacklist" $ do
-    summary "Add the email/phone to our blacklist"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "An email address to add"
-      Doc.optional
-    Doc.parameter Doc.Query "phone" Doc.string' $ do
-      Doc.description "A phone to add"
-      Doc.optional
-    Doc.response 200 "Operation succeeded" Doc.end
-
-  delete "/users/blacklist" (continue deleteFromBlacklist) $
-    (query "email" ||| phoneParam)
-  document "DELETE" "deleteFromBlacklist" $ do
-    summary "Remove the email/phone from our blacklist"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "An email address to remove"
-      Doc.optional
-    Doc.parameter Doc.Query "phone" Doc.string' $ do
-      Doc.description "A phone to remove"
-      Doc.optional
-    Doc.response 200 "Operation succeeded" Doc.end
-
-  get "/teams" (continue getTeamInfoByMemberEmail) $
-    param "email"
-  document "GET" "getTeamInfoByMemberEmail" $ do
-    summary "Fetch a team information given a member's email"
-    Doc.parameter Doc.Query "email" Doc.string' $
-      Doc.description "A verified email address"
-    Doc.response 200 "Team Information" Doc.end
-
-  get "/teams/:tid" (continue getTeamInfo) $
-    capture "tid"
-  document "GET" "getTeamInfo" $ do
-    summary "Gets information about a team"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.response 200 "Team Information" Doc.end
-
-  get "/teams/:tid/admins" (continue getTeamAdminInfo) $
-    capture "tid"
-  document "GET" "getTeamAdminInfo" $ do
-    summary "Gets information about a team's owners and admins only"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.response 200 "Team Information about Owners and Admins" Doc.end
-
-  get "/teams/:tid/features/:feature" (continue getTeamFeatureFlagNoConfigH) $
-    capture "tid"
-      .&. capture "feature"
-  document "GET" "getTeamFeatureFlag" $ do
-    summary "Shows whether a feature flag is enabled or not for a given team."
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.parameter Doc.Path "feature" Doc.typeTeamFeatureNameNoConfig $
-      description "Feature name"
-    Doc.returns (Doc.ref Public.modelTeamFeatureStatusNoConfig)
-    Doc.response 200 "Team feature flag status" Doc.end
-
-  put "/teams/:tid/features/:feature" (continue setTeamFeatureNoConfigFlagH) $
-    capture "tid"
-      .&. capture "feature"
-      .&. param "status"
-  document "PUT" "setTeamFeatureFlag" $ do
-    summary "Disable / enable feature flag for a given team"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.parameter Doc.Path "feature" Doc.typeTeamFeatureNameNoConfig $
-      description "Feature name"
-    Doc.parameter Doc.Query "status" Public.typeTeamFeatureStatusValue $ do
-      Doc.description "team feature status (enabled or disabled)"
-    Doc.response 200 "Team feature flag status" Doc.end
-
-  mkFeaturePutGetRoute @'Public.TeamFeatureAppLock
-
-  -- These endpoints should be part of team settings. Until then, we access them from here
-  -- for authorized personnel to enable/disable this on the team's behalf
-  get "/teams/:tid/search-visibility" (continue (liftM json . Intra.getSearchVisibility)) $
-    capture "tid"
-  document "GET" "getSearchVisibility" $ do
-    summary "Shows the current TeamSearchVisibility value for the given team"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.returns (Doc.ref Public.modelTeamSearchVisibility)
-    Doc.response 200 "TeamSearchVisibility value" Doc.end
-  put "/teams/:tid/search-visibility" (continue setSearchVisibility) $
-    contentType "application" "json"
-      .&. capture "tid"
-      .&. jsonRequest @Team.TeamSearchVisibility
-  document "PUT" "setSearchVisibility" $ do
-    summary "Set specific search visibility for the team"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.body Public.typeSearchVisibility $
-      Doc.description "JSON body"
-    Doc.response 200 "TeamSearchVisibility status set" Doc.end
-
-  -- The following endpoint are only relevant internally at Wire
-
-  get "/teams/:tid/invoices/:inr" (continue getTeamInvoice) $
-    capture "tid"
-      .&. capture "inr"
-      .&. accept "application" "json"
-  document "GET" "getTeamInvoice" $ do
-    summary "Get a specific invoice by Number"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      Doc.description "Team ID"
-    Doc.parameter Doc.Path "inr" Doc.string' $
-      Doc.description "Invoice Number"
-    Doc.response 307 "Redirect to PDF download" Doc.end
-
-  get "/teams/:tid/billing" (continue getTeamBillingInfo) $
-    capture "tid"
-  document "GET" "getTeamBillingInfo" $ do
-    summary "Gets billing information about a team"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.response 200 "Team Billing Information" Doc.end
-    Doc.response 404 "No team or no billing info for given team" Doc.end
-    Doc.returns (Doc.ref Doc.teamBillingInfo)
-
-  put "/teams/:tid/billing" (continue updateTeamBillingInfo) $
-    contentType "application" "json"
-      .&. capture "tid"
-      .&. jsonRequest @TeamBillingInfoUpdate
-  document "PUT" "updateTeamBillingInfo" $ do
-    summary
-      "Updates billing information about a team. Non \
-      \specified fields will NOT be updated"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.body (Doc.ref Doc.teamBillingInfoUpdate) $
-      Doc.description "JSON body"
-    Doc.response 200 "Updated Team Billing Information" Doc.end
-    Doc.returns (Doc.ref Doc.teamBillingInfo)
-
-  post "/teams/:tid/billing" (continue setTeamBillingInfo) $
-    contentType "application" "json"
-      .&. capture "tid"
-      .&. jsonRequest @TeamBillingInfo
-  document "POST" "setTeamBillingInfo" $ do
-    summary
-      "Sets billing information about a team. Can \
-      \only be used on teams that do NOT have any \
-      \billing information set. To update team billing \
-      \info, use the update endpoint"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.body (Doc.ref Doc.teamBillingInfo) $
-      Doc.description "JSON body"
-    Doc.response 200 "Updated Team Billing Information" Doc.end
-    Doc.returns (Doc.ref Doc.teamBillingInfo)
-
-  get "/i/consent" (continue getConsentLog) $
-    param "email"
-  document "GET" "getConsentLog" $ do
-    summary "Fetch the consent log given an email address of a non-user"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Query "email" Doc.string' $ do
-      Doc.description "An email address"
-    Doc.response 200 "Consent Log" Doc.end
-    Doc.response 403 "Access denied! There is a user with this email address" Doc.end
-
-  get "/i/user/meta-info" (continue getUserData) $
-    param "id"
-  document "GET" "getUserMetaInfo" $ do
-    summary "Fetch a user's meta info given a user id: TEMPORARY!"
-    notes "Relevant only internally at Wire"
-    Doc.parameter Doc.Query "id" Doc.bytes' $ do
-      Doc.description "A user's ID"
-    Doc.response 200 "Meta Info" Doc.end
-
-apiDocs :: Routes a Handler ()
-apiDocs = do
-  get
-    "/stern/api-docs"
-    ( \(_ ::: url) k ->
-        let doc = mkSwaggerApi (decodeLatin1 url) Doc.sternModels routes
-         in k $ json doc
-    )
-    $ accept "application" "json"
-      .&. query "base_url"
+sitemapRedirectToSwaggerDocs :: Servant.Server RedirectToSwaggerDocsAPI
+sitemapRedirectToSwaggerDocs = Named @"swagger-ui-redirect" redirectToSwaggerDocs
 
 -----------------------------------------------------------------------------
 -- Handlers
 
-type JSON = Media "application" "json"
+redirectToSwaggerDocs :: Servant.Server.Handler a
+redirectToSwaggerDocs = throwError Servant.err301 {Servant.errHeaders = [("Location", "/swagger-ui/index.html")]}
 
-suspendUser :: UserId -> Handler Response
-suspendUser uid = do
-  Intra.putUserStatus Suspended uid
-  return empty
+suspendUser :: UserId -> Handler NoContent
+suspendUser uid = NoContent <$ Intra.putUserStatus Suspended uid
 
-unsuspendUser :: UserId -> Handler Response
-unsuspendUser uid = Intra.putUserStatus Active uid >> return empty
+unsuspendUser :: UserId -> Handler NoContent
+unsuspendUser uid = NoContent <$ Intra.putUserStatus Active uid
 
-usersByEmail :: Email -> Handler Response
-usersByEmail = liftM json . Intra.getUserProfilesByIdentity . Left
+usersByEmail :: EmailAddress -> Handler [User]
+usersByEmail = Intra.getUserProfilesByIdentity
 
-usersByPhone :: Phone -> Handler Response
-usersByPhone = liftM json . Intra.getUserProfilesByIdentity . Right
+usersByIds :: [UserId] -> Handler [User]
+usersByIds = Intra.getUserProfiles . Left
 
-usersByIds :: List UserId -> Handler Response
-usersByIds = liftM json . Intra.getUserProfiles . Left . fromList
+usersByHandles :: [Handle] -> Handler [User]
+usersByHandles = Intra.getUserProfiles . Right
 
-usersByHandles :: List Handle -> Handler Response
-usersByHandles = liftM json . Intra.getUserProfiles . Right . fromList
+ejpdInfoByHandles :: Maybe Bool -> [Handle] -> Handler EJPD.EJPDResponseBody
+ejpdInfoByHandles (fromMaybe False -> includeContacts) handles = Intra.getEjpdInfo handles includeContacts
 
-ejpdInfoByHandles :: (List Handle ::: Bool) -> Handler Response
-ejpdInfoByHandles (handles ::: includeContacts) = json <$> Intra.getEjpdInfo (fromList handles) includeContacts
+userConnections :: UserId -> Handler UserConnectionGroups
+userConnections = fmap groupByStatus . Intra.getUserConnections
 
-userConnections :: UserId -> Handler Response
-userConnections uid = do
-  conns <- Intra.getUserConnections uid
-  return . json $ groupByStatus conns
+usersConnections :: [UserId] -> Handler [ConnectionStatus]
+usersConnections = Intra.getUsersConnections . List
 
-usersConnections :: List UserId -> Handler Response
-usersConnections = liftM json . Intra.getUsersConnections
+searchOnBehalf :: UserId -> Maybe T.Text -> Maybe Int32 -> Handler (SearchResult Contact)
+searchOnBehalf
+  uid
+  (fromMaybe "" -> q)
+  (fromMaybe (unsafeRange 10) . checked @1 @100 @Int32 . fromMaybe 10 -> s) =
+    Intra.getContacts uid q (fromRange s)
 
-searchOnBehalf :: UserId ::: T.Text ::: Range 1 100 Int32 -> Handler Response
-searchOnBehalf (uid ::: q ::: s) =
-  liftM json $ Intra.getContacts uid q (fromRange s)
+revokeIdentity :: EmailAddress -> Handler NoContent
+revokeIdentity e = NoContent <$ Intra.revokeIdentity e
 
-revokeIdentity :: Either Email Phone -> Handler Response
-revokeIdentity emailOrPhone = Intra.revokeIdentity emailOrPhone >> return empty
+changeEmail :: UserId -> EmailUpdate -> Handler NoContent
+changeEmail uid upd = NoContent <$ Intra.changeEmail uid upd
 
-changeEmail :: JSON ::: UserId ::: JsonRequest EmailUpdate -> Handler Response
-changeEmail (_ ::: uid ::: req) = do
-  upd <- parseBody req !>> mkError status400 "client-error"
-  Intra.changeEmail uid upd
-  return empty
-
-changePhone :: JSON ::: UserId ::: JsonRequest PhoneUpdate -> Handler Response
-changePhone (_ ::: uid ::: req) = do
-  upd <- parseBody req !>> mkError status400 "client-error"
-  Intra.changePhone uid upd
-  return empty
-
-deleteUser :: UserId ::: Either Email Phone -> Handler Response
-deleteUser (uid ::: emailOrPhone) = do
-  usrs <- Intra.getUserProfilesByIdentity emailOrPhone
+deleteUser :: UserId -> EmailAddress -> Handler NoContent
+deleteUser uid email = do
+  usrs <- Intra.getUserProfilesByIdentity email
   case usrs of
-    ((accountUser -> u) : _) ->
-      if checkUUID u
+    [u] ->
+      if userId u == uid
         then do
           info $ userMsg uid . msg (val "Deleting account")
           void $ Intra.deleteAccount uid
-          return empty
-        else throwE $ mkError status400 "match-error" "email or phone did not match UserId"
-    _ -> return $ setStatus status404 empty
-  where
-    checkUUID u = userId u == uid
+          pure NoContent
+        else throwE $ mkError status400 "match-error" "email did not match UserId"
+    (_ : _ : _) -> error "impossible"
+    _ -> throwE $ mkError status404 "not-found" "not found"
 
-deleteTeam :: TeamId ::: Email -> Handler Response
-deleteTeam (givenTid ::: email) = do
-  acc <- (listToMaybe <$> Intra.getUserProfilesByIdentity (Left email)) >>= handleNoUser
-  userTid <- (Intra.getUserBindingTeam . userId . accountUser $ acc) >>= handleNoTeam
+setTeamStatusH :: Team.TeamStatus -> TeamId -> Handler NoContent
+setTeamStatusH status tid = NoContent <$ Intra.setStatusBindingTeam tid status
+
+deleteTeam :: TeamId -> Maybe Bool -> Maybe EmailAddress -> Handler NoContent
+deleteTeam givenTid (fromMaybe False -> False) (Just email) = do
+  acc <- Intra.getUserProfilesByIdentity email >>= handleNoUser . listToMaybe
+  userTid <- (Intra.getUserBindingTeam . userId $ acc) >>= handleNoTeam
   when (givenTid /= userTid) $
     throwE bindingTeamMismatch
   tInfo <- Intra.getTeamInfo givenTid
-  unless ((length (tiMembers tInfo)) == 1) $
+  unless (length (tiMembers tInfo) == 1) $
     throwE wrongMemberCount
-  void $ Intra.deleteBindingTeam givenTid
-  return $ setStatus status202 empty
+  NoContent <$ Intra.deleteBindingTeam givenTid
   where
     handleNoUser = ifNothing (mkError status404 "no-user" "No such user with that email")
     handleNoTeam = ifNothing (mkError status404 "no-binding-team" "No such binding team")
     wrongMemberCount = mkError status403 "wrong-member-count" "Only teams with 1 user can be deleted"
     bindingTeamMismatch = mkError status404 "binding-team-mismatch" "Binding team mismatch"
+deleteTeam tid (fromMaybe False -> True) _ = do
+  void $ Intra.getTeamData tid -- throws 404 if team does not exist
+  NoContent <$ Intra.deleteBindingTeamForce tid
+deleteTeam _ _ _ =
+  throwE $ mkError status400 "Bad Request" "either email or 'force=true' parameter is required"
 
-isUserKeyBlacklisted :: Either Email Phone -> Handler Response
-isUserKeyBlacklisted emailOrPhone = do
-  bl <- Intra.isBlacklisted emailOrPhone
+isUserKeyBlacklisted :: EmailAddress -> Handler NoContent
+isUserKeyBlacklisted email = do
+  bl <- Intra.isBlacklisted email
   if bl
-    then response status200 "The given user key IS blacklisted"
-    else response status404 "The given user key is NOT blacklisted"
+    then throwE $ mkError status200 "blacklisted" "The given user key IS blacklisted"
+    else throwE $ mkError status404 "not-blacklisted" "The given user key is NOT blacklisted"
+
+addBlacklist :: EmailAddress -> Handler NoContent
+addBlacklist email = do
+  NoContent <$ Intra.setBlacklistStatus True email
+
+deleteFromBlacklist :: EmailAddress -> Handler NoContent
+deleteFromBlacklist email = do
+  NoContent <$ Intra.setBlacklistStatus False email
+
+getTeamInfoByMemberEmail :: EmailAddress -> Handler TeamInfo
+getTeamInfoByMemberEmail e = do
+  acc <- Intra.getUserProfilesByIdentity e >>= handleUser . listToMaybe
+  tid <- (Intra.getUserBindingTeam . userId $ acc) >>= handleTeam
+  Intra.getTeamInfo tid
   where
-    response st reason =
-      return
-        . setStatus st
-        . json
-        $ object ["status" .= (reason :: Text)]
+    handleUser = ifNothing (mkError status404 "no-user" "No such user with that email")
+    handleTeam = ifNothing (mkError status404 "no-binding-team" "No such binding team")
 
-addBlacklist :: Either Email Phone -> Handler Response
-addBlacklist emailOrPhone = do
-  Intra.setBlacklistStatus True emailOrPhone
-  return empty
+getTeamInfo :: TeamId -> Handler TeamInfo
+getTeamInfo = Intra.getTeamInfo
 
-deleteFromBlacklist :: Either Email Phone -> Handler Response
-deleteFromBlacklist emailOrPhone = do
-  Intra.setBlacklistStatus False emailOrPhone
-  return empty
+getTeamAdminInfo :: TeamId -> Handler TeamAdminInfo
+getTeamAdminInfo = fmap toAdminInfo . Intra.getTeamInfo
 
-getTeamInfo :: TeamId -> Handler Response
-getTeamInfo = liftM json . Intra.getTeamInfo
-
-getTeamAdminInfo :: TeamId -> Handler Response
-getTeamAdminInfo = liftM (json . toAdminInfo) . Intra.getTeamInfo
-
-getTeamFeatureFlagH ::
-  forall (a :: Public.TeamFeatureName).
-  ( Public.KnownTeamFeatureName a,
-    FromJSON (Public.TeamFeatureStatus a),
-    ToJSON (Public.TeamFeatureStatus a),
-    Typeable (Public.TeamFeatureStatus a)
-  ) =>
+mkFeatureGetRoute ::
+  forall cfg.
+  (IsFeatureConfig cfg, Typeable cfg) =>
   TeamId ->
-  Handler Response
-getTeamFeatureFlagH tid =
-  json <$> Intra.getTeamFeatureFlag @a tid
+  Handler (LockableFeature cfg)
+mkFeatureGetRoute = Intra.getTeamFeatureFlag @cfg
 
-setTeamFeatureFlagH ::
-  forall (a :: Public.TeamFeatureName).
-  ( Public.KnownTeamFeatureName a,
-    FromJSON (Public.TeamFeatureStatus a),
-    ToJSON (Public.TeamFeatureStatus a)
-  ) =>
-  TeamId ::: JsonRequest (Public.TeamFeatureStatus a) ::: JSON ->
-  Handler Response
-setTeamFeatureFlagH (tid ::: req ::: _) = do
-  status :: Public.TeamFeatureStatus a <- parseBody req !>> mkError status400 "client-error"
-  empty <$ Intra.setTeamFeatureFlag @a tid status
+mkFeaturePutRoute ::
+  forall cfg.
+  (IsFeatureConfig cfg) =>
+  TeamId ->
+  Feature cfg ->
+  Handler NoContent
+mkFeaturePutRoute tid payload = NoContent <$ Intra.setTeamFeatureFlag @cfg tid payload
 
-getTeamFeatureFlagNoConfigH ::
-  TeamId ::: Public.TeamFeatureName ->
-  Handler Response
-getTeamFeatureFlagNoConfigH (tid ::: featureName) =
-  json <$> Intra.getTeamFeatureFlagNoConfig tid featureName
+type MkFeaturePutConstraints cfg =
+  ( IsFeatureConfig cfg,
+    KnownSymbol (FeatureSymbol cfg),
+    ToSchema cfg,
+    FromJSON (Feature cfg),
+    ToJSON (Feature cfg),
+    Typeable cfg
+  )
 
-setTeamFeatureNoConfigFlagH ::
-  TeamId ::: Public.TeamFeatureName ::: Public.TeamFeatureStatusValue ->
-  Handler Response
-setTeamFeatureNoConfigFlagH (tid ::: featureName ::: statusValue) =
-  json <$> Intra.setTeamFeatureFlagNoConfig tid featureName statusValue
+mkFeaturePutRouteTrivialConfigNoTTL ::
+  forall cfg. (MkFeaturePutConstraints cfg) => TeamId -> FeatureStatus -> Handler NoContent
+mkFeaturePutRouteTrivialConfigNoTTL tid status = mkFeaturePutRouteTrivialConfig @cfg tid status Nothing
 
-setSearchVisibility :: JSON ::: TeamId ::: JsonRequest Team.TeamSearchVisibility -> Handler Response
-setSearchVisibility (_ ::: tid ::: req) = do
-  status :: Team.TeamSearchVisibility <- parseBody req !>> mkError status400 "client-error"
-  liftM json $ Intra.setSearchVisibility tid status
+mkFeatureLockUnlockRouteTrivialConfigNoTTL ::
+  forall cfg. (MkFeaturePutConstraints cfg) => TeamId -> LockStatus -> Handler NoContent
+mkFeatureLockUnlockRouteTrivialConfigNoTTL tid lstat = NoContent <$ Intra.setTeamFeatureLockStatus @cfg tid lstat
 
-getTeamBillingInfo :: TeamId -> Handler Response
+mkFeaturePutRouteTrivialConfigWithTTL ::
+  forall cfg. (MkFeaturePutConstraints cfg) => TeamId -> FeatureStatus -> FeatureTTLDays -> Handler NoContent
+mkFeaturePutRouteTrivialConfigWithTTL tid status = mkFeaturePutRouteTrivialConfig @cfg tid status . Just
+
+mkFeaturePutRouteTrivialConfig ::
+  forall cfg. (MkFeaturePutConstraints cfg) => TeamId -> FeatureStatus -> Maybe FeatureTTLDays -> Handler NoContent
+mkFeaturePutRouteTrivialConfig tid status _ = do
+  let patch = LockableFeaturePatch (Just status) Nothing Nothing
+  NoContent <$ Intra.patchTeamFeatureFlag @cfg tid patch
+
+getSearchVisibility :: TeamId -> Handler TeamSearchVisibilityView
+getSearchVisibility = Intra.getSearchVisibility
+
+setSearchVisibility :: TeamId -> TeamSearchVisibility -> Handler NoContent
+setSearchVisibility tid status = NoContent <$ Intra.setSearchVisibility tid status
+
+getTeamInvoice :: TeamId -> InvoiceId -> Handler Text
+getTeamInvoice tid iid = T.decodeUtf8With lenientDecode <$> Intra.getInvoiceUrl tid iid
+
+getTeamBillingInfo :: TeamId -> Handler TeamBillingInfo
 getTeamBillingInfo tid = do
-  ti <- Intra.getTeamBillingInfo tid
-  case ti of
-    Just t -> return $ json t
-    Nothing -> throwE (mkError status404 "no-team" "No team or no billing info for team")
+  let notfound = throwE (mkError status404 "no-team" "No team or no billing info for team")
+  Intra.getTeamBillingInfo tid >>= maybe notfound pure
 
-updateTeamBillingInfo :: JSON ::: TeamId ::: JsonRequest TeamBillingInfoUpdate -> Handler Response
-updateTeamBillingInfo (_ ::: tid ::: req) = do
-  update <- parseBody req !>> mkError status400 "client-error"
+updateTeamBillingInfo :: TeamId -> TeamBillingInfoUpdate -> Handler TeamBillingInfo
+updateTeamBillingInfo tid update = do
   current <- Intra.getTeamBillingInfo tid >>= handleNoTeam
   let changes = parse update current
   Intra.setTeamBillingInfo tid changes
-  liftM json $ Intra.getTeamBillingInfo tid
+  Intra.getTeamBillingInfo tid >>= handleNoTeam
   where
     handleNoTeam = ifNothing (mkError status404 "no-team" "No team or no billing info for team")
     parse :: TeamBillingInfoUpdate -> TeamBillingInfo -> TeamBillingInfo
     parse TeamBillingInfoUpdate {..} tbi =
       tbi
-        { tbiFirstname = fromMaybe (tbiFirstname tbi) (fromRange <$> tbiuFirstname),
-          tbiLastname = fromMaybe (tbiLastname tbi) (fromRange <$> tbiuLastname),
-          tbiStreet = fromMaybe (tbiStreet tbi) (fromRange <$> tbiuStreet),
-          tbiZip = fromMaybe (tbiZip tbi) (fromRange <$> tbiuZip),
-          tbiCity = fromMaybe (tbiCity tbi) (fromRange <$> tbiuCity),
-          tbiCountry = fromMaybe (tbiCountry tbi) (fromRange <$> tbiuCountry),
-          tbiCompany = (fromRange <$> tbiuCompany) <|> tbiCompany tbi,
-          tbiState = (fromRange <$> tbiuState) <|> tbiState tbi
+        { tbiFirstname = maybe (tbiFirstname tbi) fromRange tbiuFirstname,
+          tbiLastname = maybe (tbiLastname tbi) fromRange tbiuLastname,
+          tbiStreet = maybe (tbiStreet tbi) fromRange tbiuStreet,
+          tbiZip = maybe (tbiZip tbi) fromRange tbiuZip,
+          tbiCity = maybe (tbiCity tbi) fromRange tbiuCity,
+          tbiCountry = maybe (tbiCountry tbi) fromRange tbiuCountry,
+          tbiCompany = fromRange <$> tbiuCompany <|> tbiCompany tbi,
+          tbiState = fromRange <$> tbiuState <|> tbiState tbi
         }
 
-setTeamBillingInfo :: JSON ::: TeamId ::: JsonRequest TeamBillingInfo -> Handler Response
-setTeamBillingInfo (_ ::: tid ::: req) = do
-  billingInfo <- parseBody req !>> mkError status400 "client-error"
+setTeamBillingInfo :: TeamId -> TeamBillingInfo -> Handler TeamBillingInfo
+setTeamBillingInfo tid billingInfo = do
   current <- Intra.getTeamBillingInfo tid
   when (isJust current) $
     throwE (mkError status403 "existing-team" "Cannot set info on existing team, use update instead")
   Intra.setTeamBillingInfo tid billingInfo
   getTeamBillingInfo tid
 
-getTeamInfoByMemberEmail :: Email -> Handler Response
-getTeamInfoByMemberEmail e = do
-  acc <- (listToMaybe <$> Intra.getUserProfilesByIdentity (Left e)) >>= handleUser
-  tid <- (Intra.getUserBindingTeam . userId . accountUser $ acc) >>= handleTeam
-  liftM json $ Intra.getTeamInfo tid
-  where
-    handleUser = ifNothing (mkError status404 "no-user" "No such user with that email")
-    handleTeam = ifNothing (mkError status404 "no-binding-team" "No such binding team")
-
-getTeamInvoice :: TeamId ::: InvoiceId ::: JSON -> Handler Response
-getTeamInvoice (tid ::: iid ::: _) = do
-  url <- Intra.getInvoiceUrl tid iid
-  return $ plain (fromStrict url)
-
-getConsentLog :: Email -> Handler Response
+getConsentLog :: EmailAddress -> Handler ConsentLogAndMarketo
 getConsentLog e = do
-  acc <- (listToMaybe <$> Intra.getUserProfilesByIdentity (Left e))
+  acc <- listToMaybe <$> Intra.getUserProfilesByIdentity e
   when (isJust acc) $
     throwE $
       mkError status403 "user-exists" "Trying to access consent log of existing user!"
-  consentLog <- Intra.getEmailConsentLog e
-  marketo <- Intra.getMarketoResult e
-  return . json $
-    object
-      [ "consent_log" .= consentLog,
-        "marketo" .= marketo
-      ]
+  ConsentLogAndMarketo
+    <$> Intra.getEmailConsentLog e
+    <*> Intra.getMarketoResult e
 
--- TODO: This will be removed as soon as this is ported to another tool
-getUserData :: UserId -> Handler Response
-getUserData uid = do
-  account <- (listToMaybe <$> Intra.getUserProfiles (Left [uid])) >>= noSuchUser
+getUserData :: UserId -> Maybe Int -> Maybe Int -> Handler UserMetaInfo
+getUserData uid mMaxConvs mMaxNotifs = do
+  -- brig
+  account <- Intra.getUserProfiles (Left [uid]) >>= noSuchUser . listToMaybe
   conns <- Intra.getUserConnections uid
-  convs <- Intra.getUserConversations uid
   clts <- Intra.getUserClients uid
-  notfs <- Intra.getUserNotifications uid
-  consent <- Intra.getUserConsentValue uid
-  consentLog <- Intra.getUserConsentLog uid
   cookies <- Intra.getUserCookies uid
   properties <- Intra.getUserProperties uid
-  -- Get all info from Marketo too
-  let em = userEmail $ accountUser account
-  marketo <- maybe (return noEmail) Intra.getMarketoResult em
-  return . json $
-    object
-      [ "account" .= account,
-        "cookies" .= cookies,
-        "connections" .= conns,
-        "conversations" .= convs,
-        "clients" .= clts,
-        "notifications" .= notfs,
-        "consent" .= consent,
-        "consent_log" .= consentLog,
-        "marketo" .= marketo,
-        "properties" .= properties
-      ]
-  where
-    noEmail = MarketoResult $ M.singleton "results" emptyArray
+
+  -- galley
+  convs <- Intra.getUserConversations uid (fromMaybe 1 mMaxConvs)
+
+  -- gundeck
+  notfs <-
+    ( Intra.getUserNotifications uid (fromMaybe 100 mMaxNotifs)
+        <&> toJSON @[QueuedNotification]
+      )
+      `catchE` (pure . String . T.pack . show)
+
+  -- galeb
+  consent <-
+    (Intra.getUserConsentValue uid <&> toJSON @ConsentValue)
+      `catchE` (pure . String . T.pack . show)
+  consentLog <-
+    (Intra.getUserConsentLog uid <&> toJSON @ConsentLog)
+      `catchE` (pure . String . T.pack . show)
+  let em = userEmail account
+  marketo <- do
+    let noEmail = MarketoResult $ KeyMap.singleton "results" emptyArray
+    maybe
+      (pure $ toJSON noEmail)
+      ( \e ->
+          (Intra.getMarketoResult e <&> toJSON)
+            `catchE` (pure . String . T.pack . show)
+      )
+      em
+  pure . UserMetaInfo . KeyMap.fromList $
+    [ "account" .= account,
+      "cookies" .= cookies,
+      "connections" .= conns,
+      "conversations" .= convs,
+      "clients" .= clts,
+      "notifications" .= notfs,
+      "consent" .= consent,
+      "consent_log" .= consentLog,
+      "marketo" .= marketo,
+      "properties" .= properties
+    ]
 
 -- Utilities
 
-groupByStatus :: [UserConnection] -> Value
+instance (FromByteString a) => Servant.FromHttpApiData [a] where
+  parseUrlPiece =
+    maybe (Left "not a list of a's") (Right . fromList)
+      . fromByteString'
+      . fromStrict
+      . T.encodeUtf8
+
+groupByStatus :: [UserConnection] -> UserConnectionGroups
 groupByStatus conns =
-  object
-    [ "accepted" .= byStatus Accepted conns,
-      "sent" .= byStatus Sent conns,
-      "pending" .= byStatus Pending conns,
-      "blocked" .= byStatus Blocked conns,
-      "ignored" .= byStatus Ignored conns,
-      "missing-legalhold-consent" .= byStatus MissingLegalholdConsent conns,
-      "total" .= length conns
-    ]
+  UserConnectionGroups
+    { ucgAccepted = byStatus Accepted conns,
+      ucgSent = byStatus Sent conns,
+      ucgPending = byStatus Pending conns,
+      ucgBlocked = byStatus Blocked conns,
+      ucgIgnored = byStatus Ignored conns,
+      ucgMissingLegalholdConsent = byStatus MissingLegalholdConsent conns,
+      ucgTotal = length conns
+    }
   where
     byStatus :: Relation -> [UserConnection] -> Int
     byStatus s = length . filter ((==) s . ucStatus)
 
 ifNothing :: Error -> Maybe a -> Handler a
-ifNothing e = maybe (throwE e) return
+ifNothing e = maybe (throwE e) pure
 
 noSuchUser :: Maybe a -> Handler a
 noSuchUser = ifNothing (mkError status404 "no-user" "No such user")
-
-mkFeaturePutGetRoute ::
-  forall (a :: Public.TeamFeatureName).
-  ( Public.KnownTeamFeatureName a,
-    FromJSON (Public.TeamFeatureStatus a),
-    ToJSON (Public.TeamFeatureStatus a),
-    Typeable (Public.TeamFeatureStatus a)
-  ) =>
-  Routes Doc.ApiBuilder Handler ()
-mkFeaturePutGetRoute = do
-  let featureName = Public.knownTeamFeatureName @a
-
-  get ("/teams/:tid/features/" <> toByteString' featureName) (continue (getTeamFeatureFlagH @a)) $
-    capture "tid"
-  document "GET" "getTeamFeatureFlag" $ do
-    summary "Shows whether a feature flag is enabled or not for a given team."
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.returns (Doc.ref (Public.modelForTeamFeature featureName))
-    Doc.response 200 "Team feature flag status" Doc.end
-
-  put ("/teams/:tid/features/" <> toByteString' featureName) (continue (setTeamFeatureFlagH @a)) $
-    capture "tid"
-      .&. jsonRequest @(Public.TeamFeatureStatus a)
-      .&. accept "application" "json"
-  document "PUT" "setTeamFeatureFlag" $ do
-    summary "Disable / enable feature flag for a given team"
-    Doc.parameter Doc.Path "tid" Doc.bytes' $
-      description "Team ID"
-    Doc.body (Doc.ref (Public.modelForTeamFeature featureName)) $
-      Doc.description "JSON body"
-    Doc.response 200 "Team feature flag status" Doc.end

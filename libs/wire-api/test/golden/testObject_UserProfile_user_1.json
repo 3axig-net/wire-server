@@ -8,5 +8,9 @@
     "qualified_id": {
         "domain": "v.ay64d",
         "id": "00000002-0000-0001-0000-000000000000"
-    }
+    },
+    "supported_protocols": [
+        "proteus"
+    ],
+    "text_status": "text status"
 }

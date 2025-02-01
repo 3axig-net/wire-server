@@ -1,6 +1,10 @@
+-- Disabling to stop warnings on HasCallStack
+{-# LANGUAGE DeepSubsumption #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,166 +22,105 @@
 module API.Util.TeamFeature where
 
 import API.Util (HasGalley (viewGalley), zUser)
-import qualified API.Util as Util
+import API.Util qualified as Util
 import Bilge
-import qualified Bilge.TestSession as BilgeTest
-import Control.Lens (view, (.~))
-import Data.Aeson (ToJSON)
+import Control.Lens ((%~))
 import Data.ByteString.Conversion (toByteString')
-import Data.Id (TeamId, UserId)
-import Galley.Options (optSettings, setFeatureFlags)
+import Data.Id (ConvId, TeamId, UserId)
+import Galley.Options (featureFlags, settings)
 import Galley.Types.Teams
 import Imports
 import TestSetup
-import qualified Wire.API.Team.Feature as Public
+import Wire.API.Team.Feature
 
-withCustomSearchFeature :: FeatureTeamSearchVisibility -> BilgeTest.SessionT TestM () -> TestM ()
+withCustomSearchFeature :: FeatureDefaults SearchVisibilityAvailableConfig -> TestM () -> TestM ()
 withCustomSearchFeature flag action = do
-  opts <- view tsGConf
-  let opts' = opts & optSettings . setFeatureFlags . flagTeamSearchVisibility .~ flag
-  Util.withSettingsOverrides opts' action
-
-getTeamSearchVisibilityAvailable :: HasCallStack => (Request -> Request) -> UserId -> TeamId -> (MonadIO m, MonadHttp m) => m ResponseLBS
-getTeamSearchVisibilityAvailable = getTeamFeatureFlagWithGalley Public.TeamFeatureSearchVisibility
-
-getTeamSearchVisibilityAvailableInternal :: HasCallStack => (Request -> Request) -> TeamId -> (MonadIO m, MonadHttp m) => m ResponseLBS
-getTeamSearchVisibilityAvailableInternal =
-  getTeamFeatureFlagInternalWithGalley Public.TeamFeatureSearchVisibility
+  Util.withSettingsOverrides
+    ( \opts ->
+        opts & settings . featureFlags %~ npUpdate @SearchVisibilityAvailableConfig flag
+    )
+    action
 
 putTeamSearchVisibilityAvailableInternal ::
-  HasCallStack =>
-  (Request -> Request) ->
+  (HasCallStack) =>
   TeamId ->
-  Public.TeamFeatureStatusValue ->
-  (MonadIO m, MonadHttp m) => m ()
-putTeamSearchVisibilityAvailableInternal g tid statusValue =
-  putTeamFeatureFlagInternalWithGalleyAndMod
-    @'Public.TeamFeatureSearchVisibility
-    g
-    expect2xx
-    tid
-    (Public.TeamFeatureStatusNoConfig statusValue)
+  FeatureStatus ->
+  (MonadIO m, MonadHttp m, HasGalley m) => m ()
+putTeamSearchVisibilityAvailableInternal tid statusValue =
+  void $
+    putTeamFeatureInternal
+      @SearchVisibilityAvailableConfig
+      expect2xx
+      tid
+      (Feature statusValue SearchVisibilityAvailableConfig)
 
-putLegalHoldEnabledInternal' ::
-  HasCallStack =>
-  (Request -> Request) ->
-  TeamId ->
-  Public.TeamFeatureStatusValue ->
-  TestM ()
-putLegalHoldEnabledInternal' g tid statusValue =
-  putTeamFeatureFlagInternal @'Public.TeamFeatureLegalHold g tid (Public.TeamFeatureStatusNoConfig statusValue)
-
---------------------------------------------------------------------------------
-
-getTeamFeatureFlagInternal ::
-  (HasGalley m, MonadIO m, MonadHttp m) =>
-  Public.TeamFeatureName ->
-  TeamId ->
-  m ResponseLBS
-getTeamFeatureFlagInternal feature tid = do
-  g <- viewGalley
-  getTeamFeatureFlagInternalWithGalley feature g tid
-
-getTeamFeatureFlagInternalWithGalley :: (MonadIO m, MonadHttp m, HasCallStack) => Public.TeamFeatureName -> (Request -> Request) -> TeamId -> m ResponseLBS
-getTeamFeatureFlagInternalWithGalley feature g tid = do
-  get $
-    g
-      . paths ["i", "teams", toByteString' tid, "features", toByteString' feature]
-
-getTeamFeatureFlag ::
-  (HasGalley m, MonadIO m, MonadHttp m, HasCallStack) =>
-  Public.TeamFeatureName ->
-  UserId ->
-  TeamId ->
-  m ResponseLBS
-getTeamFeatureFlag feature uid tid = do
-  g <- viewGalley
-  getTeamFeatureFlagWithGalley feature g uid tid
-
-getAllTeamFeatures ::
-  (HasCallStack, HasGalley m, MonadIO m, MonadHttp m) =>
-  UserId ->
-  TeamId ->
-  m ResponseLBS
-getAllTeamFeatures uid tid = do
-  g <- viewGalley
-  get $
-    g
-      . paths ["teams", toByteString' tid, "features"]
-      . zUser uid
-
-getAllTeamFeaturesPersonal ::
-  (HasCallStack, HasGalley m, MonadIO m, MonadHttp m) =>
-  UserId ->
-  m ResponseLBS
-getAllTeamFeaturesPersonal uid = do
-  g <- viewGalley
-  get $
-    g
-      . paths ["feature-configs"]
-      . zUser uid
-
-getTeamFeatureFlagWithGalley :: (MonadIO m, MonadHttp m, HasCallStack) => Public.TeamFeatureName -> (Request -> Request) -> UserId -> TeamId -> m ResponseLBS
-getTeamFeatureFlagWithGalley feature galley uid tid = do
-  get $
-    galley
-      . paths ["teams", toByteString' tid, "features", toByteString' feature]
-      . zUser uid
-
-getFeatureConfig :: (HasCallStack, HasGalley m, MonadIO m, MonadHttp m) => Public.TeamFeatureName -> UserId -> m ResponseLBS
-getFeatureConfig feature uid = do
-  g <- viewGalley
-  getFeatureConfigWithGalley feature g uid
-
-getFeatureConfigWithGalley :: (MonadIO m, MonadHttp m, HasCallStack) => Public.TeamFeatureName -> (Request -> Request) -> UserId -> m ResponseLBS
-getFeatureConfigWithGalley feature galley uid = do
-  get $
-    galley
-      . paths ["feature-configs", toByteString' feature]
-      . zUser uid
-
-getAllFeatureConfigs :: HasCallStack => UserId -> TestM ResponseLBS
-getAllFeatureConfigs uid = do
-  g <- view tsGalley
-  getAllFeatureConfigsWithGalley g uid
-
-getAllFeatureConfigsWithGalley :: (MonadIO m, MonadHttp m, HasCallStack) => (Request -> Request) -> UserId -> m ResponseLBS
-getAllFeatureConfigsWithGalley galley uid = do
-  get $
-    galley
-      . paths ["feature-configs"]
-      . zUser uid
-
-putTeamFeatureFlagInternal ::
-  forall (a :: Public.TeamFeatureName).
-  ( HasCallStack,
-    Public.KnownTeamFeatureName a,
-    ToJSON (Public.TeamFeatureStatus a)
-  ) =>
-  (Request -> Request) ->
-  TeamId ->
-  (Public.TeamFeatureStatus a) ->
-  TestM ()
-putTeamFeatureFlagInternal reqmod tid status = do
-  g <- view tsGalley
-  putTeamFeatureFlagInternalWithGalleyAndMod @a g reqmod tid status
-
-putTeamFeatureFlagInternalWithGalleyAndMod ::
-  forall (a :: Public.TeamFeatureName) m.
-  ( MonadIO m,
+putTeamFeatureInternal ::
+  forall cfg m.
+  ( Monad m,
+    HasGalley m,
     MonadHttp m,
     HasCallStack,
-    Public.KnownTeamFeatureName a,
-    ToJSON (Public.TeamFeatureStatus a)
+    IsFeatureConfig cfg
   ) =>
   (Request -> Request) ->
-  (Request -> Request) ->
   TeamId ->
-  (Public.TeamFeatureStatus a) ->
-  m ()
-putTeamFeatureFlagInternalWithGalleyAndMod galley reqmod tid status =
-  void . put $
+  Feature cfg ->
+  m ResponseLBS
+putTeamFeatureInternal reqmod tid status = do
+  galley <- viewGalley
+  put $
     galley
-      . paths ["i", "teams", toByteString' tid, "features", toByteString' (Public.knownTeamFeatureName @a)]
+      . paths ["i", "teams", toByteString' tid, "features", featureNameBS @cfg]
       . json status
       . reqmod
+
+putTeamFeature ::
+  forall cfg.
+  (HasCallStack, IsFeatureConfig cfg) =>
+  UserId ->
+  TeamId ->
+  Feature cfg ->
+  TestM ResponseLBS
+putTeamFeature uid tid status = do
+  galley <- viewGalley
+  put $
+    galley
+      . paths ["teams", toByteString' tid, "features", featureNameBS @cfg]
+      . json status
+      . zUser uid
+
+getGuestLinkStatus ::
+  (HasCallStack) =>
+  (Request -> Request) ->
+  UserId ->
+  ConvId ->
+  TestM ResponseLBS
+getGuestLinkStatus galley u cid =
+  get $
+    galley
+      . paths ["conversations", toByteString' cid, "features", featureNameBS @GuestLinksConfig]
+      . zUser u
+
+getTeamFeatureInternal ::
+  forall cfg m.
+  (HasGalley m, MonadIO m, MonadHttp m, IsFeatureConfig cfg) =>
+  TeamId ->
+  m ResponseLBS
+getTeamFeatureInternal tid = do
+  g <- viewGalley
+  get $
+    g
+      . paths ["i", "teams", toByteString' tid, "features", featureNameBS @cfg]
+
+getTeamFeature ::
+  forall cfg m.
+  (HasGalley m, MonadIO m, MonadHttp m, HasCallStack, IsFeatureConfig cfg) =>
+  UserId ->
+  TeamId ->
+  m ResponseLBS
+getTeamFeature uid tid = do
+  galley <- viewGalley
+  get $
+    galley
+      . paths ["teams", toByteString' tid, "features", featureNameBS @cfg]
+      . zUser uid

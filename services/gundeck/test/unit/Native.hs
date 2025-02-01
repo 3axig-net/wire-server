@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,22 +17,22 @@
 
 module Native where
 
+import Amazonka (Region (Ireland))
 import Control.Lens ((^.))
 import Data.Aeson
-import qualified Data.HashMap.Strict as HashMap
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Id (ClientId (..), ConnId (..), UserId, randomId)
-import qualified Data.List1 as List1
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
-import qualified Data.Text.Lazy.Encoding as LT
+import Data.List1 qualified as List1
+import Data.Text qualified as T
+import Data.Text.Encoding qualified as T
+import Data.Text.Lazy.Encoding qualified as LT
 import Gundeck.Push.Native.Serialise
 import Gundeck.Push.Native.Types
-import Gundeck.Types.Notification
-import Gundeck.Types.Push
 import Imports
-import Network.AWS (Region (Ireland))
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Wire.API.Internal.Notification
+import Wire.API.Push.V2
 
 tests :: TestTree
 tests =
@@ -49,14 +49,14 @@ serialiseOkProp t = ioProperty $ do
   a <- mkAddress t
   n <- randNotif (0, 1280)
   m <- randMessage n
-  r <- serialise m (a ^. addrUser) (a ^. addrTransport)
+  let r = serialise m (a ^. addrUser) (a ^. addrTransport)
   let sn = either (const Nothing) Just r >>= decode' . LT.encodeUtf8
   let equalTransport = fmap snsNotifTransport sn == Just t
   equalNotif <- case snsNotifBundle <$> sn of
-    Nothing -> return False
-    Just (NoticeBundle n') -> return $ ntfId n == n'
+    Nothing -> pure False
+    Just (NoticeBundle n') -> pure $ ntfId n == n'
   let debugInfo = (t, a, n, r, sn, equalTransport, equalNotif)
-  return . counterexample (show debugInfo) $ equalTransport && equalNotif
+  pure . counterexample (show debugInfo) $ equalTransport && equalNotif
 
 -----------------------------------------------------------------------------
 -- Types
@@ -69,7 +69,7 @@ data SnsNotification = SnsNotification
 
 instance FromJSON SnsNotification where
   parseJSON = withObject "SnsNotification" $ \o ->
-    case HashMap.toList o of
+    case KeyMap.toList o of
       [("GCM", String n)] -> parseGcm n
       [("APNS", String n)] -> parseApns APNS n
       [("APNS_SANDBOX", String n)] -> parseApns APNSSandbox n
@@ -79,10 +79,10 @@ instance FromJSON SnsNotification where
     where
       parseApns t n =
         let apn = decodeStrict' (T.encodeUtf8 n)
-         in maybe mempty (pure . SnsNotification t . SnsApnsData) apn
+         in foldMap (pure . SnsNotification t . SnsApnsData) apn
       parseGcm n =
         let gcm = decodeStrict' (T.encodeUtf8 n)
-         in maybe mempty (pure . SnsNotification GCM . SnsGcmData) gcm
+         in foldMap (pure . SnsNotification GCM . SnsGcmData) gcm
 
 data SnsData
   = SnsGcmData !GcmData
@@ -102,7 +102,8 @@ data GcmData = GcmData
 
 instance FromJSON GcmData where
   parseJSON = withObject "GcmData" $ \o ->
-    GcmData <$> o .: "priority"
+    GcmData
+      <$> o .: "priority"
       <*> o .: "data"
 
 data ApnsData = ApnsData
@@ -113,7 +114,8 @@ data ApnsData = ApnsData
 
 instance FromJSON ApnsData where
   parseJSON = withObject "ApnsData" $ \o ->
-    ApnsData <$> o .: "aps"
+    ApnsData
+      <$> o .: "aps"
       <*> o .: "data"
 
 newtype Bundle = NoticeBundle NotificationId
@@ -121,8 +123,8 @@ newtype Bundle = NoticeBundle NotificationId
 
 instance FromJSON Bundle where
   parseJSON = withObject "Bundle" $ \o ->
-    case HashMap.lookup "type" o of
-      Just (String "notice") -> case HashMap.lookup "data" o of
+    case KeyMap.lookup "type" o of
+      Just (String "notice") -> case KeyMap.lookup "data" o of
         Just (Object o') -> NoticeBundle <$> o' .: "id"
         _ -> mempty
       _ -> mempty
@@ -149,7 +151,7 @@ randNotif size = do
   generate $ do
     l <- choose size
     v <- T.pack <$> vectorOf l (elements ['a' .. 'z'])
-    let pload = List1.singleton (HashMap.fromList ["data" .= v])
+    let pload = List1.singleton (KeyMap.fromList ["data" .= v])
     Notification i <$> arbitrary <*> pure pload
 
 randMessage :: Notification -> IO NativePush
@@ -164,7 +166,7 @@ mkAddress t =
     <$> randomId
     <*> pure (mkEndpoint t (AppName "test"))
     <*> pure (ConnId "conn")
-    <*> pure (pushToken t (AppName "test") (Token "test") (ClientId "client"))
+    <*> pure (pushToken t (AppName "test") (Token "test") (ClientId 0x392c82a0f))
 
 mkEndpoint :: Transport -> AppName -> EndpointArn
 mkEndpoint t a = mkSnsArn Ireland (Account "test") topic

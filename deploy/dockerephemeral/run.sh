@@ -1,20 +1,37 @@
 #!/usr/bin/env bash
 
+# To start the federation v0, v1 backends, set ENABLE_FEDERATION_V0=1, ENABLE_FEDERATION_V1=1
+# in the env where this script is run
+
+set -e
+
 # run.sh should work no matter what is the current directory
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKER_FILE="$SCRIPT_DIR/docker-compose.yaml"
+FED_VERSIONS=(0 1)
 
-# If there are schema changes and you don't force pull the docker
-# migrations, you may run out of sync and you would get this error
-# message (or a similar one):
-#
-#     brig: Schema Version too old! Expecting at least: 49, but got: 48
-#
-# So we always pull these migration images first.
-docker pull quay.io/wire/brig-schema
-docker pull quay.io/wire/galley-schema
-docker pull quay.io/wire/gundeck-schema
-docker pull quay.io/wire/spar-schema
-docker pull quay.io/wire/brig-index
+opts=("--file" "$DOCKER_FILE")
+for v in "${FED_VERSIONS[@]}"; do
+  var="ENABLE_FEDERATION_V$v"
+  if [[ "${!var}" == 1 ]]; then
+    opts+=("--file" "$SCRIPT_DIR/federation-v$v.yaml")
+  fi
+done
 
-docker-compose --file "$DOCKER_FILE" up
+dc() {
+  docker-compose "${opts[@]}" "$@"
+}
+
+cleanup() {
+  dc down
+}
+
+if [ -z "$1" ]; then
+  dc up -d
+  trap cleanup EXIT
+  echo "All Services started successfully, press Ctrl+C to stop them"
+  # Wait for something to kill this
+  sleep infinity
+else
+  dc "$@"
+fi

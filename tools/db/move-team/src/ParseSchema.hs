@@ -5,7 +5,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,11 +23,11 @@
 module ParseSchema where
 
 import Data.Aeson (ToJSON, object, (.=))
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
-import qualified Data.Text.Lazy.IO as TIO
+import Data.Text qualified as T
+import Data.Text.IO qualified as T
+import Data.Text.Lazy.IO qualified as TIO
 import Imports
-import qualified Options.Applicative as OA
+import Options.Applicative qualified as OA
 import System.Environment (withArgs)
 import System.Exit (exitFailure)
 import System.FilePath ((</>))
@@ -36,7 +36,7 @@ import System.IO (Handle)
 import System.Process (system)
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import qualified Text.Megaparsec.Char.Lexer as L
+import Text.Megaparsec.Char.Lexer qualified as L
 import Text.Mustache
 import Text.RawString.QQ
 
@@ -113,7 +113,7 @@ createTable = do
     betweenBrackets $
       catMaybes
         <$> ((Just <$> column) <|> (Nothing <$ primaryKeyAtEndOfColumns))
-        `sepBy` lexeme ","
+          `sepBy` lexeme ","
   noise
   pure (CreateTable ks tn cols)
 
@@ -167,14 +167,14 @@ argParser :: OA.Parser Arguments
 argParser =
   Arguments
     <$> OA.argument OA.str (OA.metavar "SCHEMA_FILE")
-    <*> ( optional $
-            OA.strOption
-              ( OA.long "output"
-                  <> OA.short 'o'
-                  <> OA.metavar "FILE"
-                  <> OA.help "Write output to FILE"
-              )
-        )
+    <*> optional
+      ( OA.strOption
+          ( OA.long "output"
+              <> OA.short 'o'
+              <> OA.metavar "FILE"
+              <> OA.help "Write output to FILE"
+          )
+      )
 
 moduleTemplate :: Text
 moduleTemplate =
@@ -377,11 +377,6 @@ main = do
                        --   PRIMARY KEY (key :: text) (Brig.Data.UserKey)
                        --   FUTUREWORK: do we need it?  can we do better than a full table scan?
                        mkChunk' "brig" "user_keys" "[Int32]" "keys" "key in ?",
-                       -- brig.user_keys_hash
-                       --   FUTUREWORK: do we need it?
-                       --   can we do better than a full table scan?
-                       --   mkChunk' "brig" "user_keys_hash" "[UserKeyHash]" "keys" "key in ?"
-                       mkChunk' "brig" "user_keys_hash" "[Int32]" "keys" "key in ?",
                        -- brig.vcodes
                        -- galley.billing_team_member
                        --   PRIMARY KEY (team, user)
@@ -483,12 +478,12 @@ projectFile relativeFilename =
 
 debug :: IO ()
 debug = do
-  cassandraSchema <- projectFile "docs/reference/cassandra-schema.cql"
+  cassandraSchema <- projectFile "cassandra-schema.cql"
   withArgs [cassandraSchema] main
 
 debugwrite :: IO ()
 debugwrite = do
-  cassandraSchema <- projectFile "docs/reference/cassandra-schema.cql"
+  cassandraSchema <- projectFile "cassandra-schema.cql"
   outputFile <- projectFile "tools/db/move-team/src/Schema.hs"
   withArgs [cassandraSchema, "--output=" <> outputFile] main
 

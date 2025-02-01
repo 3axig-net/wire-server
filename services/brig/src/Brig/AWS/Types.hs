@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,16 +22,16 @@ module Brig.AWS.Types
   )
 where
 
-import Brig.Types (Email (..))
 import Data.Aeson
+import Data.Mailbox
 import Imports
 
 -------------------------------------------------------------------------------
 -- Notifications
 
 data SESNotification
-  = MailBounce !SESBounceType [Email]
-  | MailComplaint [Email]
+  = MailBounce !SESBounceType [Mailbox]
+  | MailComplaint [Mailbox]
   deriving (Eq, Show)
 
 data SESBounceType
@@ -41,9 +41,9 @@ data SESBounceType
   deriving (Eq, Show)
 
 instance FromJSON SESBounceType where
-  parseJSON "Undetermined" = return BounceUndetermined
-  parseJSON "Permanent" = return BouncePermanent
-  parseJSON "Transient" = return BounceTransient
+  parseJSON "Undetermined" = pure BounceUndetermined
+  parseJSON "Permanent" = pure BouncePermanent
+  parseJSON "Transient" = pure BounceTransient
   parseJSON x = fail $ "Unknown type: " <> show x
 
 instance FromJSON SESNotification where
@@ -55,10 +55,10 @@ instance FromJSON SESNotification where
         bt <- b .: "bounceType"
         br <- b .: "bouncedRecipients"
         em <- mapM (\r -> r .: "emailAddress") br
-        return $! MailBounce bt em
+        pure $! MailBounce bt em
       "Complaint" -> do
         c <- o .: "complaint"
         cr <- c .: "complainedRecipients"
         em <- mapM (\r -> r .: "emailAddress") cr
-        return $! MailComplaint em
+        pure $! MailComplaint em
       x -> fail ("Brig.AWS: Unexpected notification type" ++ show x)

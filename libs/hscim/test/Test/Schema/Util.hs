@@ -1,8 +1,11 @@
 {-# LANGUAGE QuasiQuotes #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use camelCase" #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,10 +28,13 @@ module Test.Schema.Util
 where
 
 import Data.Aeson
-import qualified Data.HashMap.Strict as HM
+import qualified Data.Aeson.Key as Key
+import Data.Aeson.KeyMap as KeyMap
+import Data.Foldable.WithIndex (ifoldl')
 import Data.Text (Text, toCaseFold, toLower, toUpper)
 import Hedgehog
 import Hedgehog.Gen as Gen
+import Lens.Micro (over)
 import Network.URI.Static
 import Web.Scim.Schema.Common (URI (..))
 
@@ -47,9 +53,12 @@ mk_prop_caseInsensitive gen = property $ do
   where
     withCasing :: (Text -> Text) -> Value -> Value
     withCasing toCasing = \case
-      Object obj -> Object $ HM.foldlWithKey' (\u k v -> HM.insert (toCasing k) (withCasing toCasing v) u) HM.empty obj
+      Object obj -> Object $ ifoldl' (\k u v -> KeyMap.insert (over keyTextL toCasing k) (withCasing toCasing v) u) KeyMap.empty obj
       Array arr -> Array $ withCasing toCasing <$> arr
       same@(Number _) -> same
       same@(String _) -> same
       same@(Bool _) -> same
       same@Null -> same
+
+keyTextL :: (Functor f) => (Text -> f Text) -> Key -> f Key
+keyTextL f key = fmap Key.fromText (f (Key.toText key))

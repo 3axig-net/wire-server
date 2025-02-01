@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,26 +19,38 @@ module Test.Wire.API.Federation.Golden.GoldenSpec where
 
 import Imports
 import Test.Hspec
-import qualified Test.Wire.API.Federation.Golden.ConversationUpdate as ConversationUpdate
-import qualified Test.Wire.API.Federation.Golden.LeaveConversationRequest as LeaveConversationRequest
-import qualified Test.Wire.API.Federation.Golden.LeaveConversationResponse as LeaveConversationResponse
-import qualified Test.Wire.API.Federation.Golden.MessageSendResponse as MessageSendResponse
-import qualified Test.Wire.API.Federation.Golden.NewConnectionRequest as NewConnectionRequest
-import qualified Test.Wire.API.Federation.Golden.NewConnectionResponse as NewConnectionResponse
-import qualified Test.Wire.API.Federation.Golden.NewRemoteConversation as NewRemoteConversation
+import Test.Wire.API.Federation.Golden.ConversationCreated qualified as ConversationCreated
+import Test.Wire.API.Federation.Golden.ConversationUpdate qualified as ConversationUpdate
+import Test.Wire.API.Federation.Golden.GetOne2OneConversationResponse qualified as GetOne2OneConversationResponse
+import Test.Wire.API.Federation.Golden.LeaveConversationRequest qualified as LeaveConversationRequest
+import Test.Wire.API.Federation.Golden.LeaveConversationResponse qualified as LeaveConversationResponse
+import Test.Wire.API.Federation.Golden.MLSMessageSendingStatus qualified as MLSMessageSendingStatus
+import Test.Wire.API.Federation.Golden.MessageSendResponse qualified as MessageSendResponse
+import Test.Wire.API.Federation.Golden.NewConnectionRequest qualified as NewConnectionRequest
+import Test.Wire.API.Federation.Golden.NewConnectionResponse qualified as NewConnectionResponse
 import Test.Wire.API.Federation.Golden.Runner (testObjects)
 
 spec :: Spec
 spec =
   describe "Golden tests" $ do
     testObjects
-      [ (MessageSendResponse.testObject_MessageSendReponse1, "testObject_MessageSendReponse1.json"),
-        (MessageSendResponse.testObject_MessageSendReponse2, "testObject_MessageSendReponse2.json"),
-        (MessageSendResponse.testObject_MessageSendReponse3, "testObject_MessageSendReponse3.json"),
-        (MessageSendResponse.testObject_MessageSendReponse4, "testObject_MessageSendReponse4.json"),
-        (MessageSendResponse.testObject_MessageSendReponse5, "testObject_MessageSendReponse5.json")
+      [ (MessageSendResponse.testObject_MessageSendResponse1, "testObject_MessageSendResponse1.json"),
+        (MessageSendResponse.testObject_MessageSendResponse2, "testObject_MessageSendResponse2.json"),
+        (MessageSendResponse.testObject_MessageSendResponse3, "testObject_MessageSendResponse3.json"),
+        (MessageSendResponse.testObject_MessageSendResponse4, "testObject_MessageSendResponse4.json"),
+        (MessageSendResponse.testObject_MessageSendResponse5, "testObject_MessageSendResponse5.json"),
+        (MessageSendResponse.testObject_MessageSendResponse6, "testObject_MessageSendResponse6.json")
+      ]
+    testObjects
+      [ (MLSMessageSendingStatus.testObject_MLSMessageSendingStatus1, "testObject_MLSMessageSendingStatus1.json"),
+        (MLSMessageSendingStatus.testObject_MLSMessageSendingStatus2, "testObject_MLSMessageSendingStatus2.json"),
+        (MLSMessageSendingStatus.testObject_MLSMessageSendingStatus3, "testObject_MLSMessageSendingStatus3.json")
       ]
     testObjects [(LeaveConversationRequest.testObject_LeaveConversationRequest1, "testObject_LeaveConversationRequest1.json")]
+    testObjects
+      [ (ConversationUpdate.testObject_ConversationUpdate1V0, "testObject_ConversationUpdate1V0.json"),
+        (ConversationUpdate.testObject_ConversationUpdate2V0, "testObject_ConversationUpdate2V0.json")
+      ]
     testObjects
       [ (ConversationUpdate.testObject_ConversationUpdate1, "testObject_ConversationUpdate1.json"),
         (ConversationUpdate.testObject_ConversationUpdate2, "testObject_ConversationUpdate2.json")
@@ -60,6 +72,16 @@ spec =
         (NewConnectionResponse.testObject_NewConnectionResponse4, "testObject_NewConnectionResponse4.json")
       ]
     testObjects
-      [ (NewRemoteConversation.testObject_NewRemoteConversation1, "testObject_NewRemoteConversation1.json"),
-        (NewRemoteConversation.testObject_NewRemoteConversation2, "testObject_NewRemoteConversation2.json")
+      [ (ConversationCreated.testObject_ConversationCreated1, "testObject_ConversationCreated1.json"),
+        (ConversationCreated.testObject_ConversationCreated2, "testObject_ConversationCreated2.json")
+      ]
+    testObjects
+      [ (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseV2Ok, "testObject_GetOne2OneConversationResponseV2Ok.json"),
+        (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseV2BackendMismatch, "testObject_GetOne2OneConversationResponseV2BackendMismatch.json"),
+        (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseV2NotConnected, "testObject_GetOne2OneConversationResponseV2NotConnected.json")
+      ]
+    testObjects
+      [ (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseOk, "testObject_GetOne2OneConversationResponseOk.json"),
+        (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseBackendMismatch, "testObject_GetOne2OneConversationResponseBackendMismatch.json"),
+        (GetOne2OneConversationResponse.testObject_GetOne2OneConversationResponseNotConnected, "testObject_GetOne2OneConversationResponseNotConnected.json")
       ]

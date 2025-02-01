@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,13 +24,13 @@ import Bilge.RPC
 import Cassandra
 import Control.Lens
 import Control.Monad.Catch
-import Control.Monad.Except
 import Galley.Env
 import Imports hiding (log)
 import Polysemy
 import Polysemy.Input
+import Prometheus
 import System.Logger
-import qualified System.Logger.Class as LC
+import System.Logger.Class qualified as LC
 
 newtype App a = App {unApp :: ReaderT Env IO a}
   deriving
@@ -42,7 +42,8 @@ newtype App a = App {unApp :: ReaderT Env IO a}
       MonadMask,
       MonadReader Env,
       MonadThrow,
-      MonadUnliftIO
+      MonadUnliftIO,
+      MonadMonitor
     )
 
 runApp :: Env -> App a -> IO a
@@ -68,7 +69,9 @@ instance LC.MonadLogger App where
     log (env ^. applog) lvl (reqIdMsg (env ^. reqId) . m)
 
 embedApp ::
-  Members '[Embed IO, Input Env] r =>
+  ( Member (Embed IO) r,
+    Member (Input Env) r
+  ) =>
   App a ->
   Sem r a
 embedApp action = do

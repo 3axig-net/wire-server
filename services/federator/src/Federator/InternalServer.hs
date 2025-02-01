@@ -1,9 +1,9 @@
 {-# LANGUAGE PartialTypeSignatures #-}
-{-# OPTIONS_GHC -Wno-partial-type-signatures -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,112 +20,116 @@
 
 module Federator.InternalServer where
 
-import Control.Exception (bracketOnError)
-import qualified Control.Exception as E
-import Control.Lens (view)
 import Data.Binary.Builder
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as C8
-import qualified Data.ByteString.Lazy as LBS
-import Data.Default
-import Data.Domain (domainText)
-import Data.Either.Validation (Validation (..))
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import Data.X509.CertificateStore
-import Federator.App (runAppT)
-import Federator.Discovery (DiscoverFederator, DiscoveryFailure (DiscoveryFailureDNSError, DiscoveryFailureSrvNotAvailable), runFederatorDiscovery)
-import Federator.Env (Env, TLSSettings, applog, caStore, dnsResolver, runSettings, tls)
+import Data.ByteString qualified as BS
+import Data.Domain
+import Federator.Env
 import Federator.Error.ServerError
-import Federator.Options (RunSettings)
+import Federator.Health qualified as Health
+import Federator.Interpreter
+import Federator.Metrics (Metrics, outgoingCounterIncr)
+import Federator.RPC
 import Federator.Remote
 import Federator.Response
 import Federator.Validation
-import Foreign (mallocBytes)
-import Foreign.Marshal (free)
 import Imports
-import Network.HPACK (BufferSize)
-import Network.HTTP.Client.Internal (openSocketConnection)
-import Network.HTTP.Client.OpenSSL (withOpenSSL)
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.HTTP2.Client as HTTP2
-import Network.Socket (Socket)
-import qualified Network.Socket as NS
-import Network.TLS
-import qualified Network.TLS as TLS
-import qualified Network.TLS.Extra.Cipher as TLS
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Handler.Warp as Warp
+import Network.HTTP.Client (Manager)
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
 import Polysemy
 import Polysemy.Error
-import qualified Polysemy.Error as Polysemy
-import Polysemy.IO (embedToMonadIO)
 import Polysemy.Input
-import qualified Polysemy.Input as Polysemy
-import qualified Polysemy.Resource as Polysemy
-import Polysemy.TinyLog (TinyLog)
-import qualified Polysemy.TinyLog as Log
-import qualified System.TimeManager as T
-import qualified System.X509 as TLS
+import Polysemy.TinyLog
+import Servant qualified
+import Servant.API
+import Servant.API.Extended.Endpath
+import Servant.API.Extended.RawM qualified as RawM
+import Servant.Server.Generic
+import System.Logger.Class qualified as Log
 import Wire.API.Federation.Component
-import Wire.Network.DNS.Effect (DNSLookup)
-import qualified Wire.Network.DNS.Effect as Lookup
-import Wire.Network.DNS.SRV (SrvTarget (..))
+import Wire.API.Routes.FederationDomainConfig
 
-data RequestData = RequestData
-  { rdTargetDomain :: Text,
-    rdComponent :: Component,
-    rdRPC :: Text,
-    rdHeaders :: [HTTP.Header],
-    rdBody :: LByteString
+data API mode = API
+  { status ::
+      mode
+        :- "i"
+          :> "status"
+          -- When specified only returns status of the internal service,
+          -- otherwise ensures that the external service is also up.
+          :> QueryFlag "standalone"
+          :> Get '[PlainText] NoContent,
+    internalRequest ::
+      mode
+        :- "rpc"
+          :> Capture "domain" Domain
+          :> Capture "component" Component
+          :> Capture "rpc" RPC
+          :> Endpath
+          -- We need to use 'RawM' so we can stream request body regardless of
+          -- content-type and send a response with arbitrary content-type.
+          :> RawM.RawM
   }
+  deriving (Generic)
 
-parseRequestData ::
-  Members '[Error ServerError, Embed IO] r =>
+server ::
+  ( Member Remote r,
+    Member (Embed IO) r,
+    Member (Error ValidationError) r,
+    Member (Error ServerError) r,
+    Member (Input FederationDomainConfigs) r,
+    Member Metrics r,
+    Member (Logger (Log.Msg -> Log.Msg)) r,
+    Member (Error Servant.ServerError) r
+  ) =>
+  Manager ->
+  Word16 ->
+  API (AsServerT (Sem r))
+server mgr extPort =
+  API
+    { status = Health.status mgr "external server" extPort,
+      internalRequest = callOutward
+    }
+
+callOutward ::
+  ( Member Remote r,
+    Member (Embed IO) r,
+    Member (Error ValidationError) r,
+    Member (Error ServerError) r,
+    Member (Input FederationDomainConfigs) r,
+    Member Metrics r,
+    Member (Logger (Log.Msg -> Log.Msg)) r
+  ) =>
+  Domain ->
+  Component ->
+  RPC ->
   Wai.Request ->
-  Sem r RequestData
-parseRequestData req = do
+  (Wai.Response -> IO Wai.ResponseReceived) ->
+  Sem r Wai.ResponseReceived
+callOutward targetDomain component (RPC path) req cont = do
   -- only POST is supported
   when (Wai.requestMethod req /= HTTP.methodPost) $
     throw InvalidRoute
   -- No query parameters are allowed
-  when (not . BS.null . Wai.rawQueryString $ req) $
+  unless (BS.null . Wai.rawQueryString $ req) $
     throw InvalidRoute
-  -- check that the path has the expected form
-  (domain, componentSeg, rpcPath) <- case Wai.pathInfo req of
-    ["rpc", domain, comp, rpc] -> pure (domain, comp, rpc)
-    _ -> throw InvalidRoute
-  when (Text.null rpcPath) $
-    throw InvalidRoute
-
-  -- get component and body
-  component <- note (UnknownComponent componentSeg) $ parseComponent componentSeg
+  ensureCanFederateWith targetDomain
+  outgoingCounterIncr targetDomain
   body <- embed $ Wai.lazyRequestBody req
-  pure $
-    RequestData
-      { rdTargetDomain = domain,
-        rdComponent = component,
-        rdRPC = rpcPath,
-        rdHeaders = Wai.requestHeaders req,
-        rdBody = body
-      }
-
-callOutward ::
-  Members '[Remote, Embed IO, Error ValidationError, Error ServerError, Input RunSettings] r =>
-  Wai.Request ->
-  Sem r Wai.Response
-callOutward req = do
-  rd <- parseRequestData req
-  domain <- parseDomainText (rdTargetDomain rd)
-  ensureCanFederateWith domain
-  (status, result) <-
+  debug $
+    Log.msg (Log.val "Federator outward call")
+      . Log.field "domain" targetDomain._domainText
+      . Log.field "component" (show component)
+      . Log.field "path" path
+      . Log.field "body" body
+  resp <-
     discoverAndCall
-      domain
-      (rdComponent rd)
-      (rdRPC rd)
-      (rdHeaders rd)
-      (fromLazyByteString (rdBody rd))
-  pure $ Wai.responseBuilder status defaultHeaders result
+      targetDomain
+      component
+      path
+      (Wai.requestHeaders req)
+      (fromLazyByteString body)
+  embed . cont $ streamingResponseToWai resp
 
-serveOutward :: Env -> Int -> IO ()
-serveOutward = serve callOutward
+serveOutward :: Env -> Int -> IORef [IO ()] -> IO ()
+serveOutward env port cleanupsRef = do
+  serveServant @(ToServantApi API) env port cleanupsRef (toServant $ server env._httpManager env._internalPort)

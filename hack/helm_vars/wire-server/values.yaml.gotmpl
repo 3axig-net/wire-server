@@ -6,26 +6,44 @@ tags:
   cannon: true
   cargohold: true
   spar: true
-  federator: true # also see galley.config.enableFederator and brig.config.enableFederator
+  federation: true # also see {background-worker,brig,cargohold,galley}.config.enableFederation
+  backoffice: true
   proxy: false
-  webapp: false
-  team-settings: false
-  account-pages: false
   legalhold: false
   sftd: false
+  integration: true
 
 cassandra-migrations:
   imagePullPolicy: {{ .Values.imagePullPolicy }}
   cassandra:
-    host: cassandra-ephemeral
-    replicaCount: 1
+    host: {{ .Values.cassandraHost }}
+    replicationFactor: 1
+    {{- if .Values.useK8ssandraSSL.enabled }}
+    tlsCaSecretRef:
+        name: "cassandra-jks-keystore"
+        key: "ca.crt"
+    {{- end }}
+
 elasticsearch-index:
   imagePullPolicy: {{ .Values.imagePullPolicy }}
   elasticsearch:
+    scheme: https
     host: elasticsearch-ephemeral
     index: directory_test
+    tlsCaSecretRef:
+      name: "elasticsearch-ephemeral-certificate"
+      key: "ca.crt"
   cassandra:
-    host: cassandra-ephemeral
+    host: {{ .Values.cassandraHost }}
+    {{- if .Values.useK8ssandraSSL.enabled }}
+    tlsCaSecretRef:
+        name: "cassandra-jks-keystore"
+        key: "ca.crt"
+    {{- end }}
+  secrets:
+    elasticsearch:
+      username: "elastic"
+      password: "changeme"
 
 brig:
   replicaCount: 1
@@ -33,27 +51,49 @@ brig:
   resources:
     requests: {}
     limits:
-      memory: 512Mi
-      cpu: 500m
+      memory: 1Gi
   config:
     externalUrls:
       nginz: https://kube-staging-nginz-https.zinfra.io
       teamCreatorWelcome: https://teams.wire.com/login
       teamMemberWelcome: https://wire.com/download
+      accountPages: https://account.wire.com
     cassandra:
-      host: cassandra-ephemeral
+      host: {{ .Values.cassandraHost }}
       replicaCount: 1
+    {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+          name: "cassandra-jks-keystore"
+          key: "ca.crt"
+    {{- end }}
     elasticsearch:
+      scheme: https
       host: elasticsearch-ephemeral
       index: directory_test
+      tlsCaSecretRef:
+        name: "elasticsearch-ephemeral-certificate"
+        key: "ca.crt"
+      additionalTlsCaSecretRef:
+        name: "elasticsearch-ephemeral-certificate"
+        key: "ca.crt"
+    rabbitmq:
+      port: 5671
+      enableTls: true
+      insecureSkipVerifyTls: false
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
     authSettings:
       userTokenTimeout: 120
       sessionTokenTimeout: 20
       accessTokenTimeout: 30
       providerTokenTimeout: 60
-    enableFederator: true # keep in sync with galley.config.enableFederator and tags.federator!
+    enableFederation: true # keep in sync with galley.config.enableFederation, cargohold.config.enableFederation and tags.federator!
+    multiSFT:
+      enabled: false # keep multiSFT default in sync with brig and sft chart's config.multiSFT
     optSettings:
-      setActivationTimeout: 5
+      setActivationTimeout: 10
+      setVerificationTimeout: 10
       # keep this in sync with brigSettingsTeamInvitationTimeout in spar/templates/tests/configmap.yaml
       setTeamInvitationTimeout: 10
       setExpiredUserCleanupTimeout: 1
@@ -69,11 +109,39 @@ brig:
         retryLimit: 5  # how many times can you have a failed login in that timeframe.
       setSuspendInactiveUsers:
         suspendTimeout: 10
-      setDefaultLocale: en
+      setDefaultTemplateLocale: en
+      setDefaultUserLocale: en
       setMaxConvAndTeamSize: 16
       setMaxTeamSize: 32
       setMaxConvSize: 16
+      # See helmfile for the real value
       setFederationDomain: integration.example.com
+      setFeatureFlags:
+        conferenceCalling:
+          defaultForNew:
+            status: disabled
+          defaultForNull:
+            status: disabled
+      setFederationStrategy: allowAll
+      setFederationDomainConfigsUpdateFreq: 10
+      setDisabledAPIVersions: []
+      set2FACodeGenerationDelaySecs: 5
+      setNonceTtlSecs: 300
+      setDpopMaxSkewSecs: 1
+      setDpopTokenExpirationTimeSecs: 300
+      setEnableMLS: true
+      setOAuthAuthCodeExpirationTimeSecs: 3 # 3 secs
+      setOAuthAccessTokenExpirationTimeSecs: 3 # 3 secs
+      setOAuthEnabled: true
+      setOAuthRefreshTokenExpirationTimeSecs: 14515200 # 24 weeks
+      setOAuthMaxActiveRefreshTokens: 10
+      # These values are insecure, against anyone getting hold of the hash,
+      # but its not a concern for the integration tests.
+      setPasswordHashingOptions:
+        algorithm: argon2id
+        iterations: 1
+        parallelism: 4
+        memory: 32 # This needs to be at least 8 * parallelism.
     aws:
       sesEndpoint: http://fake-aws-ses:4569
       sqsEndpoint: http://fake-aws-sqs:4568
@@ -95,15 +163,40 @@ brig:
       secret: rPrUbws7PQZlfN2GG8Ggi7g5iOYPk7BiCoKHl3VoFZ
     awsKeyId: dummykey
     awsSecretKey: dummysecret
-    setTwilio: |
-      sid: "dummy"
-      token: "dummy"
-    setNexmo: |-
-      key: "dummy"
-      secret: "dummy"
     smtpPassword: dummy-smtp-password
+    dpopSigKeyBundle: |
+      -----BEGIN PRIVATE KEY-----
+      MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgokD9kGYErMooLqpv
+      IRUVCtV1l6HmtqTJUFun0/4XLuahRANCAASWH/qkgOLwZz1GvEt0ch4HPRQUoj9U
+      TL8L7QANF9JztsEQ2omrX9l7RoosjAm+PKwrL+c3GiT63CSd1qrUpoZa
+      -----END PRIVATE KEY-----
+    oauthJwkKeyPair: |
+      {
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "mhP-NgFw3ifIXGZqJVB0kemt9L3BtD5P8q4Gah4Iklc",
+        "d": "R8-pV2-sPN7dykV8HFJ73S64F3kMHTNnJiSN8UdWk_o"
+      }
+    rabbitmq:
+      username: {{ .Values.rabbitmqUsername }}
+      password: {{ .Values.rabbitmqPassword }}
+    elasticsearch:
+      username: "elastic"
+      password: "changeme"
+    elasticsearchAdditional:
+      username: "elastic"
+      password: "changeme"
   tests:
     enableFederationTests: true
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
+
 cannon:
   replicaCount: 2
   imagePullPolicy: {{ .Values.imagePullPolicy }}
@@ -111,8 +204,25 @@ cannon:
     requests: {}
     limits:
       memory: 512Mi
-      cpu: 500m
   drainTimeout: 0
+  config:
+    cassandra:
+      host: {{ .Values.cassandraHost }}
+      replicaCount: 1
+    disabledAPIVersions: []
+    rabbitmq:
+      port: 5671
+      adminPort: 15671
+      enableTls: true
+      insecureSkipVerifyTls: false
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
+  secrets:
+    rabbitmq:
+      username: {{ .Values.rabbitmqUsername }}
+      password: {{ .Values.rabbitmqPassword }}
+
 cargohold:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
@@ -120,44 +230,154 @@ cargohold:
     requests: {}
     limits:
       memory: 512Mi
-      cpu: 500m
   config:
     aws:
       s3Bucket: dummy-bucket
       s3Endpoint: http://fake-aws-s3:9000
+    enableFederation: true # keep in sync with brig.config.enableFederation, galley.config.enableFederation and tags.federator!
+    settings:
+      # See helmfile for the real value
+      federationDomain: integration.example.com
+      disabledAPIVersions: []
   secrets:
     awsKeyId: dummykey
     awsSecretKey: dummysecret
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
+
 galley:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
   config:
     cassandra:
-      host: cassandra-ephemeral
+      host: {{ .Values.cassandraHost }}
       replicaCount: 1
-    enableFederator: true # keep in sync with brig.config.enableFederator and tags.federator!
+    {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+          name: "cassandra-jks-keystore"
+          key: "ca.crt"
+    {{- end }}
+    rabbitmq:
+      port: 5671
+      enableTls: true
+      insecureSkipVerifyTls: false
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
+    enableFederation: true # keep in sync with brig.config.enableFederation, cargohold.config.enableFederation and tags.federator!
     settings:
       maxConvAndTeamSize: 16
       maxTeamSize: 32
       maxFanoutSize: 18
       maxConvSize: 16
       conversationCodeURI: https://kube-staging-nginz-https.zinfra.io/conversation-join/
-      enableIndexedBillingTeamMembers: true
+      # See helmfile for the real value
       federationDomain: integration.example.com
+      disabledAPIVersions: []
+
+      # These values are insecure, against anyone getting hold of the hash,
+      # but its not a concern for the integration tests.
+      passwordHashingOptions:
+        algorithm: argon2id
+        iterations: 1
+        parallelism: 4
+        memory: 32 # This needs to be at least 8 * parallelism.
+
       featureFlags:
         sso: disabled-by-default  # this needs to be the default; tests can enable it when needed.
         legalhold: whitelist-teams-and-implicit-consent
         teamSearchVisibility: disabled-by-default
+        conferenceCalling:
+          defaults:
+            status: disabled
         classifiedDomains:
           status: enabled
           config:
             domains: ["example.com"]
+        enforceFileDownloadLocation:
+          defaults:
+            status: disabled
+            lockStatus: unlocked
+            config:
+              enforcedDownloadLocation: "downloads"
+        mlsMigration:
+          defaults:
+            status: enabled
+            config:
+              startTime: "2029-05-16T10:11:12.123Z"
+              finaliseRegardlessAfter: "2029-10-17T00:00:00.000Z"
+              usersThreshold: 100
+              clientsThreshold: 50
+            lockStatus: locked
+        mlsE2EId:
+          defaults:
+            status: disabled
+            config:
+              verificationExpiration: 86400
+              acmeDiscoveryUrl: null
+              crlProxy: https://crlproxy.example.com
+            lockStatus: unlocked
+        limitedEventFanout:
+            defaults:
+            status: disabled
+        domainRegistration:
+          defaults:
+            status: disabled
+            lockStatus: locked
     journal:
       endpoint: http://fake-aws-sqs:4568
-      queue: integration-team-events.fifo
+      queueName: integration-team-events.fifo
   secrets:
     awsKeyId: dummykey
     awsSecretKey: dummysecret
+    mlsPrivateKeys:
+      removal:
+        ed25519: |
+          -----BEGIN PRIVATE KEY-----
+          MC4CAQAwBQYDK2VwBCIEIAocCDXsKIAjb65gOUn5vEF0RIKnVJkKR4ebQzuZ709c
+          -----END PRIVATE KEY-----
+        ecdsa_secp256r1_sha256: |
+          -----BEGIN PRIVATE KEY-----
+          MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg3qjgQ9U+/rTBObn9
+          tXSVi2UtHksRDXmQ1VOszFZfjryhRANCAATNkLmZZLyORf5D3PUOxt+rkJTE5vuD
+          aCqZ7sE5NSN8InRRwuQ1kv0oblDVeQA89ZlHqyxx75JPK+/air7Z1n5I
+          -----END PRIVATE KEY-----
+        ecdsa_secp384r1_sha384: |
+          -----BEGIN PRIVATE KEY-----
+          MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBLwv3i5LDz9b++O0iw
+          QAit/Uq7L5PWPgKN99wCm8xkZnuyqWujXW4wvlVUVlZWgh2hZANiAAT0+RXKE31c
+          VxdYazaVopY50/nV9c18uRdqoENBvtxuD6oDtJtU6oCS/Htkd8JEArTQ9ZHqq144
+          yRjuc3d2CqvJmEA/lzIBk9wnz+lghFhvB4TkSHvvLyEBc9DZvhb4EEQ=
+          -----END PRIVATE KEY-----
+        ecdsa_secp521r1_sha512: |
+          -----BEGIN PRIVATE KEY-----
+          MIHuAgEAMBAGByqGSM49AgEGBSuBBAAjBIHWMIHTAgEBBEIBiaEARm5BMaRct1xj
+          MlemUHijWGAoHtNMhSttSr4jo0WxMwfMnvnDQJSlO2Zs4Tzum2j5eO34EHu6MUrv
+          qquZYwyhgYkDgYYABAHuvCV/+gJitvAbDwgrBHZJ41oy8Lc+wPIM7Yp6s/vTzTsG
+          Klo7aMdkx6DUjv/56tVD9bZNulFAjwS8xoIyWg8NSAE1ofo8CBvN1XGZOWuMYjEh
+          zLrZADduEnOvayw5sEvm135WC0vWjPJaYwKZPdDIXUz9ILJPgNe3gEUvHsDEXvdX
+          lw==
+          -----END PRIVATE KEY-----
+    rabbitmq:
+      username: {{ .Values.rabbitmqUsername }}
+      password: {{ .Values.rabbitmqPassword }}
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
+
 gundeck:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
@@ -165,13 +385,30 @@ gundeck:
     requests: {}
     limits:
       memory: 1024Mi
-      cpu: 1000m
   config:
     cassandra:
-      host: cassandra-ephemeral
+      host: {{ .Values.cassandraHost }}
       replicaCount: 1
+    {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+          name: "cassandra-jks-keystore"
+          key: "ca.crt"
+    {{- end }}
+    rabbitmq:
+      port: 5671
+      adminPort: 15671
+      enableTls: true
+      insecureSkipVerifyTls: false
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
     redis:
       host: redis-ephemeral-master
+      connectionMode: master
+      enableTls: true
+      tlsCaSecretRef:
+        name: "redis-certificate"
+        key: "ca.crt"
     aws:
       account: "123456789012"
       region: eu-west-1
@@ -179,24 +416,53 @@ gundeck:
       queueName: integration-gundeck-events
       sqsEndpoint: http://fake-aws-sqs:4568
       snsEndpoint: http://fake-aws-sns:4575
-    bulkPush: true
+    disabledAPIVersions: []
     setMaxConcurrentNativePushes:
       hard: 30
       soft: 10
   secrets:
     awsKeyId: dummykey
     awsSecretKey: dummysecret
+    redisPassword: very-secure-redis-master-password
+    rabbitmq:
+      username: {{ .Values.rabbitmqUsername }}
+      password: {{ .Values.rabbitmqPassword }}
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    {{- end }}
+    secrets:
+      {{- if .Values.uploadXml }}
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+      {{- end }}
+      redisAdditionalWritePassword: very-secure-redis-master-password-2
+
 nginz:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
   nginx_conf:
     env: staging
     external_env_domain: zinfra.io
+    # NOTE: Web apps are disabled by default
+    allowlisted_origins: []
+    randomport_allowlisted_origins: [] # default is empty by intention
+    rate_limit_reqs_per_user: "10r/s"
+    rate_limit_reqs_per_addr: "100r/s"
   secrets:
     basicAuth: "whatever"
     zAuth:
       # this must match the key in brig!
       publicKeys: 0UW38se1yeoc5bVNEvf5LyrHWGZkyvcGTVilK2geGdU=
+    oAuth:
+      publicKeys: |
+        {
+          "kty": "OKP",
+          "crv": "Ed25519",
+          "x": "mhP-NgFw3ifIXGZqJVB0kemt9L3BtD5P8q4Gah4Iklc"
+        }
 proxy:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
@@ -209,6 +475,8 @@ proxy:
               giphy      = "..."
               spotify    = "Basic ..."
        }
+  config:
+    disabledAPIVersions: []
 spar:
   replicaCount: 1
   imagePullPolicy: {{ .Values.imagePullPolicy }}
@@ -216,30 +484,138 @@ spar:
     requests: {}
     limits:
       memory: 1024Mi
-      cpu: 1000m
   config:
     tlsDisableCertValidation: true
     cassandra:
-      host: cassandra-ephemeral
+      host: {{ .Values.cassandraHost }}
+    {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+          name: "cassandra-jks-keystore"
+          key: "ca.crt"
+    {{- end }}
     logLevel: Debug
     domain: zinfra.io
     appUri: http://spar:8080/
     ssoUri: http://spar:8080/sso
     maxttlAuthreq: 5
     maxttlAuthresp: 7200
-    maxScimTokens: 2
+    maxScimTokens: 8
     contacts:
     - type: ContactSupport
       company: Example Company
       email: email:backend+spar@wire.com
+    disabledAPIVersions: []
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
 
 federator:
   replicaCount: 1
   resources:
     requests: {}
   imagePullPolicy: {{ .Values.imagePullPolicy }}
+  remoteCAContents: {{ .Values.federationCACertificate | quote }}
+  tls:
+    useCertManager: true
+    useSharedFederatorSecret: true
+
   config:
     optSettings:
-      federationStrategy:
-        allowAll: true
       useSystemCAStore: false
+    logLevel: Debug
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
+
+background-worker:
+  replicaCount: 1
+  resources:
+    requests: {}
+  imagePullPolicy: {{ .Values.imagePullPolicy }}
+  config:
+    enableFederation: true
+    backendNotificationPusher:
+      pushBackoffMinWait: 1000 # 1ms
+      pushBackoffMaxWait: 500000 # 0.5s
+      remotesRefreshInterval: 1000000 # 1s
+    cassandra:
+      host: {{ .Values.cassandraHost }}
+      replicaCount: 1
+      {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+          name: "cassandra-jks-keystore"
+          key: "ca.crt"
+      {{- end }}
+    rabbitmq:
+      port: 5671
+      adminPort: 15671
+      enableTls: true
+      insecureSkipVerifyTls: false
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
+  secrets:
+    rabbitmq:
+      username: {{ .Values.rabbitmqUsername }}
+      password: {{ .Values.rabbitmqPassword }}
+
+integration:
+  ingress:
+    class: "nginx-{{ .Release.Namespace }}"
+  config:
+    cassandra:
+      host: {{ .Values.cassandraHost }}
+      port: 9042
+      replicationFactor: 1
+      {{- if .Values.useK8ssandraSSL.enabled }}
+      tlsCaSecretRef:
+        name: cassandra-jks-keystore
+        key: ca.crt
+      {{- end }}
+    elasticsearch:
+      tlsCaSecretRef:
+        name: "elasticsearch-ephemeral-certificate"
+        key: "ca.crt"
+    redis:
+      tlsCaSecretRef:
+        name: "redis-certificate"
+        key: "ca.crt"
+    rabbitmq:
+      tlsCaSecretRef:
+        name: "rabbitmq-certificate"
+        key: "ca.crt"
+    {{- if .Values.uploadXml }}
+    uploadXml:
+      baseUrl: {{ .Values.uploadXml.baseUrl }}
+    {{- end }}
+  secrets:
+    {{- if .Values.uploadXml }}
+    uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+    uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}
+    redisPassword: very-secure-redis-master-password
+  tls:
+    caNamespace: wire-federation-v0
+
+backoffice:
+  tests:
+    {{- if .Values.uploadXml }}
+    config:
+      uploadXml:
+        baseUrl: {{ .Values.uploadXml.baseUrl }}
+    secrets:
+      uploadXmlAwsAccessKeyId: {{ .Values.uploadXml.awsAccessKeyId }}
+      uploadXmlAwsSecretAccessKey: {{ .Values.uploadXml.awsSecretAccessKey }}
+    {{- end }}

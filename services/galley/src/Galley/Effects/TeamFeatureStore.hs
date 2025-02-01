@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,72 +15,53 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Galley.Effects.TeamFeatureStore
-  ( TeamFeatureStore (..),
-    getFeatureStatusNoConfig,
-    setFeatureStatusNoConfig,
-    getApplockFeatureStatus,
-    setApplockFeatureStatus,
-    getSelfDeletingMessagesStatus,
-    setSelfDeletingMessagesStatus,
-  )
-where
+module Galley.Effects.TeamFeatureStore where
 
 import Data.Id
-import Data.Proxy
-import Galley.Data.TeamFeatures
-import Imports
 import Polysemy
 import Wire.API.Team.Feature
 
 data TeamFeatureStore m a where
-  -- the proxy argument makes sure that makeSem below generates type-inference-friendly code
-  GetFeatureStatusNoConfig' ::
-    forall (a :: TeamFeatureName) m.
-    ( FeatureHasNoConfig a,
-      HasStatusCol a
-    ) =>
-    Proxy a ->
+  -- | Returns all stored feature values excluding lock status.
+  GetDbFeature ::
+    FeatureSingleton cfg ->
     TeamId ->
-    TeamFeatureStore m (Maybe (TeamFeatureStatus a))
-  -- the proxy argument makes sure that makeSem below generates type-inference-friendly code
-  SetFeatureStatusNoConfig' ::
-    forall (a :: TeamFeatureName) m.
-    ( FeatureHasNoConfig a,
-      HasStatusCol a
-    ) =>
-    Proxy a ->
+    TeamFeatureStore m (DbFeature cfg)
+  SetDbFeature ::
+    FeatureSingleton cfg ->
     TeamId ->
-    TeamFeatureStatus a ->
-    TeamFeatureStore m (TeamFeatureStatus a)
-  GetApplockFeatureStatus ::
+    LockableFeature cfg ->
+    TeamFeatureStore m ()
+  SetFeatureLockStatus ::
+    FeatureSingleton cfg ->
     TeamId ->
-    TeamFeatureStore m (Maybe (TeamFeatureStatus 'TeamFeatureAppLock))
-  SetApplockFeatureStatus ::
+    LockStatus ->
+    TeamFeatureStore m ()
+  GetAllDbFeatures ::
     TeamId ->
-    TeamFeatureStatus 'TeamFeatureAppLock ->
-    TeamFeatureStore m (TeamFeatureStatus 'TeamFeatureAppLock)
-  GetSelfDeletingMessagesStatus ::
-    TeamId ->
-    TeamFeatureStore m (Maybe (TeamFeatureStatus 'TeamFeatureSelfDeletingMessages))
-  SetSelfDeletingMessagesStatus ::
-    TeamId ->
-    TeamFeatureStatus 'TeamFeatureSelfDeletingMessages ->
-    TeamFeatureStore m (TeamFeatureStatus 'TeamFeatureSelfDeletingMessages)
+    TeamFeatureStore m (AllFeatures DbFeature)
 
-makeSem ''TeamFeatureStore
-
-getFeatureStatusNoConfig ::
-  forall (a :: TeamFeatureName) r.
-  (Member TeamFeatureStore r, FeatureHasNoConfig a, HasStatusCol a) =>
+getDbFeature ::
+  (Member TeamFeatureStore r, IsFeatureConfig cfg) =>
   TeamId ->
-  Sem r (Maybe (TeamFeatureStatus a))
-getFeatureStatusNoConfig = getFeatureStatusNoConfig' (Proxy @a)
+  Sem r (DbFeature cfg)
+getDbFeature tid = send (GetDbFeature featureSingleton tid)
 
-setFeatureStatusNoConfig ::
-  forall (a :: TeamFeatureName) r.
-  (Member TeamFeatureStore r, FeatureHasNoConfig a, HasStatusCol a) =>
+setDbFeature ::
+  (Member TeamFeatureStore r, IsFeatureConfig cfg) =>
   TeamId ->
-  TeamFeatureStatus a ->
-  Sem r (TeamFeatureStatus a)
-setFeatureStatusNoConfig = setFeatureStatusNoConfig' (Proxy @a)
+  LockableFeature cfg ->
+  Sem r ()
+setDbFeature tid feat = send (SetDbFeature featureSingleton tid feat)
+
+setFeatureLockStatus ::
+  forall cfg r.
+  (Member TeamFeatureStore r, IsFeatureConfig cfg) =>
+  TeamId ->
+  LockStatus ->
+  Sem r ()
+setFeatureLockStatus tid lockStatus =
+  send (SetFeatureLockStatus (featureSingleton @cfg) tid lockStatus)
+
+getAllDbFeatures :: (Member TeamFeatureStore r) => TeamId -> Sem r (AllFeatures DbFeature)
+getAllDbFeatures tid = send (GetAllDbFeatures tid)

@@ -1,8 +1,9 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,33 +23,28 @@ module Federator.Remote
     RemoteError (..),
     interpretRemote,
     discoverAndCall,
-    blessedCiphers,
   )
 where
 
-import Control.Lens ((^.))
+import Bilge.Request qualified as RPC
+import Control.Exception qualified as E
+import Control.Monad.Codensity
 import Data.Binary.Builder
-import Data.ByteString.Conversion (toByteString')
-import qualified Data.ByteString.Lazy as LBS
-import Data.Default (def)
+import Data.ByteString.Lazy qualified as LBS
 import Data.Domain
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Encoding.Error as Text
-import qualified Data.X509 as X509
-import qualified Data.X509.Validation as X509
+import Data.Id
+import Data.Text.Encoding (decodeUtf8)
 import Federator.Discovery
-import Federator.Env (TLSSettings, caStore, creds)
 import Federator.Error
-import Federator.Validation
+import HTTP2.Client.Manager (Http2Manager)
+import HTTP2.Client.Manager qualified as H2Manager
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.HTTP2.Client as HTTP2
-import Network.TLS as TLS
-import qualified Network.TLS.Extra.Cipher as TLS
+import Network.HTTP.Types qualified as HTTP
+import Network.HTTP2.Client qualified as HTTP2
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
+import Servant.Client.Core
 import Wire.API.Federation.Client
 import Wire.API.Federation.Component
 import Wire.API.Federation.Error
@@ -59,32 +55,18 @@ import Wire.Network.DNS.SRV
 data RemoteError
   = -- | This means that an error occurred while trying to make a request to a
     -- remote federator.
-    RemoteError SrvTarget FederatorClientHTTP2Error
+    RemoteError SrvTarget Text FederatorClientHTTP2Error
   | -- | This means that a request to a remote federator returned an error
     -- response. The error response could be due to an error in the remote
     -- federator itself, or in the services it proxied to.
-    RemoteErrorResponse SrvTarget HTTP.Status LByteString
+    RemoteErrorResponse SrvTarget Text HTTP.Status LByteString
   deriving (Show)
 
 instance AsWai RemoteError where
-  toWai (RemoteError _ e) = federationRemoteHTTP2Error e
-  toWai (RemoteErrorResponse _ status _) =
-    federationRemoteResponseError status
-
-  waiErrorDescription (RemoteError tgt e) =
-    "Error while connecting to " <> displayTarget tgt <> ": "
-      <> Text.pack (displayException e)
-  waiErrorDescription (RemoteErrorResponse tgt status body) =
-    "Federator at " <> displayTarget tgt <> " failed with status code "
-      <> Text.pack (show (HTTP.statusCode status))
-      <> ": "
-      <> Text.decodeUtf8With Text.lenientDecode (LBS.toStrict body)
-
-displayTarget :: SrvTarget -> Text
-displayTarget (SrvTarget hostname port) =
-  Text.decodeUtf8With Text.lenientDecode hostname
-    <> ":"
-    <> Text.pack (show port)
+  toWai (RemoteError target msg err) =
+    federationRemoteHTTP2Error target msg err
+  toWai (RemoteErrorResponse target msg status body) =
+    federationRemoteResponseError target msg status body
 
 data Remote m a where
   DiscoverAndCall ::
@@ -93,76 +75,51 @@ data Remote m a where
     Text ->
     [HTTP.Header] ->
     Builder ->
-    Remote m (HTTP.Status, Builder)
+    Remote m StreamingResponse
 
 makeSem ''Remote
 
 interpretRemote ::
-  Members
-    '[ Embed IO,
-       DiscoverFederator,
-       Error DiscoveryFailure,
-       Error RemoteError,
-       Input TLSSettings
-     ]
-    r =>
+  ( Member (Embed (Codensity IO)) r,
+    Member DiscoverFederator r,
+    Member (Error DiscoveryFailure) r,
+    Member (Error RemoteError) r,
+    Member (Input Http2Manager) r,
+    Member (Input RequestId) r
+  ) =>
   Sem (Remote ': r) a ->
   Sem r a
 interpretRemote = interpret $ \case
   DiscoverAndCall domain component rpc headers body -> do
     target@(SrvTarget hostname port) <- discoverFederatorWithError domain
-    settings <- input
+    RequestId rid <- input
     let path =
           LBS.toStrict . toLazyByteString $
             HTTP.encodePathSegments ["federation", componentName component, rpc]
-        req' = HTTP2.requestBuilder HTTP.methodPost path headers body
-        tlsConfig = mkTLSConfig settings hostname port
-    (status, _, result) <-
-      mapError (RemoteError target) . (fromEither =<<) . embed $
-        performHTTP2Request (Just tlsConfig) req' hostname (fromIntegral port)
-    unless (HTTP.statusIsSuccessful status) $
-      throw $ RemoteErrorResponse target status (toLazyByteString result)
-    pure (status, result)
+        pathT = decodeUtf8 path
+        -- filter out Host header, because the HTTP2 client adds it back
+        headers' =
+          filter ((/= "Host") . fst) headers
+            <> [(RPC.requestIdName, rid)]
+        req' = HTTP2.requestBuilder HTTP.methodPost path headers' body
 
-mkTLSConfig :: TLSSettings -> ByteString -> Word16 -> TLS.ClientParams
-mkTLSConfig settings hostname port =
-  ( defaultParamsClient
-      (Text.unpack (Text.decodeUtf8With Text.lenientDecode hostname))
-      (toByteString' port)
-  )
-    { TLS.clientSupported =
-        def
-          { TLS.supportedCiphers = blessedCiphers,
-            -- FUTUREWORK: Figure out if we can drop TLS 1.2
-            TLS.supportedVersions = [TLS.TLS12, TLS.TLS13]
-          },
-      TLS.clientHooks =
-        def
-          { TLS.onServerCertificate =
-              X509.validate
-                X509.HashSHA256
-                X509.defaultHooks {X509.hookValidateName = validateDomainName}
-                X509.defaultChecks {X509.checkLeafKeyPurpose = [X509.KeyUsagePurpose_ServerAuth]},
-            TLS.onCertificateRequest = \_ -> pure (Just (settings ^. creds)),
-            TLS.onSuggestALPN = pure (Just ["h2"]) -- we only support HTTP2
-          },
-      TLS.clientShared = def {TLS.sharedCAStore = settings ^. caStore}
-    }
+    mgr <- input
+    resp <- mapError (RemoteError target pathT) . (fromEither @FederatorClientHTTP2Error =<<) . embed $
+      Codensity $ \k ->
+        E.catches
+          (H2Manager.withHTTP2RequestOnSingleUseConn mgr (True, hostname, fromIntegral port) req' (consumeStreamingResponseWith $ k . Right))
+          [ E.Handler $ k . Left,
+            E.Handler $ k . Left . FederatorClientTLSException,
+            E.Handler $ k . Left . FederatorClientHTTP2Exception,
+            E.Handler $ k . Left . FederatorClientConnectionError
+          ]
 
--- FUTUREWORK: get review on blessed ciphers
--- (https://wearezeta.atlassian.net/browse/SQCORE-910)
-blessedCiphers :: [Cipher]
-blessedCiphers =
-  [ TLS.cipher_TLS13_AES128CCM8_SHA256,
-    TLS.cipher_TLS13_AES128CCM_SHA256,
-    TLS.cipher_TLS13_AES128GCM_SHA256,
-    TLS.cipher_TLS13_AES256GCM_SHA384,
-    TLS.cipher_TLS13_CHACHA20POLY1305_SHA256,
-    -- For TLS 1.2 (copied from default nginx ingress config):
-    TLS.cipher_ECDHE_ECDSA_AES256GCM_SHA384,
-    TLS.cipher_ECDHE_RSA_AES256GCM_SHA384,
-    TLS.cipher_ECDHE_RSA_AES128GCM_SHA256,
-    TLS.cipher_ECDHE_ECDSA_AES128GCM_SHA256,
-    TLS.cipher_ECDHE_ECDSA_CHACHA20POLY1305_SHA256,
-    TLS.cipher_ECDHE_RSA_CHACHA20POLY1305_SHA256
-  ]
+    unless (HTTP.statusIsSuccessful (responseStatusCode resp)) $ do
+      bdy <- embed @(Codensity IO) . liftIO $ streamingResponseStrictBody resp
+      throw $
+        RemoteErrorResponse
+          target
+          pathT
+          (responseStatusCode resp)
+          (toLazyByteString bdy)
+    pure resp

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -68,12 +68,13 @@ mkUserDB = do
             E.value =
               maybe
                 (error "couldn't parse email")
-                EmailAddress2
+                EmailAddress
                 (emailAddress "elton@wire.com"),
             E.primary = Nothing
           }
+
   let user =
-        (User.empty [User20] "elton" NoUserExtra)
+        (User.empty [User20] "elton" NoUserExtra :: User Mock)
           { name =
               Just
                 Name

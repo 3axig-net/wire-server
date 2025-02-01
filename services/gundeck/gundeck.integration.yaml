@@ -2,6 +2,10 @@ gundeck:
   host: 0.0.0.0
   port: 8086
 
+brig:
+  host: 127.0.0.1
+  port: 8082
+
 cassandra:
   endpoint:
     host: 127.0.0.1
@@ -10,8 +14,17 @@ cassandra:
   # filterNodesByDatacentre: datacenter1
 
 redis:
-  host: 127.0.0.1
-  port: 6379
+  host: 172.20.0.31
+  port: 6373
+  connectionMode: cluster # master | cluster
+  enableTls: true
+  tlsCa: ../../deploy/dockerephemeral/docker/redis-ca.pem
+  insecureSkipVerifyTls: false
+
+# redisAdditionalWrite:
+#   host: 127.0.0.1
+#   port: 6379
+#   connectionMode: master
 
 aws:
   queueName: integration-gundeck-events
@@ -21,15 +34,26 @@ aws:
   sqsEndpoint: http://localhost:4568 # https://sqs.eu-west-1.amazonaws.com
   snsEndpoint: http://localhost:4575 # https://sns.eu-west-1.amazonaws.com
 
+rabbitmq:
+  host: 127.0.0.1
+  port: 5671
+  vHost: /
+  enableTls: true
+  caCert: test/resources/rabbitmq-ca.pem
+  insecureSkipVerifyTls: false
+
 settings:
   httpPoolSize: 1024
   notificationTTL: 24192200
-  bulkPush: true
   perNativePushConcurrency: 32
   sqsThrottleMillis: 1000
   maxConcurrentNativePushes:
     hard: 30  # more than this number of threads will not be allowed
     soft: 10  # more than this number of threads will be warned about
 
-logLevel: Info
+  # We explicitly do not disable any API version. Please make sure the configuration value is the same in all these configs:
+  # brig, cannon, cargohold, galley, gundeck, proxy, spar.
+  disabledAPIVersions: []
+
+logLevel: Warn
 logNetStrings: false

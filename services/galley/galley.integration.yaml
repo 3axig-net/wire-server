@@ -25,16 +25,24 @@ federator:
   host: 127.0.0.1
   port: 8097
 
+rabbitmq:
+  host: 127.0.0.1
+  port: 5671
+  vHost: /
+  enableTls: true
+  caCert: test/resources/rabbitmq-ca.pem
+  insecureSkipVerifyTls: false
+
 settings:
   httpPoolSize: 128
   maxTeamSize: 32
   maxFanoutSize: 18
+  exposeInvitationURLsTeamAllowlist: []
   maxConvSize: 16
   intraListing: false
   conversationCodeURI: https://account.wire.com/conversation-join/
   concurrentDeletionEvents: 1024
   deleteConvThrottleMillis: 0
-  enableIndexedBillingTeamMembers: true
   #   Federation domain is used to qualify local IDs and handles,
   #   e.g. 0c4d8944-70fa-480e-a8b7-9d929862d18c@wire.com and somehandle@wire.com.
   #   It should also match the SRV DNS records under which other wire-server installations can find this backend:
@@ -42,8 +50,25 @@ settings:
   #   Once set, DO NOT change it: if you do, existing users may have a broken experience and/or stop working
   #   Remember to keep it the same in Brig
   federationDomain: example.com
+  federationProtocols: ["mls", "proteus"]
+  mlsPrivateKeyPaths:
+    removal:
+      ed25519: test/resources/backendA/ed25519.pem
+      ecdsa_secp256r1_sha256: test/resources/backendA/ecdsa_secp256r1_sha256.pem
+      ecdsa_secp384r1_sha384: test/resources/backendA/ecdsa_secp384r1_sha384.pem
+      ecdsa_secp521r1_sha512: test/resources/backendA/ecdsa_secp521r1_sha512.pem
+  guestLinkTTLSeconds: 604800
+  passwordHashingOptions: # in testing, we want these settings to be faster, not secure against attacks.
+    algorithm: argon2id
+    iterations: 1
+    memory: 128
+    parallelism: 1
 
-  featureFlags:  # see #RefConfigOptions in `/docs/reference`
+  # We explicitly do not disable any API version. Please make sure the configuration value is the same in all these configs:
+  # brig, cannon, cargohold, galley, gundeck, proxy, spar.
+  disabledAPIVersions: []
+
+  featureFlags: # see #RefConfigOptions in `/docs/reference`
     sso: disabled-by-default
     legalhold: whitelist-teams-and-implicit-consent
     teamSearchVisibility: disabled-by-default
@@ -57,14 +82,50 @@ settings:
       status: enabled
       config:
         domains: ["example.com"]
+    enforceFileDownloadLocation:
+      defaults:
+        status: disabled
+        lockStatus: unlocked
+        config:
+          enforcedDownloadLocation: "downloads"
     fileSharing:
       defaults:
         status: enabled
+        lockStatus: unlocked
     conferenceCalling:
       defaults:
+        status: disabled
+        lockStatus: locked
+    outlookCalIntegration:
+      defaults:
+        status: disabled
+        lockStatus: locked
+    mlsE2EId:
+      defaults:
+        status: disabled
+        config:
+          verificationExpiration: 86400
+          acmeDiscoveryUrl: null
+          crlProxy: https://crlproxy.example.com
+        lockStatus: unlocked
+    mlsMigration:
+      defaults:
         status: enabled
+        config:
+          startTime: "2029-05-16T10:11:12.123Z"
+          finaliseRegardlessAfter: "2029-10-17T00:00:00.000Z"
+          usersThreshold: 100
+          clientsThreshold: 50
+        lockStatus: locked
+    limitedEventFanout:
+      defaults:
+        status: disabled
+    domainRegistration:
+      defaults:
+        status: disabled
+        lockStatus: locked
 
-logLevel: Info
+logLevel: Warn
 logNetStrings: false
 
 journal: # if set, journals; if not set, disables journaling

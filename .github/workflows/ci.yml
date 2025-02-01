@@ -1,31 +1,37 @@
 on:
  pull_request:
  push:
-   branches: [master]
+   branches: [master, develop]
 
 jobs:
-  build-dev-env:
-   name: Build dev env
-   strategy:
-     matrix:
-       os:
-         - ubuntu-latest
-         # This is too expensive
-         # - macos-latest
-   runs-on: ${{ matrix.os }}
-   steps:
-     - uses: actions/checkout@v2
+  build-docs:
+    name: Build docs
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+     - uses: actions/checkout@v4
        with:
          submodules: true
-     - uses: cachix/install-nix-action@v14.1
-     - uses: cachix/cachix-action@v10
+         token: '${{ secrets.GH_DOCS_WORKFLOW }}'
+     - uses: cachix/install-nix-action@v27
+     - uses: cachix/cachix-action@v15
        with:
          name: wire-server
          signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-     - name: Build the wire-server-direnv
-       run: nix-build --no-out-link direnv.nix
-     - name: Install the wire-server-direnv
-       run: nix-env -f direnv.nix -i
-     - name: Ensure everything is formatted
-       run: make formatc
+     - name: Build docs
+       run: nix-build --no-out-link ./nix -A docs
+     - name: Configure AWS credentials
+       if: ${{ github.ref == 'refs/heads/develop' }}
+       uses: aws-actions/configure-aws-credentials@v1
+       with:
+         role-to-assume: arn:aws:iam::093205192929:role/gh-actions-wire-server
+         aws-region: eu-west-1
+     - name: Deploy docs
+       if: ${{ github.ref == 'refs/heads/develop' }}
+       run: |
+         docs=$(nix-build --no-out-link ./nix -A docs)
+         aws s3 sync $docs/html s3://origin-docs.wire.com/
+         aws s3 cp $docs/pdf/wire_federation.pdf s3://origin-docs.wire.com/main.pdf

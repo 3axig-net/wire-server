@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -60,7 +60,7 @@ data Member = Member
   deriving (Show, Eq, Generic)
 
 instance FromJSON Member where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 instance ToJSON Member where
   toJSON = genericToJSON serializeOptions
@@ -73,7 +73,7 @@ data Group = Group
   deriving (Show, Eq, Generic)
 
 instance FromJSON Group where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 instance ToJSON Group where
   toJSON = genericToJSON serializeOptions
@@ -87,25 +87,25 @@ data GroupSite tag route = GroupSite
     gsGetGroup ::
       route
         :- Capture "id" (GroupId tag)
-        :> Get '[SCIM] (StoredGroup tag),
+          :> Get '[SCIM] (StoredGroup tag),
     gsPostGroup ::
       route
         :- ReqBody '[SCIM] Group
-        :> PostCreated '[SCIM] (StoredGroup tag),
+          :> PostCreated '[SCIM] (StoredGroup tag),
     gsPutGroup ::
       route
         :- Capture "id" (GroupId tag)
-        :> ReqBody '[SCIM] Group
-        :> Put '[SCIM] (StoredGroup tag),
+          :> ReqBody '[SCIM] Group
+          :> Put '[SCIM] (StoredGroup tag),
     gsPatchGroup ::
       route
         :- Capture "id" (GroupId tag)
-        :> ReqBody '[SCIM] Aeson.Value
-        :> Patch '[SCIM] (StoredGroup tag),
+          :> ReqBody '[SCIM] Aeson.Value
+          :> Patch '[SCIM] (StoredGroup tag),
     gsDeleteGroup ::
       route
         :- Capture "id" (GroupId tag)
-        :> DeleteNoContent
+          :> DeleteNoContent
   }
   deriving (Generic)
 
@@ -171,7 +171,7 @@ class (Monad m, GroupTypes tag, AuthDB tag m) => GroupDB tag m where
 
 groupServer ::
   forall tag m.
-  (Show (GroupId tag), GroupDB tag m) =>
+  (GroupDB tag m) =>
   Maybe (AuthData tag) ->
   GroupSite tag (AsServerT (ScimHandler m))
 groupServer authData =

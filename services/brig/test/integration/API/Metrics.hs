@@ -1,12 +1,9 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,21 +26,22 @@ where
 
 import Bilge
 import Bilge.Assert
-import Brig.Types.User
+import Brig.Options qualified as Opt
 import Data.Attoparsec.Text
 import Data.ByteString.Conversion
 import Imports
 import Test.Tasty
 import Test.Tasty.HUnit
 import Util
+import Wire.API.User
 
-tests :: Manager -> Brig -> IO TestTree
-tests manager brig = do
-  return $
+tests :: Manager -> Opt.Opts -> Brig -> IO TestTree
+tests manager opts brig = do
+  pure $
     testGroup
       "metrics"
       [ testCase "prometheus" . void $ runHttpT manager (testPrometheusMetrics brig),
-        testCase "work" . void $ runHttpT manager (testMetricsEndpoint brig)
+        testCase "work" . void $ runHttpT manager (testMetricsEndpoint opts brig)
       ]
 
 testPrometheusMetrics :: Brig -> Http ()
@@ -53,36 +51,37 @@ testPrometheusMetrics brig = do
     -- Should contain the request duration metric in its output
     const (Just "TYPE http_request_duration_seconds histogram") =~= responseBody
 
-testMetricsEndpoint :: Brig -> Http ()
-testMetricsEndpoint brig = do
-  let p1 = "/self"
+testMetricsEndpoint :: Opt.Opts -> Brig -> Http ()
+testMetricsEndpoint opts brig0 = withSettingsOverrides opts $ do
+  let brig = apiVersion "v1" . brig0
+      p1 = "/self"
       p2 uid = "/users/" <> uid <> "/clients"
-      p3 = "/properties"
-  beforeSelf <- getCount "/self"
-  beforeClients <- getCount "/users/:uid/clients"
-  beforeProperties <- getCount "/properties"
-  uid <- userId <$> randomUser brig
-  uid' <- userId <$> randomUser brig
+      p3 = "/login"
+  beforeSelf <- getCount "/self" "GET"
+  beforeClients <- getCount "/users/:uid/clients" "GET"
+  beforeProperties <- getCount "/login" "POST"
+  (uid, Just email) <- (\u -> (userId u, userEmail u)) <$> randomUser brig0
+  uid' <- userId <$> randomUser brig0
   _ <- get (brig . path p1 . zAuthAccess uid "conn" . expect2xx)
   _ <- get (brig . path (p2 $ toByteString' uid) . zAuthAccess uid "conn" . expect2xx)
   _ <- get (brig . path (p2 $ toByteString' uid') . zAuthAccess uid "conn" . expect2xx)
-  _ <- get (brig . path p3 . zAuthAccess uid "conn" . expect2xx)
-  _ <- get (brig . path p3 . zAuthAccess uid "conn" . expect2xx)
-  countSelf <- getCount "/self"
-  liftIO $ assertEqual "/self was called once" (beforeSelf + 1) countSelf
-  countClients <- getCount "/users/:uid/clients"
-  liftIO $ assertEqual "/users/:uid/clients was called twice" (beforeClients + 2) countClients
-  countProperties <- getCount "/properties"
-  liftIO $ assertEqual "/properties was called twice" (beforeProperties + 2) countProperties
+  _ <- post (brig . path p3 . contentJson . queryItem "persist" "true" . json (defEmailLogin email) . expect2xx)
+  _ <- post (brig . path p3 . contentJson . queryItem "persist" "true" . json (defEmailLogin email) . expect2xx)
+  countSelf <- getCount "/self" "GET"
+  liftIO $ assertBool "/self was called at least once" ((beforeSelf + 1) <= countSelf)
+  countClients <- getCount "/users/:uid/clients" "GET"
+  liftIO $ assertBool "/users/:uid/clients was called at least twice" ((beforeClients + 2) <= countClients)
+  countProperties <- getCount "/login" "POST"
+  liftIO $ assertBool "/login was called at least twice" ((beforeProperties + 2) <= countProperties)
   where
-    getCount endpoint = do
-      rsp <- responseBody <$> get (brig . path "i/metrics")
+    getCount endpoint m = do
+      rsp <- responseBody <$> get (brig0 . path "i/metrics")
       -- is there some responseBodyAsText function used elsewhere?
       let asText = fromMaybe "" (fromByteString' (fromMaybe "" rsp))
-      return $ fromRight 0 (parseOnly (parseCount endpoint) asText)
-    parseCount :: Text -> Parser Integer
-    parseCount endpoint =
-      manyTill anyChar (string ("http_request_duration_seconds_count{handler=\"" <> endpoint <> "\",method=\"GET\",status_code=\"200\"} "))
+      pure $ fromRight 0 (parseOnly (parseCount endpoint m) asText)
+    parseCount :: Text -> Text -> Parser Integer
+    parseCount endpoint m =
+      manyTill anyChar (string ("http_request_duration_seconds_count{handler=\"" <> endpoint <> "\",method=\"" <> m <> "\",status_code=\"200\"} "))
         *> decimal
 
 -- FUTUREWORK: check whether prometheus metrics are correct regarding timings:

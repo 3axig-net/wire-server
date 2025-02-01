@@ -1,11 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,51 +22,39 @@
 module Arbitrary where
 
 import Data.Aeson
-import Data.Id (TeamId)
+import Data.Id (TeamId, UserId)
+import Data.OpenApi hiding (Header (..))
 import Data.Proxy
-import Data.String.Conversions (cs)
-import Data.Swagger hiding (Header (..))
+import Data.String.Conversions
 import Imports
 import SAML2.WebSSO.Test.Arbitrary ()
 import SAML2.WebSSO.Types
 import Servant.API.ContentTypes
 import Spar.Scim
-import qualified Spar.Sem.IdP as E
+import Spar.Scim.Types (ScimUserCreationStatus)
+import qualified Spar.Sem.IdPConfigStore as E
 import Test.QuickCheck
 import URI.ByteString
 import Wire.API.User.IdentityProvider
 import Wire.API.User.Saml
 
 instance Arbitrary IdPList where
-  arbitrary = do
-    _idplProviders <- arbitrary
-    pure $ IdPList {..}
+  arbitrary = IdPList <$> arbitrary
 
 instance Arbitrary WireIdP where
-  arbitrary = WireIdP <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
-
-deriving instance Arbitrary ScimToken
+  arbitrary = WireIdP <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
 
 instance Arbitrary ScimTokenHash where
   arbitrary = hashScimToken <$> arbitrary
 
-instance Arbitrary ScimTokenInfo where
-  arbitrary =
-    ScimTokenInfo
-      <$> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-      <*> arbitrary
-
-instance Arbitrary CreateScimToken where
-  arbitrary = CreateScimToken <$> arbitrary <*> arbitrary
-
-instance Arbitrary CreateScimTokenResponse where
-  arbitrary = CreateScimTokenResponse <$> arbitrary <*> arbitrary
-
 instance Arbitrary ScimTokenList where
   arbitrary = ScimTokenList <$> arbitrary
+
+instance Arbitrary ScimTokenListV7 where
+  arbitrary = ScimTokenListV7 <$> arbitrary
+
+instance Arbitrary ScimTokenName where
+  arbitrary = ScimTokenName <$> arbitrary
 
 instance Arbitrary NoContent where
   arbitrary = pure NoContent
@@ -95,9 +82,11 @@ instance Arbitrary E.Replacing where
 instance Arbitrary E.Replaced where
   arbitrary = E.Replaced <$> arbitrary
 
-instance CoArbitrary a => CoArbitrary (E.GetIdPResult a)
-
+-- TODO(sandy): IdPIds are unlikely to collide. Does the size parameter
+-- affect them?
 instance CoArbitrary IdPId
+
+instance CoArbitrary IdPHandle
 
 instance CoArbitrary WireIdP
 
@@ -105,13 +94,19 @@ instance CoArbitrary WireIdPAPIVersion
 
 instance CoArbitrary TeamId
 
+instance CoArbitrary UserId
+
+instance CoArbitrary Time
+
 instance CoArbitrary Issuer where
   coarbitrary (Issuer ur) = coarbitrary $ show ur
 
-instance CoArbitrary a => CoArbitrary (URIRef a) where
+instance (CoArbitrary a) => CoArbitrary (URIRef a) where
   coarbitrary = coarbitrary . show
 
 instance CoArbitrary (IdPConfig WireIdP)
 
 instance CoArbitrary IdPMetadata where
   coarbitrary = coarbitrary . show
+
+instance CoArbitrary ScimUserCreationStatus

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,23 +21,22 @@ module Galley.External.LegalHoldService.Internal
   )
 where
 
-import qualified Bilge
+import Bilge qualified
 import Bilge.Retry
-import Brig.Types.Provider
 import Control.Lens (view)
 import Control.Monad.Catch
 import Control.Retry
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy.Char8 as LC8
+import Data.ByteString qualified as BS
+import Data.ByteString.Lazy.Char8 qualified as LC8
 import Data.Misc
 import Galley.API.Error
 import Galley.Env
 import Galley.Monad
 import Imports
-import qualified Network.HTTP.Client as Http
-import qualified OpenSSL.Session as SSL
+import Network.HTTP.Client qualified as Http
+import OpenSSL.Session qualified as SSL
 import Ssl.Util
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 import URI.ByteString (uriPath)
 
 -- | Check that the given fingerprint is valid and make the request over ssl.
@@ -60,7 +59,7 @@ makeVerifiedRequestWithManager mgr verifyFingerprints fpr (HttpsUrl url) reqBuil
         . prependPath (uriPath url)
     errHandler e = do
       Log.info . Log.msg $ "error making request to legalhold service: " <> show e
-      throwM legalHoldServiceUnavailable
+      throwM (legalHoldServiceUnavailable e)
     prependPath :: ByteString -> Http.Request -> Http.Request
     prependPath pth req = req {Http.path = pth </> Http.path req}
     -- append two paths with exactly one slash
@@ -68,7 +67,7 @@ makeVerifiedRequestWithManager mgr verifyFingerprints fpr (HttpsUrl url) reqBuil
     a </> b = fromMaybe a (BS.stripSuffix "/" a) <> "/" <> fromMaybe b (BS.stripPrefix "/" b)
     x3 :: RetryPolicy
     x3 = limitRetries 3 <> exponentialBackoff 100000
-    extHandleAll :: MonadCatch m => (SomeException -> m a) -> m a -> m a
+    extHandleAll :: (MonadCatch m) => (SomeException -> m a) -> m a -> m a
     extHandleAll f ma =
       catches
         ma

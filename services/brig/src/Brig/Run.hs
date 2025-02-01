@@ -1,8 +1,6 @@
-{-# LANGUAGE NumericUnderscores #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,130 +15,156 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Brig.Run
-  ( run,
-    mkApp,
-  )
-where
+module Brig.Run (run, mkApp) where
 
-import Brig.API (sitemap)
+import AWS.Util (readAuthExpiration)
 import Brig.API.Federation
 import Brig.API.Handler
-import qualified Brig.API.Internal as IAPI
-import Brig.API.Public (ServantAPI, SwaggerDocsAPI, servantSitemap, swaggerDocsAPI)
-import qualified Brig.API.User as API
-import Brig.AWS (sesQueue)
-import qualified Brig.AWS as AWS
-import qualified Brig.AWS.SesNotification as SesNotification
+import Brig.API.Internal qualified as IAPI
+import Brig.API.Public
+import Brig.API.User qualified as API
+import Brig.AWS qualified as AWS
+import Brig.AWS.SesNotification qualified as SesNotification
 import Brig.App
-import qualified Brig.Calling as Calling
-import Brig.Data.UserPendingActivation (UserPendingActivation (..), usersPendingActivationList, usersPendingActivationRemoveMultiple)
-import qualified Brig.InternalEvent.Process as Internal
+import Brig.Calling qualified as Calling
+import Brig.CanonicalInterpreter
+import Brig.Effects.UserPendingActivationStore (UserPendingActivation (UserPendingActivation), UserPendingActivationStore)
+import Brig.Effects.UserPendingActivationStore qualified as UsersPendingActivationStore
+import Brig.InternalEvent.Process qualified as Internal
 import Brig.Options hiding (internalEvents, sesQueue)
-import qualified Brig.Queue as Queue
-import Brig.Types.Intra (AccountStatus (PendingInvitation))
-import Cassandra (Page (Page), liftClient)
-import qualified Control.Concurrent.Async as Async
+import Brig.Queue qualified as Queue
+import Brig.Version
+import Control.Concurrent.Async qualified as Async
 import Control.Exception.Safe (catchAny)
-import Control.Lens (view, (.~), (^.))
+import Control.Lens ((.~))
 import Control.Monad.Catch (MonadCatch, finally)
-import Control.Monad.Random (Random (randomRIO))
-import qualified Data.Aeson as Aeson
-import Data.Default (Default (def))
-import Data.Id (RequestId (..))
-import qualified Data.Metrics.Servant as Metrics
+import Control.Monad.Random (randomRIO)
+import Data.Aeson qualified as Aeson
+import Data.ByteString.UTF8 qualified as UTF8
+import Data.Metrics.AWS (gaugeTokenRemaing)
+import Data.Metrics.Servant qualified as Metrics
 import Data.Proxy (Proxy (Proxy))
-import Data.String.Conversions (cs)
 import Data.Text (unpack)
 import Imports hiding (head)
-import qualified Network.HTTP.Media as HTTPMedia
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Middleware.Gunzip as GZip
-import qualified Network.Wai.Middleware.Gzip as GZip
-import Network.Wai.Routing (Tree)
-import Network.Wai.Routing.Route (App)
-import Network.Wai.Utilities (lookupRequestId)
+import Network.HTTP.Media qualified as HTTPMedia
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
+import Network.Wai.Middleware.Gunzip qualified as GZip
+import Network.Wai.Middleware.Gzip qualified as GZip
+import Network.Wai.Utilities.Request
 import Network.Wai.Utilities.Server
-import qualified Network.Wai.Utilities.Server as Server
+import Network.Wai.Utilities.Server qualified as Server
+import OpenTelemetry.Instrumentation.Wai qualified as Otel
+import OpenTelemetry.Trace as Otel
+import Polysemy (Member)
 import Servant (Context ((:.)), (:<|>) (..))
-import qualified Servant
+import Servant qualified
 import System.Logger (msg, val, (.=), (~~))
 import System.Logger.Class (MonadLogger, err)
 import Util.Options
+import Util.Timeout
+import Wire.API.Routes.API
+import Wire.API.Routes.Internal.Brig qualified as IAPI
+import Wire.API.Routes.Public.Brig
+import Wire.API.Routes.Version
+import Wire.API.Routes.Version.Wai
+import Wire.API.User (AccountStatus (PendingInvitation))
+import Wire.DeleteQueue
+import Wire.OpenTelemetry (withTracer)
+import Wire.Sem.Paging qualified as P
+import Wire.UserStore
 
 -- FUTUREWORK: If any of these async threads die, we will have no clue about it
 -- and brig could start misbehaving. We should ensure that brig dies whenever a
 -- thread terminates for any reason.
 -- https://github.com/zinfra/backend-issues/issues/1647
 run :: Opts -> IO ()
-run o = do
-  (app, e) <- mkApp o
+run opts = withTracer \tracer -> do
+  (app, e) <- mkApp opts
   s <- Server.newSettings (server e)
   internalEventListener <-
     Async.async $
-      runAppT e $
-        Queue.listen (e ^. internalEvents) Internal.onEvent
-  let throttleMillis = fromMaybe defSqsThrottleMillis $ setSqsThrottleMillis (optSettings o)
-  emailListener <- for (e ^. awsEnv . sesQueue) $ \q ->
+      runBrigToIO e $
+        wrapHttpClient $
+          Queue.listen e.internalEvents $
+            liftIO . runBrigToIO e . liftSem . Internal.onEvent
+  let throttleMillis = fromMaybe defSqsThrottleMillis opts.settings.sqsThrottleMillis
+  emailListener <- for e.awsEnv._sesQueue $ \q ->
     Async.async $
-      AWS.execute (e ^. awsEnv) $
-        AWS.listen throttleMillis q (runAppT e . SesNotification.onEvent)
-  sftDiscovery <- forM (e ^. sftEnv) $ Async.async . Calling.startSFTServiceDiscovery (e ^. applog)
-  pendingActivationCleanupAsync <- Async.async (runAppT e pendingActivationCleanup)
+      AWS.execute e.awsEnv $
+        AWS.listen throttleMillis q (runBrigToIO e . SesNotification.onEvent)
+  sftDiscovery <- forM e.sftEnv $ Async.async . Calling.startSFTServiceDiscovery e.appLogger
+  turnDiscovery <- Calling.startTurnDiscovery e.appLogger e.fsWatcher e.turnEnv
+  authMetrics <- Async.async (runBrigToIO e collectAuthMetrics)
+  pendingActivationCleanupAsync <- Async.async (runBrigToIO e pendingActivationCleanup)
 
-  runSettingsWithShutdown s app 5 `finally` do
-    mapM_ Async.cancel emailListener
-    Async.cancel internalEventListener
-    mapM_ Async.cancel sftDiscovery
-    Async.cancel pendingActivationCleanupAsync
+  inSpan tracer "brig" defaultSpanArguments {kind = Otel.Server} (runSettingsWithShutdown s app Nothing) `finally` do
+    Async.cancelMany $
+      [internalEventListener, pendingActivationCleanupAsync, authMetrics]
+        <> catMaybes [emailListener, sftDiscovery]
+        <> turnDiscovery
     closeEnv e
   where
-    endpoint = brig o
-    server e = defaultServer (unpack $ endpoint ^. epHost) (endpoint ^. epPort) (e ^. applog) (e ^. metrics)
+    brig = opts.brig
+    server e = defaultServer (unpack $ brig.host) brig.port e.appLogger
 
 mkApp :: Opts -> IO (Wai.Application, Env)
-mkApp o = do
-  e <- newEnv o
-  return (middleware e $ \reqId -> servantApp (e & requestId .~ reqId), e)
+mkApp opts = do
+  e <- newEnv opts
+  otelMiddleware <- Otel.newOpenTelemetryWaiMiddleware
+  pure (otelMiddleware . middleware e $ servantApp e, e)
   where
-    rtree :: Tree (App Handler)
-    rtree = compile sitemap
-
-    middleware :: Env -> (RequestId -> Wai.Application) -> Wai.Application
+    middleware :: Env -> Wai.Middleware
     middleware e =
-      Metrics.servantPlusWAIPrometheusMiddleware sitemap (Proxy @ServantCombinedAPI)
+      -- these rewrite the request, so they must be at the top (i.e. applied last)
+      versionMiddleware e.disabledVersions
+        . internalHandleCompatibilityMiddleware
+        -- this also rewrites the request
+        . requestIdMiddleware e.appLogger defaultRequestIdHeaderName
+        . Metrics.servantPrometheusMiddleware (Proxy @ServantCombinedAPI)
         . GZip.gunzip
         . GZip.gzip GZip.def
-        . catchErrors (e ^. applog) [Right $ e ^. metrics]
-        . lookupRequestIdMiddleware
-    app e r k = runHandler e r (Server.route rtree r k) k
+        . catchErrors e.appLogger defaultRequestIdHeaderName
 
-    -- the servant API wraps the one defined using wai-routing
     servantApp :: Env -> Wai.Application
-    servantApp e =
+    servantApp e req cont = do
+      let rid = getRequestId defaultRequestIdHeaderName req
+      let env = requestIdLens .~ rid $ e
+      let localDomain = env.settings.federationDomain
       Servant.serveWithContext
         (Proxy @ServantCombinedAPI)
-        (customFormatters :. Servant.EmptyContext)
-        ( swaggerDocsAPI
-            :<|> Servant.hoistServer (Proxy @ServantAPI) (toServantHandler e) servantSitemap
-            :<|> Servant.hoistServer (Proxy @IAPI.API) (toServantHandler e) IAPI.servantSitemap
-            :<|> Servant.hoistServer (Proxy @FederationAPI) (toServantHandler e) federationSitemap
-            :<|> Servant.Tagged (app e)
+        (customFormatters :. localDomain :. Servant.EmptyContext)
+        ( docsAPI
+            :<|> hoistServerWithDomain @BrigAPI (toServantHandler env) servantSitemap
+            :<|> hoistServerWithDomain @IAPI.API (toServantHandler env) IAPI.servantSitemap
+            :<|> hoistServerWithDomain @FederationAPI (toServantHandler env) federationSitemap
+            :<|> hoistServerWithDomain @VersionAPI (toServantHandler env) versionAPI
         )
+        req
+        cont
+
+-- FUTUREWORK: this rewrites /i/users/handles to /i/handles, for backward
+-- compatibility with the old endpoint path during deployment. Once the new
+-- endpoint has been deployed, this middleware can be removed.
+internalHandleCompatibilityMiddleware :: Wai.Middleware
+internalHandleCompatibilityMiddleware app req k =
+  app
+    ( case Wai.pathInfo req of
+        ("i" : "users" : "handles" : rest) ->
+          req
+            { Wai.pathInfo = ("i" : "handles" : rest)
+            }
+        _ -> req
+    )
+    k
 
 type ServantCombinedAPI =
-  ( SwaggerDocsAPI
-      :<|> ServantAPI
+  ( DocsAPI
+      :<|> BrigAPI
       :<|> IAPI.API
       :<|> FederationAPI
-      :<|> Servant.Raw
+      :<|> VersionAPI
   )
-
-lookupRequestIdMiddleware :: (RequestId -> Wai.Application) -> Wai.Application
-lookupRequestIdMiddleware mkapp req cont = do
-  let reqid = maybe def RequestId $ lookupRequestId req
-  mkapp reqid req cont
 
 customFormatters :: Servant.ErrorFormatters
 customFormatters =
@@ -152,7 +176,7 @@ bodyParserErrorFormatter :: Servant.ErrorFormatter
 bodyParserErrorFormatter _ _ errMsg =
   Servant.ServerError
     { Servant.errHTTPCode = HTTP.statusCode HTTP.status400,
-      Servant.errReasonPhrase = cs $ HTTP.statusMessage HTTP.status400,
+      Servant.errReasonPhrase = UTF8.toString $ HTTP.statusMessage HTTP.status400,
       Servant.errBody =
         Aeson.encode $
           Aeson.object
@@ -163,32 +187,43 @@ bodyParserErrorFormatter _ _ errMsg =
       Servant.errHeaders = [(HTTP.hContentType, HTTPMedia.renderHeader (Servant.contentType (Proxy @Servant.JSON)))]
     }
 
-pendingActivationCleanup :: AppIO ()
+-- | Go through expired pending activations/invitations and delete them.  This could probably
+-- be done with cassandra TTLs, but it involves several tables and may require adjusting their
+-- write operations.
+pendingActivationCleanup ::
+  forall r p.
+  ( P.Paging p,
+    Member (UserPendingActivationStore p) r,
+    Member DeleteQueue r,
+    Member UserStore r
+  ) =>
+  AppT r ()
 pendingActivationCleanup = do
   safeForever "pendingActivationCleanup" $ do
-    now <- liftIO =<< view currentTime
+    now <- liftIO =<< asks (.currentTime)
     forExpirationsPaged $ \exps -> do
       uids <-
-        ( for exps $ \(UserPendingActivation uid expiresAt) -> do
-            isPendingInvitation <- (Just PendingInvitation ==) <$> API.lookupStatus uid
-            pure $
-              ( expiresAt < now,
-                isPendingInvitation,
-                uid
-              )
-          )
+        for exps $ \(UserPendingActivation uid expiresAt) -> do
+          isPendingInvitation <- (Just PendingInvitation ==) <$> liftSem (lookupStatus uid)
+          pure
+            ( expiresAt < now,
+              isPendingInvitation,
+              uid
+            )
 
       API.deleteUsersNoVerify $
-        catMaybes
-          ( uids <&> \(isExpired, isPendingInvitation, uid) ->
+        mapMaybe
+          ( \(isExpired, isPendingInvitation, uid) ->
               if isExpired && isPendingInvitation then Just uid else Nothing
           )
+          uids
 
-      usersPendingActivationRemoveMultiple $
-        catMaybes
-          ( uids <&> \(isExpired, _isPendingInvitation, uid) ->
+      liftSem . UsersPendingActivationStore.removeMultiple $
+        mapMaybe
+          ( \(isExpired, _isPendingInvitation, uid) ->
               if isExpired then Just uid else Nothing
           )
+          uids
 
     threadDelayRandom
   where
@@ -196,26 +231,35 @@ pendingActivationCleanup = do
     safeForever funName action =
       forever $
         action `catchAny` \exc -> do
-          err $ "error" .= show exc ~~ msg (val $ cs funName <> " failed")
+          err $ "error" .= show exc ~~ msg (val $ UTF8.fromString funName <> " failed")
           -- pause to keep worst-case noise in logs manageable
           threadDelay 60_000_000
 
-    forExpirationsPaged :: ([UserPendingActivation] -> AppIO ()) -> AppIO ()
+    forExpirationsPaged :: ([UserPendingActivation] -> (AppT r) ()) -> (AppT r) ()
     forExpirationsPaged f = do
-      go =<< usersPendingActivationList
+      go =<< liftSem (UsersPendingActivationStore.list Nothing)
       where
-        go :: (Page UserPendingActivation) -> AppIO ()
-        go (Page hasMore result nextPage) = do
-          f result
-          when hasMore $
-            go =<< liftClient nextPage
+        go :: P.Page p UserPendingActivation -> (AppT r) ()
+        go p = do
+          f (P.pageItems p)
+          when (P.pageHasMore p) $ do
+            go =<< liftSem (UsersPendingActivationStore.list $ Just $ P.pageState p)
 
-    threadDelayRandom :: AppIO ()
+    threadDelayRandom :: (AppT r) ()
     threadDelayRandom = do
-      cleanupTimeout <- fromMaybe (hours 24) . setExpiredUserCleanupTimeout <$> view settings
+      cleanupTimeout <- fromMaybe (hours 24) <$> asks (.settings.expiredUserCleanupTimeout)
       let d = realToFrac cleanupTimeout
       randomSecs :: Int <- liftIO (round <$> randomRIO @Double (0.5 * d, d))
       threadDelay (randomSecs * 1_000_000)
 
     hours :: Double -> Timeout
     hours n = realToFrac (n * 60 * 60)
+
+collectAuthMetrics :: forall r. AppT r ()
+collectAuthMetrics = do
+  env <- asks (.awsEnv._amazonkaEnv)
+  liftIO $
+    forever $ do
+      mbRemaining <- readAuthExpiration env
+      gaugeTokenRemaing mbRemaining
+      threadDelay 1_000_000

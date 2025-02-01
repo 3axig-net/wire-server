@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -70,13 +70,13 @@ data Site tag route = Site
     users ::
       route
         :- Header "Authorization" (AuthData tag)
-        :> "Users"
-        :> UserAPI tag,
+          :> "Users"
+          :> UserAPI tag,
     groups ::
       route
         :- Header "Authorization" (AuthData tag)
-        :> "Groups"
-        :> GroupAPI tag
+          :> "Groups"
+          :> GroupAPI tag
   }
   deriving (Generic)
 
@@ -85,7 +85,7 @@ data Site tag route = Site
 
 siteServer ::
   forall tag m.
-  (DB tag m, Show (GroupId tag)) =>
+  (DB tag m) =>
   Configuration ->
   Site tag (AsServerT (ScimHandler m))
 siteServer conf =
@@ -94,7 +94,6 @@ siteServer conf =
       users = \authData -> toServant (userServer @tag authData),
       groups = \authData -> toServant (groupServer @tag authData)
     }
-  where
 
 ----------------------------------------------------------------------------
 -- Server-starting utilities
@@ -118,7 +117,7 @@ mkapp proxy api nt =
 
 app ::
   forall tag m.
-  App tag m (SiteAPI tag) =>
+  (App tag m (SiteAPI tag)) =>
   Configuration ->
   (forall a. ScimHandler m a -> Handler a) ->
   Application

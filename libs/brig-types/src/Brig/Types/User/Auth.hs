@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,30 +20,12 @@
 module Brig.Types.User.Auth
   ( SsoLogin (..),
     LegalHoldLogin (..),
-
-    -- * re-exports
-    PendingLoginCode (..),
-    LoginCode (..),
-    LoginId (..),
-    SendLoginCode (..),
-    LoginCodeTimeout (..),
-    Login (..),
-    loginLabel,
-    AccessToken (..),
-    TokenType (..),
-    bearerToken,
-    RemoveCookies (..),
-    CookieLabel (..),
-    CookieId (..),
-    Cookie (..),
-    CookieList (..),
-    CookieType (..),
   )
 where
 
 import Data.Aeson
 import Data.Id (UserId)
-import Data.Misc (PlainTextPassword (..))
+import Data.Misc (PlainTextPassword6)
 import Imports
 import Wire.API.User.Auth
 
@@ -55,7 +37,7 @@ data SsoLogin
 -- This kind of login returns restricted 'LegalHoldUserToken's instead of regular
 -- tokens.
 data LegalHoldLogin
-  = LegalHoldLogin !UserId !(Maybe PlainTextPassword) !(Maybe CookieLabel)
+  = LegalHoldLogin !UserId !(Maybe PlainTextPassword6) !(Maybe CookieLabel)
 
 instance FromJSON SsoLogin where
   parseJSON = withObject "SsoLogin" $ \o ->
@@ -67,9 +49,13 @@ instance ToJSON SsoLogin where
 
 instance FromJSON LegalHoldLogin where
   parseJSON = withObject "LegalHoldLogin" $ \o ->
-    LegalHoldLogin <$> o .: "user"
-      <*> o .:? "password"
-      <*> o .:? "label"
+    LegalHoldLogin
+      <$> o
+        .: "user"
+      <*> o
+        .:? "password"
+      <*> o
+        .:? "label"
 
 instance ToJSON LegalHoldLogin where
   toJSON (LegalHoldLogin uid password label) =

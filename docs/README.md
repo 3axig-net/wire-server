@@ -1,63 +1,129 @@
-# Reference documentation
+# Wire-docs
 
-What you need to know as a user of the Wire backend: concepts, features, and API. We strive to keep these up to date.
+Source files for wire-server documentation hosted on https://docs.wire.com
 
-## Users
+## Reading the documentation
 
-User lifecycle:
+Visit https://docs.wire.com/
 
-* [User registration](reference/user/registration.md) `{#RefRegistration}`
-* [User activation](reference/user/activation.md) `{#RefActivation}`
+## Making contributions
 
-User profiles and metadata:
+The structure of this document has been heavily inspired by [this blog
+post](https://www.divio.com/blog/documentation/).
 
-* [Connections between users](reference/user/connection.md) `{#RefConnection}`
-* [Rich info](reference/user/rich-info.md) `{#RefRichInfo}`
+We use [sphinx](https://www.sphinx-doc.org/) for rendering documentation.
 
-TODO.
+Most documentation is written in RestructuredText (with `.rst` file extension).
+The reason for that is A) the default support from sphinx and B) some of the
+features of RST such as includes, "typesafe" ("well, giving warnings on
+compiling when broken") cross-linking to another section in a different file,
+etc.
 
-## Teams
+For dealing with RST, here are some resources:
 
-TODO.
+* here is a [cheat sheet](https://docutils.sourceforge.io/docs/user/rst/quickref.html)
+* [here is another one](https://docutils.sourceforge.io/docs/user/rst/cheatsheet.html).
+* And [another one](https://sublime-and-sphinx-guide.readthedocs.io/en/latest/references.html).
 
-## Messaging
+At the popular request, there is now also some support for markdown files (`.md` file
+extension), provided by [myst-parser](https://myst-parser.readthedocs.io).
 
-TODO.
+### Conventions
 
-## Single sign-on
+The re-structured spec text allows for choosing any underline/overline symbol
+for any level. In this repository we have not been very consistent. For any new
+contribution let's stick to this convention:
 
-TODO.
+```rst
+######
+Part 1
+######
 
-## SCIM provisioning
+*********
+Chapter 1
+*********
 
-We have support for provisioning users via SCIM ([RFC 7664][], [RFC 7643][]). It's in the beta stage.
+Section 1
+=========
 
-[RFC 7664]: https://tools.ietf.org/html/rfc7664
-[RFC 7643]: https://tools.ietf.org/html/rfc7643
+Sub-section 1
+-------------
 
-* [Using the SCIM API with curl](reference/provisioning/scim-via-curl.md) `{#RefScimViaCurl}`
-* [Authentication via SCIM tokens](reference/provisioning/scim-token.md) `{#RefScimToken}`
+Sub-sub-section 1
+^^^^^^^^^^^^^^^^^
 
-# Developer documentation
+Paragraph 1
+~~~~~~~~~~~
 
-Internal documentation detailing what you need to know as a Wire backend developer. All of these documents can and should be referenced in the code.
+Sub-paragraph 1
++++++++++++++++
+```
 
-If you're not a member of the Wire backend team, you might still find these documents useful, but keep in mind that they are a work in progress.
+If another level is needed, please add the chosen symbol here.
 
-* [Development setup](developer/dependencies.md) `{#DevDeps}`
-* [Editor setup](developer/editor-setup.md) `{#DevEditor}`
-* [Storing SCIM-related data](developer/scim/storage.md) `{#DevScimStorage}`
-* TODO
+## Building the docs
 
-## Cassandra
+Assuming you're set up for wire-server development, you should already have Nix
+and Direnv installed.
 
-We use [Cassandra](http://cassandra.apache.org/) as the primary data store. It is scalable, has very fast reads and writes, and is conceptually simple (or at least simpler than SQL databases).
+This folder contains another `.envrc` file that adds all the binaries needed to
+build the docs to `$PATH`.
 
-Some helpful links:
+In short, when you `cd` into this folder, you should see this message:
 
-* [Query syntax](https://docs.datastax.com/en/cql/3.3/cql/cql_reference/cqlReferenceTOC.html)
+```sh
+direnv: error wire-server/docs/.envrc is blocked. Run `direnv allow` to approve its content
+```
 
-* How deletes work in Cassandra:
+Run `direnv allow` to allow the `.envrc` file to modify your environment. Then, you should have everything (binaries, environment variables) needed to build the docs.
 
-  - [Understanding Deletes](https://medium.com/@foundev/domain-modeling-around-deletes-1cc9b6da0d24)
-  - [Cassandra Compaction and Tombstone Behavior](http://engblog.polyvore.com/2015/03/cassandra-compaction-and-tombstone.html)
+### Generating html output (one-off)
+
+```
+make html
+```
+
+### Generating html output continuously (recommended) with file watching
+
+Enter a *development mode* by running
+
+```
+make dev-run
+```
+
+to start a local server and file watcher. Then, point your browser at `http://localhost:3000`.
+
+### Generating a PDF file
+
+NOTE: support is experimental and resulting pdf may not have great formatting. See the [rst2pdf](https://rst2pdf.org/static/manual.pdf) manual to improve the configuration here so the resulting PDF becomes nicer.
+
+Run `make pdf` and look at files in `./build/pdf/`.
+
+You can use the `make dev-pdf` target to get auto-refreshing PDF files as you save source files. This is also acessible at `http://localhost:3000/wire_federation.pdf`.
+
+### Testing CI build locally
+
+In order to test changes to the deployment process (eg. nix changes, new grepinclude defaults), the build process can be invoked locally with
+
+```
+nix-build --no-out-link ./nix -A docs
+```
+
+If the command succeeds, the static content can be viewed in the browser directly from the nix build dir (adjust the build path)
+
+```
+firefox /nix/store/isjbzhmm34kr1i1xdgwfrrn98s4hgj43-wire-docs/html/index.html
+```
+
+
+### Upload to S3
+
+CI is set up to do this automatically on a push to master. If for some reason you wish to upload manually to S3:
+
+(You need amazon credentials for pushing to S3)
+
+```
+make push
+```
+
+Please note that cloudfront CDN has a certain cache duration (at the time of writing: 1 minute), so changes will take a bit of time to take effect.

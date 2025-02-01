@@ -1,8 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,10 +19,11 @@
 -- errors instead of plaintext.
 module Servant.API.Extended where
 
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString
+import Data.ByteString.Lazy qualified as BL
 import Data.EitherR (fmapL)
+import Data.Kind
 import Data.Metrics.Servant
-import Data.String.Conversions (cs)
 import Data.Typeable
 import GHC.TypeLits
 import Imports
@@ -33,8 +32,8 @@ import Network.Wai
 import Servant.API
 import Servant.API.ContentTypes
 import Servant.API.Modifiers
+import Servant.OpenApi
 import Servant.Server.Internal
-import Servant.Swagger
 import Prelude ()
 
 -- | Like 'ReqBody'', but takes parsers that throw 'ServerError', not 'String'.  @tag@ is used
@@ -56,12 +55,12 @@ import Prelude ()
 -- that'll be).
 --
 -- See also: https://github.com/haskell-servant/servant/issues/353
-data ReqBodyCustomError' (mods :: [*]) (list :: [ct]) (tag :: Symbol) (a :: *)
+data ReqBodyCustomError' (mods :: [Type]) (list :: [ct]) (tag :: Symbol) (a :: Type)
 
 type ReqBodyCustomError = ReqBodyCustomError' '[Required, Strict]
 
 -- | Custom parse error for bad request bodies.
-class MakeCustomError (tag :: Symbol) (a :: *) where
+class MakeCustomError (tag :: Symbol) (a :: Type) where
   makeCustomError :: String -> ServerError
 
 -- | Variant of the 'ReqBody'' instance that takes a 'ServerError' as argument instead of a
@@ -94,9 +93,9 @@ instance
               fromMaybe "application/octet-stream" $
                 lookup hContentType $
                   requestHeaders request
-        case canHandleCTypeH (Proxy :: Proxy list) (cs contentTypeH) :: Maybe (BL.ByteString -> Either String a) of
+        case canHandleCTypeH (Proxy :: Proxy list) (fromStrict contentTypeH) :: Maybe (BL.ByteString -> Either String a) of
           Nothing -> delayedFail err415
-          Just f -> return f
+          Just f -> pure f
       -- Body check, we get a body parsing functions as the first argument.
       bodyCheck ::
         (BL.ByteString -> Either String a) ->
@@ -104,16 +103,16 @@ instance
       bodyCheck f = withRequest $ \request -> do
         mrqbody <- fmapL (makeCustomError @tag @a) . f <$> liftIO (lazyRequestBody request)
         case sbool :: SBool (FoldLenient mods) of
-          STrue -> return mrqbody
+          STrue -> pure mrqbody
           SFalse -> case mrqbody of
             Left e -> delayedFailFatal e
-            Right v -> return v
+            Right v -> pure v
 
 instance
-  HasSwagger (ReqBody' '[Required, Strict] cts a :> api) =>
-  HasSwagger (ReqBodyCustomError cts tag a :> api)
+  (HasOpenApi (ReqBody' '[Required, Strict] cts a :> api)) =>
+  HasOpenApi (ReqBodyCustomError cts tag a :> api)
   where
-  toSwagger Proxy = toSwagger (Proxy @(ReqBody' '[Required, Strict] cts a :> api))
+  toOpenApi Proxy = toOpenApi (Proxy @(ReqBody' '[Required, Strict] cts a :> api))
 
-instance RoutesToPaths rest => RoutesToPaths (ReqBodyCustomError' mods list tag a :> rest) where
+instance (RoutesToPaths rest) => RoutesToPaths (ReqBodyCustomError' mods list tag a :> rest) where
   getRoutes = getRoutes @rest

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -70,4 +70,10 @@ cassandraSettingsParser ks =
                   <> value (ks ++ "_test")
                   <> showDefault
               )
+        )
+    <*> ( (optional . strOption)
+            ( long ("tls-ca-certificate-file-" ++ ks)
+                <> help ("Location of a PEM encoded list of CA certificates to be used when verifying" ++ ks ++ "'s Cassandra server's certificate")
+                <> showDefault
+            )
         )

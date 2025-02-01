@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,16 +25,16 @@ module Galley.Data.Services
 where
 
 import Data.Id
-import Galley.Types hiding (Conversation)
-import Galley.Types.Bot
+import Galley.Types.Conversations.Members
 import Imports
+import Wire.API.Provider.Service
 
 -- BotMember ------------------------------------------------------------------
 
 -- | For now we assume bots to always be local
 --
 -- FUTUREWORK(federation): allow remote bots
-newtype BotMember = BotMember {fromBotMember :: LocalMember}
+newtype BotMember = BotMember {fromBotMember :: LocalMember} deriving (Show)
 
 instance Eq BotMember where
   (==) = (==) `on` botMemId
@@ -43,7 +43,7 @@ instance Ord BotMember where
   compare = compare `on` botMemId
 
 newBotMember :: LocalMember -> Maybe BotMember
-newBotMember m = const (BotMember m) <$> lmService m
+newBotMember m = BotMember m <$ lmService m
 
 botMemId :: BotMember -> BotId
 botMemId = BotId . lmId . fromBotMember

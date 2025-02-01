@@ -1,8 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,6 +14,7 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module Test.Spar.DataSpec where
 
@@ -36,18 +35,20 @@ spec = do
   describe "ttlToNominalDiffTime" $ do
     it "" $ do
       addTime (ttlToNominalDiffTime $ TTL 3) (Time $ parsetm "1924-07-14T08:30:00Z")
-        `shouldBe` (Time $ parsetm "1924-07-14T08:30:03Z")
+        `shouldBe` Time (parsetm "1924-07-14T08:30:03Z")
 
-check :: HasCallStack => Int -> Env -> String -> Either TTLError (TTL "authresp") -> Spec
+check :: (HasCallStack) => Int -> Env -> String -> Either TTLError (TTL "authresp") -> Spec
 check testnumber env (parsetm -> endOfLife) expectttl =
   it (show testnumber) $ mkTTLAssertions env endOfLife `shouldBe` expectttl
 
-mkDataEnv :: HasCallStack => String -> (TTL "authresp") -> Env
+parsetm :: (HasCallStack) => String -> UTCTime
+parsetm = fromJust . parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"
+
+{-# HLINT ignore "Eta reduce" #-}
+-- For clarity
+mkDataEnv :: (HasCallStack) => String -> TTL "authresp" -> Env
 mkDataEnv now maxttl =
   Env
     (parsetm now)
     0 -- will not be looked at
     maxttl -- this one will
-
-parsetm :: HasCallStack => String -> UTCTime
-parsetm = fromJust . parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ"

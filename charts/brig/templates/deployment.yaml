@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: brig
   labels:
-    wireService: brig
+    app: brig
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -16,11 +16,11 @@ spec:
       maxSurge: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      wireService: brig
+      app: brig
   template:
     metadata:
       labels:
-        wireService: brig
+        app: brig
         release: {{ .Release.Name }}
       annotations:
         # An annotation of the configmap checksum ensures changes to the configmap cause a redeployment upon `helm upgrade`
@@ -29,30 +29,84 @@ spec:
         checksum/secret: {{ include (print .Template.BasePath "/secret.yaml") . | sha256sum }}
         fluentbit.io/parser: json
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: "kubernetes.io/hostname"
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: brig
       volumes:
         - name: "brig-config"
           configMap:
             name: "brig"
-        - name: "turn-servers"
-          configMap:
-            name: "turn"
         - name: "brig-secrets"
           secret:
             secretName: "brig"
+        {{- if eq $.Values.turn.serversSource "files" }}
+        - name: "turn-servers"
+          configMap:
+            name: "turn"
+        {{- end }}
+        {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+        - name: "brig-cassandra"
+          secret:
+            secretName: {{ (include "tlsSecretRef" .Values.config | fromYaml).name }}
+        {{- end}}
+        {{- if eq (include "configureElasticSearchCa" .Values.config) "true" }}
+        - name: "elasticsearch-ca"
+          secret:
+            secretName: {{ include "elasticsearchTlsSecretName" .Values.config }}
+        {{- end }}
+        {{- if eq (include "configureAdditionalElasticSearchCa" .Values.config) "true" }}
+        - name: "additional-elasticsearch-ca"
+          secret:
+            secretName: {{ include "additionalElasticsearchTlsSecretName" .Values.config }}
+        {{- end }}
+        {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+        - name: "rabbitmq-ca"
+          secret:
+            secretName: {{ .Values.config.rabbitmq.tlsCaSecretRef.name }}
+        {{- end }}
+
       containers:
         - name: brig
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ default "" .Values.imagePullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           volumeMounts:
           - name: "brig-secrets"
             mountPath: "/etc/wire/brig/secrets"
           - name: "brig-config"
             mountPath: "/etc/wire/brig/conf"
+          {{- if eq $.Values.turn.serversSource "files" }}
           - name: "turn-servers"
             mountPath: "/etc/wire/brig/turn"
+          {{- end }}
+          {{- if eq (include "useCassandraTLS" .Values.config) "true" }}
+          - name: "brig-cassandra"
+            mountPath: "/etc/wire/brig/cassandra"
+          {{- end }}
+          {{- if eq (include "configureElasticSearchCa" .Values.config) "true" }}
+          - name: "elasticsearch-ca"
+            mountPath: "/etc/wire/brig/elasticsearch-ca/"
+          {{- end }}
+          {{- if eq (include "configureAdditionalElasticSearchCa" .Values.config) "true" }}
+          - name: "additional-elasticsearch-ca"
+            mountPath: "/etc/wire/brig/additional-elasticsearch-ca/"
+          {{- end }}
+          {{- if .Values.config.rabbitmq.tlsCaSecretRef }}
+          - name: "rabbitmq-ca"
+            mountPath: "/etc/wire/brig/rabbitmq-ca/"
+          {{- end }}
           env:
           - name: LOG_LEVEL
             value: {{ .Values.config.logLevel }}
+          {{- if hasKey .Values.secrets "awsKeyId" }}
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -63,6 +117,7 @@ spec:
               secretKeyRef:
                 name: brig
                 key: awsSecretKey
+          {{- end }}
           # TODO: Is this the best way to do this?
           - name: AWS_REGION
             value: "{{ .Values.config.aws.region }}"
@@ -85,9 +140,28 @@ spec:
           - name: NO_PROXY
             value: {{ join "," .noProxyList | quote }}
           {{- end }}
-          {{- end }} 
+          {{- end }}
+          {{- if .Values.config.enableFederation }}
+          - name: RABBITMQ_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: brig
+                key: rabbitmqUsername
+          - name: RABBITMQ_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: brig
+                key: rabbitmqPassword
+          {{- end }}
           ports:
             - containerPort: {{ .Values.service.internalPort }}
+          startupProbe:
+            httpGet:
+              scheme: HTTP
+              path: /i/status
+              port: {{ .Values.service.internalPort }}
+            failureThreshold: 6
+            periodSeconds: 5
           livenessProbe:
             httpGet:
               scheme: HTTP
@@ -98,5 +172,10 @@ spec:
               scheme: HTTP
               path: /i/status
               port: {{ .Values.service.internalPort }}
+          {{- if .Values.preStop }}
+          lifecycle:
+            preStop:
+{{ toYaml .Values.preStop | indent 14 }}
+          {{- end }}
           resources:
 {{ toYaml .Values.resources | indent 12 }}

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,11 +18,11 @@
 module Test.Wire.API.User.Search where
 
 import Data.Aeson (encode, toJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.HashMap.Strict as HashMap
-import Data.String.Conversions (cs)
+import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.String.Conversions
 import Imports
-import qualified Test.Tasty as T
+import Test.Tasty qualified as T
 import Test.Tasty.QuickCheck (counterexample, testProperty)
 import Wire.API.User.Search (Contact)
 
@@ -36,6 +36,6 @@ searchResultBackwardsCompatibility =
     $ \(c :: Contact) ->
       let prop =
             case toJSON c of
-              Aeson.Object o -> "id" `elem` HashMap.keys o
+              Aeson.Object o -> "id" `elem` KeyMap.keys o
               _ -> False
        in counterexample ("This json doesn't contain 'id': \n" <> cs (encode c)) prop

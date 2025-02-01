@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,13 +17,10 @@
 
 module Data.Proto.Id where
 
-import Data.ByteString.Lazy (fromStrict, toStrict)
+import Data.ByteString.Lazy (toStrict)
 import Data.Id
-import qualified Data.UUID as UUID
+import Data.UUID qualified as UUID
 import Imports
 
 toBytes :: Id a -> ByteString
 toBytes = toStrict . UUID.toByteString . toUUID
-
-fromBytes :: ByteString -> Maybe (Id a)
-fromBytes = fmap Id . UUID.fromByteString . fromStrict

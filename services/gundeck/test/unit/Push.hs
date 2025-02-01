@@ -1,10 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
 {-# OPTIONS_GHC -Wno-incomplete-patterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,20 +20,23 @@
 
 module Push where
 
-import qualified Data.Aeson as Aeson
-import Gundeck.Push (pushAll, pushAny)
+import Data.Aeson qualified as Aeson
+import Gundeck.Push (pushAll)
 import Gundeck.Push.Websocket as Web (bulkPush)
-import Gundeck.Types
 import Imports
 import MockGundeck
 import Test.QuickCheck
 import Test.QuickCheck.Instances ()
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Wire.API.Internal.Notification
+import Wire.API.Presence
+import Wire.API.Push.V2
 
 tests :: TestTree
 tests =
-  testGroup "bulkpush" $
+  testGroup
+    "bulkpush"
     [ testProperty "web sockets" webBulkPushProps,
       testProperty "native pushes" pushAllProps
     ]
@@ -81,11 +83,8 @@ pushAllProp env (Pretty pushes) =
   where
     ((), realst) = runMockGundeck env (pushAll pushes)
     ((), mockst) = runMockGundeck env (mockPushAll pushes)
-    (errs, oldst) = runMockGundeck env (pushAny pushes)
     props =
       [ (Aeson.eitherDecode . Aeson.encode) pushes === Right pushes,
         (Aeson.eitherDecode . Aeson.encode) env === Right env,
-        counterexample "real vs. mock:" $ realst === mockst,
-        counterexample "real vs. old:" $ realst === oldst,
-        counterexample "old errors:" $ isRight errs === True
+        counterexample "real vs. mock:" $ realst === mockst
       ]

@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,10 +24,10 @@ module Cassandra.Exec
     paramsP,
     x5,
     x1,
-    syncCassandra,
     paginateC,
     PageWithState (..),
     paginateWithState,
+    paginateWithStateC,
     paramsPagingState,
     pwsHasMore,
     module C,
@@ -42,10 +42,10 @@ import Database.CQL.IO (ProtocolError (UnexpectedResponse), RetrySettings, RunQ,
 -- Things we just import and re-export.
 import Database.CQL.IO as C (BatchM, Client, ClientState, MonadClient, Page (..), PrepQuery, Row, addPrepQuery, addQuery, adjustConsistency, adjustResponseTimeout, adjustSendTimeout, batch, emptyPage, init, liftClient, localState, paginate, prepared, query, query1, queryString, retry, runClient, schema, setConsistency, setSerialConsistency, setType, shutdown, trans, write)
 import Database.CQL.Protocol (Error, QueryParams (QueryParams), Tuple, pagingState)
-import qualified Database.CQL.Protocol as Protocol
+import Database.CQL.Protocol qualified as Protocol
 import Imports hiding (init)
 
-params :: Tuple a => Consistency -> a -> QueryParams a
+params :: Consistency -> a -> QueryParams a
 params c p = QueryParams c False p Nothing Nothing Nothing Nothing
 {-# INLINE params #-}
 
@@ -80,15 +80,6 @@ data CassandraError
   | Other !SomeException
   deriving (Show)
 
-syncCassandra :: (Functor m, MonadIO m, MonadCatch m) => m a -> m (Either CassandraError a)
-syncCassandra m =
-  catches
-    (Right <$> m)
-    [ Handler $ \(e :: Error) -> return . Left . Cassandra $ e,
-      Handler $ \(e :: IOException) -> return . Left . Comm $ e,
-      Handler $ \(e :: SomeException) -> return . Left . Other $ e
-    ]
-
 -- | Stream results of a query.
 --
 -- You can execute this conduit by doing @transPipe (runClient ...)@.
@@ -122,8 +113,31 @@ paginateWithState q p = do
   r <- runQ q p'
   getResult r >>= \case
     Protocol.RowsResult m b ->
-      return $ PageWithState b (pagingState m)
+      pure $ PageWithState b (pagingState m)
     _ -> throwM $ UnexpectedResponse (hrHost r) (hrResponse r)
+
+-- | Like 'paginateWithState' but returns a conduit instead of one page.
+--
+-- This can be used with 'paginateWithState' like this:
+-- @
+--   main :: IO ()
+--   main = do
+--     runConduit $
+--       paginateWithStateC getUsers
+--       .| mapC doSomethingWithAPageOfUsers
+--   where
+--     getUsers state = paginateWithState getUsersQuery (paramsPagingState Quorum () 10000 state)
+-- @
+paginateWithStateC :: forall m a. (Monad m) => (Maybe Protocol.PagingState -> m (PageWithState a)) -> ConduitT () [a] m ()
+paginateWithStateC getPage = do
+  go =<< lift (getPage Nothing)
+  where
+    go :: PageWithState a -> ConduitT () [a] m ()
+    go page = do
+      unless (null page.pwsResults) $
+        yield (page.pwsResults)
+      when (pwsHasMore page) $
+        go =<< lift (getPage page.pwsState)
 
 paramsPagingState :: Consistency -> a -> Int32 -> Maybe Protocol.PagingState -> QueryParams a
 paramsPagingState c p n state = QueryParams c False p (Just n) state Nothing Nothing

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,11 +16,12 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.ClientMismatch_user where
 
-import Data.Id (ClientId (ClientId, client), Id (Id))
+import Data.Id
 import Data.Json.Util (toUTCTimeMillis)
-import qualified Data.UUID as UUID (fromString)
+import Data.UUID qualified as UUID (fromString)
 import GHC.Exts (IsList (fromList))
 import Imports (fromJust, read)
 import Wire.API.Message (ClientMismatch (ClientMismatch), UserClients (UserClients, userClients))
@@ -33,7 +34,7 @@ testObject_ClientMismatch_user_1 =
         { userClients =
             fromList
               [ ( Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000002")),
-                  fromList [ClientId {client = "0"}, ClientId {client = "1"}]
+                  fromList [ClientId 0, ClientId 1]
                 ),
                 ( Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000200000000")),
                   fromList []
@@ -46,10 +47,10 @@ testObject_ClientMismatch_user_1 =
         { userClients =
             fromList
               [ ( Id (fromJust (UUID.fromString "00000004-0000-0004-0000-000700000000")),
-                  fromList [ClientId {client = "0"}, ClientId {client = "1"}]
+                  fromList [ClientId 0, ClientId 1]
                 ),
                 ( Id (fromJust (UUID.fromString "00000005-0000-0000-0000-000600000008")),
-                  fromList [ClientId {client = "0"}, ClientId {client = "1"}]
+                  fromList [ClientId 0, ClientId 1]
                 )
               ]
         }

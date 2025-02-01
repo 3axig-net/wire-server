@@ -1,11 +1,12 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -44,32 +45,35 @@ import Control.Monad.Except
 import Control.Monad.Random
 import Control.Monad.State
 import Data.Aeson
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encode.Pretty as Aeson
-import qualified Data.HashMap.Lazy as HashMap
+import Data.Aeson qualified as Aeson
+import Data.Aeson.Encode.Pretty qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString.Conversion
 import Data.Id
 import Data.IntMultiSet (IntMultiSet)
-import qualified Data.IntMultiSet as MSet
-import qualified Data.List.NonEmpty as NE
+import Data.IntMultiSet qualified as MSet
+import Data.List.NonEmpty qualified as NE
 import Data.List1
-import qualified Data.Map as Map
+import Data.Map qualified as Map
 import Data.Misc (Milliseconds (Ms))
 import Data.Range
-import qualified Data.Scientific as Scientific
-import qualified Data.Set as Set
+import Data.Scientific qualified as Scientific
+import Data.Set qualified as Set
 import Data.String.Conversions
 import Gundeck.Aws.Arn as Aws
 import Gundeck.Options
 import Gundeck.Push
 import Gundeck.Push.Native as Native
 import Gundeck.Push.Websocket as Web
-import Gundeck.Types hiding (recipient)
-import Gundeck.Types.BulkPush
 import Imports
-import qualified Network.URI as URI
+import Network.URI qualified as URI
 import System.Logger.Class as Log hiding (trace)
 import Test.QuickCheck as QC
 import Test.QuickCheck.Instances ()
+import Wire.API.Internal.BulkPush
+import Wire.API.Internal.Notification
+import Wire.API.Presence
+import Wire.API.Push.V2 hiding (recipient)
 
 ----------------------------------------------------------------------
 -- env
@@ -143,7 +147,7 @@ instance ToJSON Address where
         "transport" Aeson..= (adr ^. addrTransport),
         "app" Aeson..= (adr ^. addrApp),
         "token" Aeson..= (adr ^. addrToken),
-        "endpoint" Aeson..= (serializeFakeAddrEndpoint $ adr ^. addrEndpoint),
+        "endpoint" Aeson..= serializeFakeAddrEndpoint (adr ^. addrEndpoint),
         "conn" Aeson..= (adr ^. addrConn),
         "client" Aeson..= (adr ^. addrClient)
       ]
@@ -194,11 +198,11 @@ mkFakeAddrEndpoint (epid, transport, app) = Aws.mkSnsArn Tokyo (Account "acc") e
 -- 2. web socket delivery will NOT work, native push token registered, push will succeed
 -- 3. web socket delivery will NOT work, native push token registered, push will fail
 -- 4. web socket delivery will NOT work, no native push token registered
-genMockEnv :: HasCallStack => Gen MockEnv
+genMockEnv :: (HasCallStack) => Gen MockEnv
 genMockEnv = do
   -- This function generates a 'ClientInfo' that corresponds to one of the
   -- four scenarios above
-  let genClientInfo :: HasCallStack => UserId -> ClientId -> Gen ClientInfo
+  let genClientInfo :: UserId -> ClientId -> Gen ClientInfo
       genClientInfo uid cid = do
         _ciNativeAddress <-
           QC.oneof
@@ -245,12 +249,12 @@ genMockEnv = do
   validateMockEnv env & either error (const $ pure env)
 
 -- Try to shrink a 'MockEnv' by removing some users from '_meClientInfos'.
-shrinkMockEnv :: HasCallStack => MockEnv -> [MockEnv]
+shrinkMockEnv :: MockEnv -> [MockEnv]
 shrinkMockEnv (MockEnv cis) =
   MockEnv . Map.fromList
     <$> filter (not . null) (shrinkList (const []) (Map.toList cis))
 
-validateMockEnv :: forall m. MonadError String m => MockEnv -> m ()
+validateMockEnv :: forall m. (MonadError String m) => MockEnv -> m ()
 validateMockEnv env = do
   checkIdsInNativeAddresses
   where
@@ -265,17 +269,17 @@ validateMockEnv env = do
             unless (uid == adr ^. addrUser && cid == adr ^. addrClient) $ do
               throwError (show (uid, cid, adr))
 
-genRecipients :: HasCallStack => Int -> MockEnv -> Gen [Recipient]
+genRecipients :: (HasCallStack) => Int -> MockEnv -> Gen [Recipient]
 genRecipients numrcp env = do
   uids <- take numrcp <$> shuffle (allUsers env)
   genRecipient' env `mapM` uids
 
-genRecipient :: HasCallStack => MockEnv -> Gen Recipient
+genRecipient :: (HasCallStack) => MockEnv -> Gen Recipient
 genRecipient env = do
   uid <- QC.elements (allUsers env)
   genRecipient' env uid
 
-genRecipient' :: HasCallStack => MockEnv -> UserId -> Gen Recipient
+genRecipient' :: (HasCallStack) => MockEnv -> UserId -> Gen Recipient
 genRecipient' env uid = do
   route <- genRoute
   cids <-
@@ -285,7 +289,7 @@ genRecipient' env uid = do
       ]
   pure $ Recipient uid route cids
 
-genRoute :: HasCallStack => Gen Route
+genRoute :: Gen Route
 genRoute = QC.elements [minBound ..]
 
 genId :: Gen (Id a)
@@ -294,9 +298,9 @@ genId = do
   pure . Id . fst $ random gen
 
 genClientId :: Gen ClientId
-genClientId = newClientId <$> arbitrary
+genClientId = ClientId <$> arbitrary
 
-genProtoAddress :: HasCallStack => UserId -> ClientId -> Gen Address
+genProtoAddress :: UserId -> ClientId -> Gen Address
 genProtoAddress _addrUser _addrClient = do
   _addrTransport :: Transport <- QC.elements [minBound ..]
   arnEpId :: Text <- arbitrary
@@ -309,7 +313,7 @@ genProtoAddress _addrUser _addrClient = do
 genPushes :: MockEnv -> Gen [Push]
 genPushes = listOf . genPush
 
-genPush :: HasCallStack => MockEnv -> Gen Push
+genPush :: (HasCallStack) => MockEnv -> Gen Push
 genPush env = do
   let alluids = allUsers env
   sender <- QC.elements alluids
@@ -326,7 +330,7 @@ genPush env = do
     -- from the list of all recipient connections, sometimes add some here.
     oneof
       [ pure mempty,
-        fmap Set.fromList $ QC.sublistOf allConnIds
+        Set.fromList <$> QC.sublistOf allConnIds
       ]
   originConnection <- do
     -- if one of the recipients is the sender, we may 'Just' pick one of the devices of that
@@ -368,21 +372,21 @@ dropSomeDevices =
       RecipientClientsSome . unsafeList1 . take numdevs
         <$> QC.shuffle (toList cids)
 
-shrinkPushes :: HasCallStack => [Push] -> [[Push]]
+shrinkPushes :: [Push] -> [[Push]]
 shrinkPushes = shrinkList shrinkPush
   where
-    shrinkPush :: HasCallStack => Push -> [Push]
+    shrinkPush :: Push -> [Push]
     shrinkPush psh = (\rcps -> psh & pushRecipients .~ rcps) <$> shrinkRecipients (psh ^. pushRecipients)
-    shrinkRecipients :: HasCallStack => Range 1 1024 (Set Recipient) -> [Range 1 1024 (Set Recipient)]
+    shrinkRecipients :: Range 1 1024 (Set Recipient) -> [Range 1 1024 (Set Recipient)]
     shrinkRecipients = fmap unsafeRange . map Set.fromList . filter (not . null) . shrinkList shrinkRecipient . Set.toList . fromRange
-    shrinkRecipient :: HasCallStack => Recipient -> [Recipient]
+    shrinkRecipient :: Recipient -> [Recipient]
     shrinkRecipient _ = []
 
 -- | See 'Payload'.
 genPayload :: Gen Payload
 genPayload = do
   num :: Int <- arbitrary
-  pure $ List1 (HashMap.singleton "val" (Aeson.toJSON num) NE.:| [])
+  pure $ List1 (KeyMap.singleton "val" (Aeson.toJSON num) NE.:| [])
 
 genNotif :: Gen Notification
 genNotif = Notification <$> genId <*> arbitrary <*> genPayload
@@ -395,7 +399,7 @@ genNotifs env = fmap uniqNotifs . listOf $ do
   where
     uniqNotifs = nubBy ((==) `on` (ntfId . fst))
 
-shrinkNotifs :: HasCallStack => [(Notification, [Presence])] -> [[(Notification, [Presence])]]
+shrinkNotifs :: [(Notification, [Presence])] -> [[(Notification, [Presence])]]
 shrinkNotifs = shrinkList (\(notif, prcs) -> (notif,) <$> shrinkList (const []) prcs)
 
 ----------------------------------------------------------------------
@@ -423,7 +427,9 @@ instance MonadPushAll MockGundeck where
   mpaForkIO = id -- just don't fork.  (this *may* cause deadlocks in principle, but as long as it
   -- doesn't, this is good enough for testing).
 
-  mpaRunWithBudget = \_ _ -> id -- no throttling needed as long as we don't overdo it in the tests...
+  mpaRunWithBudget _ _ = id -- no throttling needed as long as we don't overdo it in the tests...
+  mpaGetClients _ = pure mempty
+  mpaPublishToRabbitMq _ _ = pure ()
 
 instance MonadNativeTargets MockGundeck where
   mntgtLogErr _ = pure ()
@@ -432,9 +438,6 @@ instance MonadNativeTargets MockGundeck where
 instance MonadMapAsync MockGundeck where
   mntgtPerPushConcurrency = pure Nothing -- (unbounded)
   mntgtMapAsync f xs = Right <$$> mapM f xs -- (no concurrency)
-
-instance MonadPushAny MockGundeck where
-  mpyPush = mockOldSimpleWebPush
 
 instance MonadBulkPush MockGundeck where
   mbpBulkSend = mockBulkSend
@@ -526,17 +529,14 @@ handlePushNative Push {..} = do
 
 -- | From a single 'Push', store only those notifications that real Gundeck would put into
 -- Cassandra.
-handlePushCass ::
-  (HasCallStack, m ~ MockGundeck) =>
-  Push ->
-  m ()
+handlePushCass :: Push -> MockGundeck ()
 handlePushCass Push {..}
   -- Condition 1: transient pushes are not put into Cassandra.
   | _pushTransient = pure ()
 handlePushCass Push {..} = do
   forM_ (fromRange _pushRecipients) $ \(Recipient uid _ cids) -> do
     let cids' = case cids of
-          RecipientClientsAll -> [ClientId mempty]
+          RecipientClientsAll -> [ClientId 0]
           -- clients are stored in cassandra as a list with a notification.  empty list is
           -- intepreted as "all clients" by 'Gundeck.Notification.Data.toNotif'.  (here, we just
           -- store a specific 'ClientId' that signifies "no client".)
@@ -544,15 +544,10 @@ handlePushCass Push {..} = do
     forM_ cids' $ \cid ->
       msCassQueue %= deliver (uid, cid) _pushPayload
 
-mockMkNotificationId ::
-  (HasCallStack, m ~ MockGundeck) =>
-  m NotificationId
+mockMkNotificationId :: MockGundeck NotificationId
 mockMkNotificationId = Id <$> getRandom
 
-mockListAllPresences ::
-  (HasCallStack, m ~ MockGundeck) =>
-  [UserId] ->
-  m [[Presence]]
+mockListAllPresences :: [UserId] -> MockGundeck [[Presence]]
 mockListAllPresences uids =
   asks $ fmap fakePresences . filter ((`elem` uids) . fst) . allRecipients
 
@@ -581,25 +576,23 @@ mockBulkPush notifs = do
 
 -- | persisting notification is not needed for the tests at the moment, so we do nothing here.
 mockStreamAdd ::
-  (HasCallStack, m ~ MockGundeck) =>
   NotificationId ->
   List1 NotificationTarget ->
   Payload ->
   NotificationTTL ->
-  m ()
+  MockGundeck ()
 mockStreamAdd _ (toList -> targets) pay _ =
-  forM_ targets $ \tgt -> case (tgt ^. targetClients) of
+  forM_ targets $ \tgt -> case tgt ^. targetClients of
     clients@(_ : _) -> forM_ clients $ \cid ->
       msCassQueue %= deliver (tgt ^. targetUser, cid) pay
     [] ->
-      msCassQueue %= deliver (tgt ^. targetUser, ClientId mempty) pay
+      msCassQueue %= deliver (tgt ^. targetUser, ClientId 0) pay
 
 mockPushNative ::
-  (HasCallStack, m ~ MockGundeck) =>
   Notification ->
   Priority ->
   [Address] ->
-  m ()
+  MockGundeck ()
 mockPushNative (ntfPayload -> payload) _ addrs = do
   env <- ask
   forM_ addrs $ \addr -> do
@@ -617,13 +610,12 @@ mockLookupAddresses uid = do
       . fromMaybe (error $ "mockLookupAddress: unknown UserId: " <> show uid)
       . Map.lookup uid
       <$> asks (^. meClientInfos)
-  pure . catMaybes $ (^? ciNativeAddress . _Just . _1) <$> cinfos
+  pure . mapMaybe (^? ciNativeAddress . _Just . _1) $ cinfos
 
 mockBulkSend ::
-  (HasCallStack, m ~ MockGundeck) =>
   URI ->
   BulkPushRequest ->
-  m (URI, Either SomeException BulkPushResponse)
+  MockGundeck (URI, Either SomeException BulkPushResponse)
 mockBulkSend uri notifs = do
   getstatus <- mkWSStatus
   let flat :: [(Notification, PushTarget)]
@@ -638,49 +630,6 @@ mockBulkSend uri notifs = do
     BulkPushResponse
       [(ntfId ntif, trgt, getstatus trgt) | (ntif, trgt) <- flat]
 
-mockOldSimpleWebPush ::
-  (HasCallStack, m ~ MockGundeck) =>
-  Notification ->
-  List1 NotificationTarget ->
-  Maybe UserId ->
-  Maybe ConnId ->
-  Set ConnId ->
-  m [Presence]
-mockOldSimpleWebPush notif tgts _senderid mconnid connWhitelist = do
-  env <- ask
-  getstatus <- mkWSStatus
-  let clients :: [(UserId, ClientId)]
-      clients =
-        -- reformat
-        fmap (\(PushTarget uid connid) -> (uid, clientIdFromConnId connid))
-          -- drop all broken web sockets
-          . filter ((== PushStatusOk) . getstatus)
-          -- do not push to sending device
-          . filter ((/= mconnid) . Just . ptConnId)
-          -- reformat
-          . mconcat
-          . fmap
-            ( \tgt ->
-                PushTarget (tgt ^. targetUser) . fakeConnId
-                  <$> (tgt ^. targetClients)
-            )
-          -- apply filters
-          . fmap (connWhitelistSieve . emptyMeansFullHack)
-          $ toList tgts
-      connWhitelistSieve :: NotificationTarget -> NotificationTarget
-      connWhitelistSieve =
-        if null connWhitelist
-          then id
-          else targetClients %~ filter ((`elem` connWhitelist) . fakeConnId)
-      emptyMeansFullHack :: NotificationTarget -> NotificationTarget
-      emptyMeansFullHack tgt =
-        tgt & targetClients %~ \case
-          [] -> clientIdsOfUser env (tgt ^. targetUser)
-          same@(_ : _) -> same
-  forM_ clients $ \(userid, clientid) -> do
-    msWSQueue %= deliver (userid, clientid) (ntfPayload notif)
-  pure $ uncurry fakePresence <$> clients
-
 ----------------------------------------------------------------------
 -- helpers
 
@@ -689,25 +638,25 @@ mockOldSimpleWebPush notif tgts _senderid mconnid connWhitelist = do
 newtype Pretty a = Pretty a
   deriving (Eq, Ord)
 
-instance Aeson.ToJSON a => Show (Pretty a) where
+instance (Aeson.ToJSON a) => Show (Pretty a) where
   show (Pretty a) = cs $ Aeson.encodePretty a
 
-shrinkPretty :: HasCallStack => (a -> [a]) -> Pretty a -> [Pretty a]
+shrinkPretty :: (a -> [a]) -> Pretty a -> [Pretty a]
 shrinkPretty shrnk (Pretty xs) = Pretty <$> shrnk xs
 
-sublist1Of :: HasCallStack => [a] -> Gen (List1 a)
+sublist1Of :: (HasCallStack) => [a] -> Gen (List1 a)
 sublist1Of [] = error "sublist1Of: empty list"
 sublist1Of xs =
   sublistOf xs >>= \case
     [] -> sublist1Of xs
     c : cc -> pure (list1 c cc)
 
-unsafeList1 :: HasCallStack => [a] -> List1 a
+unsafeList1 :: (HasCallStack) => [a] -> List1 a
 unsafeList1 [] = error "unsafeList1: empty list"
 unsafeList1 (x : xs) = list1 x xs
 
 deliver :: (UserId, ClientId) -> Payload -> NotifQueue -> NotifQueue
-deliver qkey qval queue = Map.alter (Just . tweak) qkey queue
+deliver qkey qval = Map.alter (Just . tweak) qkey
   where
     tweak Nothing = MSet.singleton (payloadToInt qval)
     tweak (Just qvals) = MSet.insert (payloadToInt qval) qvals
@@ -745,7 +694,7 @@ allUsers = fmap fst . allRecipients
 allRecipients :: MockEnv -> [(UserId, [ClientId])]
 allRecipients (MockEnv mp) = (_2 %~ Map.keys) <$> Map.toList mp
 
-clientIdsOfUser :: HasCallStack => MockEnv -> UserId -> [ClientId]
+clientIdsOfUser :: (HasCallStack) => MockEnv -> UserId -> [ClientId]
 clientIdsOfUser (MockEnv mp) uid =
   maybe (error "unknown UserId") Map.keys $ Map.lookup uid mp
 
@@ -776,7 +725,7 @@ fakePresence userId clientId_ = Presence {..}
 
 -- | See also: 'fakePresence'.
 fakeConnId :: ClientId -> ConnId
-fakeConnId = ConnId . cs . client
+fakeConnId = ConnId . cs . clientToText
 
 clientIdFromConnId :: ConnId -> ClientId
-clientIdFromConnId = ClientId . cs . fromConnId
+clientIdFromConnId = fromJust . fromByteString . fromConnId

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,81 +18,13 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Galley.Types
-  ( foldrOtrRecipients,
-    Accept (..),
-
-    -- * re-exports
-    ConversationMetadata (..),
-    Conversation (..),
-    cnvType,
-    cnvCreator,
-    cnvAccess,
-    cnvAccessRole,
-    cnvName,
-    cnvTeam,
-    cnvMessageTimer,
-    cnvReceiptMode,
-    RemoteMember (..),
-    LocalMember (..),
-    ConvMembers (..),
-    OtherMember (..),
-    Connect (..),
-    NewOtrMessage (..),
-    ClientMismatch (..),
-    OtrRecipients (..),
-    OtrFilterMissing (..),
-    ConvTeamInfo (..),
-    ConversationCode (..),
-    mkConversationCode,
-    Event (..),
-    EventType (..),
-    EventData (..),
-    UserIdList (..),
-    QualifiedUserIdList (..),
-    SimpleMember (..),
-    SimpleMembers (..),
-    MemberUpdateData (..),
-    TypingData (..),
-    OtrMessage (..),
-    Access (..),
-    AccessRole (..),
-    ConversationList (..),
-    ConversationRename (..),
-    ConversationAccessData (..),
-    ConversationReceiptModeUpdate (..),
-    ConversationMessageTimerUpdate (..),
-    ConvType (..),
-    CustomBackend (..),
-    Invite (..),
-    NewConv (..),
-    NewConvManaged (..),
-    NewConvUnmanaged (..),
-    MemberUpdate (..),
-    OtherMemberUpdate (..),
-    MutedStatus (..),
-    ReceiptMode (..),
-    TypingStatus (..),
-    UserClientMap (..),
-    UserClients (..),
-    filterClients,
-    newInvite,
-    memberUpdate,
+  ( Accept (..),
   )
 where
 
 import Data.Aeson
-import Data.Id (ClientId, UserId)
-import qualified Data.Map.Strict as Map
-import Galley.Types.Conversations.Members (LocalMember (..), RemoteMember (..))
+import Data.Id (UserId)
 import Imports
-import Wire.API.Conversation hiding (Member (..))
-import Wire.API.Conversation.Code
-import Wire.API.Conversation.Typing
-import Wire.API.CustomBackend
-import Wire.API.Event.Conversation
-import Wire.API.Message
-import Wire.API.User (UserIdList (..))
-import Wire.API.User.Client
 
 --------------------------------------------------------------------------------
 -- Accept
@@ -112,14 +44,3 @@ instance ToJSON Accept where
 instance FromJSON Accept where
   parseJSON = withObject "accept" $ \o ->
     Accept <$> o .: "user"
-
---------------------------------------------------------------------------------
--- utility functions
-
-foldrOtrRecipients :: (UserId -> ClientId -> Text -> a -> a) -> a -> OtrRecipients -> a
-foldrOtrRecipients f a =
-  Map.foldrWithKey go a
-    . userClientMap
-    . otrRecipientsMap
-  where
-    go u cs acc = Map.foldrWithKey (f u) acc cs

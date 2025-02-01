@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,38 +14,93 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# LANGUAGE NumericUnderscores #-}
 
 module CargoHold.Run
   ( run,
+    mkApp,
   )
 where
 
-import CargoHold.API (sitemap)
+import AWS.Util (readAuthExpiration)
+import qualified Amazonka as AWS
+import CargoHold.API.Federation
+import CargoHold.API.Public
+import CargoHold.AWS (amazonkaEnv)
 import CargoHold.App
-import CargoHold.Options
-import Control.Lens ((^.))
-import Control.Monad.Catch (finally)
-import Data.Metrics.Middleware.Prometheus (waiPrometheusMiddleware)
+import CargoHold.Options hiding (aws)
+import Control.Exception (bracket)
+import Control.Lens ((.~))
+import Control.Monad.Codensity
+import Data.Metrics.AWS (gaugeTokenRemaing)
+import Data.Metrics.Servant
+import Data.Proxy
 import Data.Text (unpack)
 import Imports
 import qualified Network.Wai as Wai
 import qualified Network.Wai.Middleware.Gzip as GZip
+import Network.Wai.Utilities.Request
 import Network.Wai.Utilities.Server
 import qualified Network.Wai.Utilities.Server as Server
+import qualified Servant
+import Servant.API
+import Servant.Server hiding (Handler, runHandler)
+import qualified UnliftIO.Async as Async
 import Util.Options
+import Wire.API.Routes.API
+import Wire.API.Routes.Internal.Cargohold
+import Wire.API.Routes.Public.Cargohold
+import Wire.API.Routes.Version
+import Wire.API.Routes.Version.Wai
+
+type CombinedAPI = FederationAPI :<|> CargoholdAPI :<|> InternalAPI
 
 run :: Opts -> IO ()
-run o = do
-  e <- newEnv o
-  s <- Server.newSettings (server e)
-  runSettingsWithShutdown s (middleware e $ serve e) 5
-    `finally` closeEnv e
+run o = lowerCodensity $ do
+  (app, e) <- mkApp o
+  void $ Codensity $ Async.withAsync (collectAuthMetrics e.aws.amazonkaEnv)
+  liftIO $ do
+    s <-
+      Server.newSettings $
+        defaultServer
+          (unpack . host $ o.cargohold)
+          (port o.cargohold)
+          e.appLogger
+    runSettingsWithShutdown s app Nothing
+
+mkApp :: Opts -> Codensity IO (Application, Env)
+mkApp o = Codensity $ \k ->
+  bracket (newEnv o) closeEnv $ \e ->
+    k (middleware e (servantApp e), e)
   where
-    rtree = compile sitemap
-    server e = defaultServer (unpack $ o ^. optCargohold . epHost) (o ^. optCargohold . epPort) (e ^. appLogger) (e ^. metrics)
     middleware :: Env -> Wai.Middleware
     middleware e =
-      waiPrometheusMiddleware sitemap
+      versionMiddleware (foldMap expandVersionExp o.settings.disabledAPIVersions)
+        . requestIdMiddleware e.appLogger defaultRequestIdHeaderName
+        . servantPrometheusMiddleware (Proxy @CombinedAPI)
         . GZip.gzip GZip.def
-        . catchErrors (e ^. appLogger) [Right $ e ^. metrics]
-    serve e r k = runHandler e r (Server.route rtree r k) k
+        . catchErrors e.appLogger defaultRequestIdHeaderName
+    servantApp :: Env -> Application
+    servantApp e0 r cont = do
+      let rid = getRequestId defaultRequestIdHeaderName r
+          e = requestIdLens .~ rid $ e0
+      Servant.serveWithContext
+        (Proxy @CombinedAPI)
+        (o.settings.federationDomain :. Servant.EmptyContext)
+        ( hoistServerWithDomain @FederationAPI (toServantHandler e) federationSitemap
+            :<|> hoistServerWithDomain @CargoholdAPI (toServantHandler e) servantSitemap
+            :<|> hoistServerWithDomain @InternalAPI (toServantHandler e) internalSitemap
+        )
+        r
+        cont
+
+toServantHandler :: Env -> Handler a -> Servant.Handler a
+toServantHandler env = liftIO . runHandler env
+
+collectAuthMetrics :: (MonadIO m) => AWS.Env -> m ()
+collectAuthMetrics env = do
+  liftIO $
+    forever $ do
+      mbRemaining <- readAuthExpiration env
+      gaugeTokenRemaing mbRemaining
+      threadDelay 1_000_000

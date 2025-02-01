@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,7 +25,12 @@ import Imports
 import Polysemy
 import Polysemy.Input
 
-embedClient :: Members '[Embed IO, Input ClientState] r => Client a -> Sem r a
+embedClient ::
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r
+  ) =>
+  Client a ->
+  Sem r a
 embedClient client = do
   cs <- input
   embed @IO $ runClient cs client

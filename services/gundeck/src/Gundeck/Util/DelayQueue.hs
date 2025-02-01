@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -31,7 +31,7 @@ module Gundeck.Util.DelayQueue
 where
 
 import Data.OrdPSQ (OrdPSQ)
-import qualified Data.OrdPSQ as PSQ
+import Data.OrdPSQ qualified as PSQ
 import Imports hiding (length)
 
 data DelayQueue k v = DelayQueue
@@ -52,9 +52,9 @@ newtype Limit = Limit {getLimit :: Int}
 new :: Clock -> Delay -> Limit -> IO (DelayQueue k v)
 new c d l = do
   queue <- newIORef PSQ.empty
-  return $! DelayQueue queue c d l
+  pure $! DelayQueue queue c d l
 
-enqueue :: Ord k => DelayQueue k v -> k -> v -> IO Bool
+enqueue :: (Ord k) => DelayQueue k v -> k -> v -> IO Bool
 enqueue (DelayQueue queue clock d l) k v = do
   time <- getTime clock
   let !p = time + delayTime d
@@ -71,7 +71,7 @@ enqueue (DelayQueue queue clock d l) k v = do
             k
             q
 
-dequeue :: Ord k => DelayQueue k v -> IO (Maybe (Either Delay v))
+dequeue :: (Ord k) => DelayQueue k v -> IO (Maybe (Either Delay v))
 dequeue (DelayQueue queue clock _ _) = do
   time <- getTime clock
   atomicModifyIORef' queue $ \q ->
@@ -80,7 +80,7 @@ dequeue (DelayQueue queue clock _ _) = do
       Just (_, p, v, q') | p <= time -> (q', Just (Right v))
       Just (_, p, _, _) -> (q, Just (Left (Delay (p - time))))
 
-cancel :: Ord k => DelayQueue k v -> k -> IO Bool
+cancel :: (Ord k) => DelayQueue k v -> k -> IO Bool
 cancel (DelayQueue queue _ _ _) k =
   atomicModifyIORef' queue $
     swap . PSQ.alter (\pv -> (isJust pv, Nothing)) k

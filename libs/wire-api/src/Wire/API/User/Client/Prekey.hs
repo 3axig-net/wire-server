@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,23 +25,24 @@ module Wire.API.User.Client.Prekey
     LastPrekey,
     lastPrekey,
     unpackLastPrekey,
+    fakeLastPrekey,
     lastPrekeyId,
     PrekeyBundle (..),
     ClientPrekey (..),
-
-    -- * Swagger
-    modelPrekey,
   )
 where
 
+import Crypto.Hash (SHA256, hash)
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import Data.Hashable (hash)
+import Data.Bits
+import Data.ByteArray (convert)
+import Data.ByteString qualified as BS
 import Data.Id
+import Data.OpenApi qualified as S
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
+import Data.Text.Encoding (encodeUtf8)
 import Imports
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 newtype PrekeyId = PrekeyId {keyId :: Word16}
   deriving stock (Eq, Ord, Show, Generic)
@@ -58,15 +59,6 @@ data Prekey = Prekey
   deriving (Arbitrary) via (GenericUniform Prekey)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema Prekey
 
--- FUTUREWORK: Remove when 'NewClient' has ToSchema
-modelPrekey :: Doc.Model
-modelPrekey = Doc.defineModel "Prekey" $ do
-  Doc.description "Prekey"
-  Doc.property "id" Doc.int32' $
-    Doc.description "Prekey ID"
-  Doc.property "key" Doc.bytes' $
-    Doc.description "Prekey data"
-
 instance ToSchema Prekey where
   schema =
     object "Prekey" $
@@ -74,9 +66,21 @@ instance ToSchema Prekey where
         <$> prekeyId .= field "id" schema
         <*> prekeyKey .= field "key" schema
 
+-- | Construct a new client ID from a prekey.
+--
+-- This works by taking the SHA256 hash of the prekey, truncating it to its
+-- first 8 bytes, and interpreting the resulting bytestring as a big endian
+-- Word64.
 clientIdFromPrekey :: Prekey -> ClientId
-clientIdFromPrekey prekey =
-  newClientId . fromIntegral . hash . prekeyKey $ prekey
+clientIdFromPrekey =
+  ClientId
+    . foldl' (\w d -> (w `shiftL` 8) .|. fromIntegral d) 0
+    . BS.unpack
+    . BS.take 8
+    . convert
+    . hash @ByteString @SHA256
+    . encodeUtf8
+    . prekeyKey
 
 --------------------------------------------------------------------------------
 -- LastPrekey
@@ -90,8 +94,9 @@ instance ToSchema LastPrekey where
   schema = LastPrekey <$> unpackLastPrekey .= schema `withParser` check
     where
       check x =
-        x <$ guard (prekeyId x == lastPrekeyId)
-          <|> fail "Invalid last prekey ID"
+        x
+          <$ guard (prekeyId x == lastPrekeyId)
+            <|> fail "Invalid last prekey ID"
 
 instance Arbitrary LastPrekey where
   arbitrary = lastPrekey <$> arbitrary
@@ -101,6 +106,11 @@ lastPrekeyId = PrekeyId maxBound
 
 lastPrekey :: Text -> LastPrekey
 lastPrekey = LastPrekey . Prekey lastPrekeyId
+
+-- for tests only
+-- This fake last prekey has the wrong prekeyId
+fakeLastPrekey :: LastPrekey
+fakeLastPrekey = LastPrekey $ Prekey (PrekeyId 7) "pQABAQcCoQBYIDXdN8VlKb5lbgPmoDPLPyqNIEyShG4oT/DlW0peRRZUA6EAoQBYILLf1TIwSB62q69Ojs/X1tzJ+dYHNAw4QbW/7TC5vSZqBPY="
 
 --------------------------------------------------------------------------------
 -- PrekeyBundle

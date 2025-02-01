@@ -1,11 +1,13 @@
 replicaCount: 3
 resources:
   requests:
-    memory: "256Mi"
+    memory: "850Mi"
     cpu: "100m"
   limits:
-    memory: "1024Mi"
-    cpu: "2"
+    memory: "1200Mi"
+metrics:
+  serviceMonitor:
+    enabled: false
 images:
   nginzDisco:
     repository: quay.io/wire/nginz_disco
@@ -16,22 +18,20 @@ images:
 config:
   http:
     httpPort: 8080
+    metricsPort: 8082
   ws:
     wsPort: 8081
     useProxyProtocol: true
-drainTimeout: 0
 terminationGracePeriodSeconds: 30
 nginx_conf:
-  user: nginx
-  group: nginx
   upstream_config: /etc/wire/nginz/upstreams/upstreams.conf
   zauth_keystore: /etc/wire/nginz/secrets/zauth.conf
   zauth_acl: /etc/wire/nginz/conf/zauth.acl
   basic_auth_file: /etc/wire/nginz/secrets/basic_auth.txt
+  oauth_pub_key: /etc/wire/nginz/secrets/oauth_ed25519_pub.jwk
   worker_processes: auto
   worker_rlimit_nofile: 131072
   worker_connections: 65536
-  swagger_root: /var/www/swagger
   # deeplink:
   #   endpoints:
   #     backendURL: "https://prod-nginz-https.wire.com"
@@ -43,27 +43,86 @@ nginx_conf:
   #   title: "Production"
   disabled_paths:
   - /conversations/last-events
-  - ~* ^/conversations/([^/]*)/knock
-  - ~* ^/conversations/([^/]*)/hot-knock
-  - ~* ^/conversations/([^/]*)/messages
-  - ~* ^/conversations/([^/]*)/client-messages
-  - ~* ^/conversations/([^/]*)/events
-  - ~* ^/conversations/([^/]*)/call
-  - ~* ^/conversations/([^/]*)/call/state
+  - /conversations/([^/]*)/knock
+  - /conversations/([^/]*)/hot-knock
+  - /conversations/([^/]*)/messages
+  - /conversations/([^/]*)/client-messages
+  - /conversations/([^/]*)/events
+  - /conversations/([^/]*)/call
+  - /conversations/([^/]*)/call/state
   - /search/top
   - /search/common
+
+  # `default_client_max_body_size` is increased from 256k to 512k because
+  # client requests like listing users, conversations, filling or getting prekeys and other various MLS requests
+  # apparently may have bodies larger than 256k.
+  default_client_max_body_size: "512k"
+  rate_limit_reqs_per_user: "30r/s"
+  rate_limit_reqs_per_addr: "15r/m"
+
+  # This value must be a list of strings. Each string is copied verbatim into
+  # the nginx.conf after the default 'limit_req_zone' directives. This should be
+  # used to create request zones which can then be specified in
+  # 'upstreams.<upstream>.<n>.specific_user_rate_limit'.
+  user_rate_limit_request_zones:
+    - limit_req_zone $rate_limited_by_addr zone=reqs_per_addr_sso:12m rate=50r/s;
+    - limit_req_zone $rate_limited_by_zuser zone=reqs_per_user_signatures:12m rate=10r/m;
+    - limit_req_zone $rate_limited_by_zuser zone=key_package_claims_per_user:12m rate=3000r/m;
+    - limit_req_zone $rate_limited_by_zuser_path zone=key_package_claims_per_user_per_target:12m rate=100r/m;
+    - limit_req_zone $rate_limited_by_zuser zone=one2one_conv:12m rate=3000r/m;
+
+  # The origins from which we allow CORS requests. These are combined with
+  # 'external_env_domain' and 'additional_external_env_domains' to form a full
+  # url
+  allowlisted_origins:
+    - webapp
+    - teams
+    - account
+  # Fully-qualified domain names from which to allow Cross-Origin Requests
+  # (they are **not** combined with 'external_env_domain')
+  allowlisted_fqdn_origins: []
+
+  # The origins from which we allow CORS requests at random ports. This is
+  # useful for testing with HTTP proxies and should not be used in production.
+  # The list entries must be full hostnames (they are **not** combined with
+  # 'external_env_domain'). http and https URLs are allow listed.
+  randomport_allowlisted_origins: [] # default is empty by intention
+
+  # Configure multiple root domains for one backend. This is only advised in
+  # very specicial cases. Usually, this list should be empty.
+  additional_external_env_domains: []
+
+  # Add 'cannon' to 'ignored_upstreams' if you wish to make use of separate
+  # network traffic to cannon-with-its-own-nginz See also "Separate incoming
+  # websocket network traffic from the rest of the https traffic" section in the
+  # docs.
+  ignored_upstreams: []
+
+  # If an upstream runs in a different namespace than nginz, its namespace must
+  # be specified here otherwise nginz_disco will fail to find the upstream and
+  # nginx will think that the upstream is down.
+  upstream_namespace: {
+    # galeb: integrations
+  }
+
   upstreams:
     cargohold:
-    - path: ~* ^/conversations/([^/]*)/assets
+    - path: /conversations/([^/]*)/assets
       envs:
       - all
       max_body_size: "0"
       disable_request_buffering: true
-    - path: ~* ^/conversations/([^/]*)/otr/assets
+    - path: /conversations/([^/]*)/otr/assets
       envs:
       - all
       max_body_size: "0"
       disable_request_buffering: true
+    - path: /assets/(.*)
+      envs:
+      - all
+      max_body_size: "0"
+      disable_request_buffering: true
+      unlimited_requests_endpoint: true
     - path: /assets
       envs:
       - all
@@ -79,34 +138,79 @@ nginx_conf:
       envs:
       - all
       allow_credentials: true
-      restrict_whitelisted_origin: true
       max_body_size: "0"
       disable_request_buffering: true
+    cannon:
+    - path: /await
+      envs:
+      - all
+      use_websockets: true
+      doc: true
     brig:
+    - path: /api-version
+      envs:
+      - all
+      disable_zauth: true
+      unlimited_requests_endpoint: true
     - path: /users
       envs:
       - all
+      doc: true
+    - path: /handles
       envs:
       - all
       doc: true
     - path: /list-users
       envs:
       - all
-    - path: ~* ^/api/swagger.json$
+    - path: /api/swagger.json$
       disable_zauth: true
       envs:
       - all
     - path: /api/swagger-ui
       disable_zauth: true
       envs:
+      - staging
+    - path: /api-internal/swagger-ui
+      disable_zauth: true
+      envs:
+      - staging
+    - path: /api-federation/swagger-ui
+      disable_zauth: true
+      envs:
+      - staging
+    - path: /self$ # Matches exactly /self
+      oauth_scope: self
+      envs:
       - all
-    - path: /self
+    - path: /self/name
+      envs:
+      - all
+    - path: /self/email
+      envs:
+      - all
+    - path: /self/phone
+      envs:
+      - all
+    - path: /self/password
+      envs:
+      - all
+    - path: /self/supported-protocols
+      envs:
+      - all
+    - path: /self/locale
+      envs:
+      - all
+    - path: /self/handle
+      envs:
+      - all
+    - path: /self/searchable
       envs:
       - all
     - path: /connections
       envs:
       - all
-    - path: ~* ^/list-connections$
+    - path: /list-connections$
       envs:
       - all
     - path: /invitations
@@ -115,9 +219,30 @@ nginx_conf:
     - path: /clients
       envs:
       - all
+    - path: /mls/key-packages/claim
+      envs:
+      - all
+      specific_rate_limits:
+      # This endpoint gets called for every user that will get added to a
+      # conversation. A lot of these are expected during conversation
+      # creation.
+      - zone: key_package_claims_per_user
+        burst: 600
+      - zone: key_package_claims_per_user_per_target
+        burst: 100
+      # The name is a little misleading, this just disables default rate
+      # limiting in favour of the specific one defined above.
+      unlimited_requests_endpoint: true
+    - path: /mls/key-packages
+      envs:
+      - all
     - path: /properties
       envs:
       - all
+    - path: /provider$
+      envs:
+      - all
+      allow_credentials: true
     - path: /provider/register
       envs:
       - all
@@ -139,17 +264,28 @@ nginx_conf:
       envs:
       - all
       disable_zauth: true
+    - path: /provider/email
+      envs:
+      - all
+      allow_credentials: true
+    - path: /provider/password
+      envs:
+      - all
+      allow_credentials: true
+    - path: /provider/pid
+      envs:
+      - all
+      allow_credentials: true
+    - path: /provider/services
+      envs:
+      - all
+      allow_credentials: true
     - path: /providers
       envs:
       - all
     - path: /services
       envs:
       - all
-    - path: /provider
-      envs:
-      - all
-      allow_credentials: true
-      restrict_whitelisted_origin: true
     - path: /bot/self
       envs:
       - all
@@ -159,7 +295,7 @@ nginx_conf:
     - path: /bot/users
       envs:
       - all
-    - path: ~* ^/conversations/([^/]*)/bots
+    - path: /conversations/([^/]*)/bots
       envs:
       - all
     - path: /invitations/info
@@ -170,13 +306,11 @@ nginx_conf:
       envs:
       - all
       allow_credentials: true
-      restrict_whitelisted_origin: true
       disable_zauth: true
     - path: /activate
       envs:
       - all
       allow_credentials: true
-      restrict_whitelisted_origin: true
       disable_zauth: true
     - path: /delete
       envs:
@@ -195,41 +329,55 @@ nginx_conf:
       - staging
       disable_zauth: true
       basic_auth: true
+      versioned: false
     - path: /i/users/login-code
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
+      versioned: false
     - path: /i/users/invitation-code
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/i/users/([^/]*)/rich-info
+      versioned: false
+    - path: /i/users/([^/]*)/rich-info
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/i/teams/([^/]*)/suspend
+      versioned: false
+    - path: /i/users/([^/]*)/features/([^/])*
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/i/teams/([^/]*)/unsuspend
+      versioned: false
+    - path: /i/users/([^/]*)/verification-code/([^/])*
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
+      versioned: false
+    - path: /i/teams/([^/]*)/suspend
+      envs:
+      - staging
+      disable_zauth: true
+      basic_auth: true
+      versioned: false
+    - path: /i/teams/([^/]*)/unsuspend
+      envs:
+      - staging
+      disable_zauth: true
+      basic_auth: true
+      versioned: false
     - path: /i/provider/activation-code
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/i/legalhold/whitelisted-teams(.*)
-      envs:
-        - staging
-      disable_zauth: true
-      basic_auth: true
+      versioned: false
     - path: /cookies
       envs:
       - all
@@ -238,7 +386,6 @@ nginx_conf:
       - all
       disable_zauth: true
       allow_credentials: true
-      restrict_whitelisted_origin: true
       unlimited_requests_endpoint: true
     - path: /login
       envs:
@@ -253,32 +400,100 @@ nginx_conf:
     - path: /search
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/invitations(.*)
+    - path: /teams/([^/]*)/invitations(.*)
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/services(.*)
+    - path: /teams/([^/]*)/services(.*)
       envs:
       - all
-    - path: ~* ^/teams/invitations/info$
-      envs:
-      - all
-      disable_zauth: true
-    - path: ~* ^/teams/invitations/by-email$
+    - path: /teams/invitations/info$
       envs:
       - all
       disable_zauth: true
+    - path: /teams/invitations/by-email$
+      envs:
+      - all
+      disable_zauth: true
+    - path: /teams/invitations/accept$
+      envs:
+      - all
     - path: /i/teams/invitation-code
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
+      versioned: false
     - path: /calls
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/size$
+    - path: /teams/([^/]*)/size$
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/search$
+    - path: /teams/([^/]*)/search$
+      envs:
+      - all
+    - path: /verification-code/send
+      envs:
+      - all
+      disable_zauth: true
+    - path: /system/settings/unauthorized$
+      envs:
+      - all
+      disable_zauth: true
+    - path: /system/settings$
+      envs:
+      - all
+    - path: /oauth/clients/([^/]*)$
+      envs:
+      - all
+    - path: /i/oauth/clients$
+      envs:
+      - staging
+      disable_zauth: true
+      basic_auth: true
+    - path: /oauth/authorization/codes
+      envs:
+      - all
+    - path: /oauth/applications
+      envs:
+      - all
+    - path: /oauth/token
+      envs:
+      - all
+      disable_zauth: true  # authorized by auth code (see above)
+    - path: /oauth/revoke
+      envs:
+      - all
+      disable_zauth: true
+    - path: /oauth/applications
+      envs:
+      - all
+    - path: /upgrade-personal-to-team$
+      envs:
+      - all
+    - path: /domain-verification/([^/]*)/challenges$
+      envs:
+        - all
+      disable_zauth: true
+    - path: /domain-verification/([^/]*)/challenges/([^/]*)
+      envs:
+        - all
+      disable_zauth: true
+    - path: /domain-verification/([^/]*)/authorize-team$
+      envs:
+        - all
+    - path: /domain-verification/([^/]*)/team$
+      envs:
+        - all
+    - path: /domain-verification/([^/]*)/backend$
+      envs:
+        - all
+      disable_zauth: true
+    - path: /get-domain-registration$
+      envs:
+        - all
+      disable_zauth: true
+    - path: /bot/conversations/(.+)
       envs:
       - all
     galley:
@@ -286,22 +501,34 @@ nginx_conf:
       disable_zauth: true
       envs:
       - all
-    - path: ~* ^/conversations/([^/]*)/otr/messages
+    - path: /conversations/([^/]*)/otr/messages
       envs:
       - all
       max_body_size: 40m
       body_buffer_size: 256k
-    - path: ~* ^/conversations/([^/]*)/([^/]*)/proteus/messages
+    - path: /conversations/([^/]*)/([^/]*)/proteus/messages
       envs:
       - all
       max_body_size: 40m
       body_buffer_size: 256k
-    - path: /broadcast/otr/messages
+    - path: /one2one-conversations/
+      envs:
+      - all
+      # During MLS migration, this endpoint gets called _a lot_.
+      specific_user_rate_limit: one2one_conv
+      specific_user_rate_limit_burst: 1000
+      # The name is a little misleading, this just disables default rate
+      # limiting in favour of the specific one defined above.
+      unlimited_requests_endpoint: true
+    - path: /conversations/([^/]*)/([^/]*)/protocol
+      envs:
+      - all
+    - path: /broadcast
       envs:
       - all
       max_body_size: 40m
       body_buffer_size: 256k
-    - path: /bot/conversation
+    - path: /bot/conversation$
       envs:
       - all
     - path: /bot/messages
@@ -309,67 +536,122 @@ nginx_conf:
       - all
       max_body_size: 40m
       body_buffer_size: 256k
+    - path: /conversations$
+      envs:
+      - all
+      doc: true
+      oauth_scope: conversations
+    - path: /conversations/([^/]*)/code
+      envs:
+      - all
+      doc: true
+      oauth_scope: conversations_code
+    - path: /conversations/join
+      envs:
+      - all
+      specific_user_rate_limit: reqs_per_addr
+      specific_user_rate_limit_burst: "10"
     - path: /conversations
       envs:
       - all
       doc: true
-    - path: ~* ^/teams$
+    - path: /legalhold/conversations/(.*)
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)$
+    - path: /teams$
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/members(.*)
+    - path: /teams/([^/]*)$
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/get-members-by-ids-using-post(.*)
+    - path: /teams/([^/]*)/members(.*)
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/conversations(.*)
+    - path: /teams/([^/]*)/get-members-by-ids-using-post(.*)
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/members/csv$
+    - path: /teams/([^/]*)/conversations(.*)
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/legalhold(.*)
+    - path: /teams/([^/]*)/members/csv$
       envs:
       - all
-    - path: ~* ^/i/teams/([^/]*)/legalhold(.*)
+    - path: /teams/([^/]*)/legalhold(.*)
+      envs:
+      - all
+    - path: /i/teams/([^/]*)/legalhold(.*)
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/custom-backend/by-domain/([^/]*)$
+      versioned: false
+    - path: /teams/invitations/accept$
+      envs:
+      - all
+    - path: /custom-backend/by-domain/([^/]*)$
       disable_zauth: true
       envs:
       - all
-    - path: ~* ^/i/custom-backend/by-domain/([^/]*)$
+    - path: /i/custom-backend/by-domain/([^/]*)$
       disable_zauth: true
       basic_auth: true
       envs:
       - staging
-    - path: ~* ^/teams/api-docs
+      versioned: false
+    - path: /i/legalhold/whitelisted-teams(.*)
       envs:
-      - all
+        - staging
       disable_zauth: true
-    - path: ~* ^/teams/([^/]*)/features
+      basic_auth: true
+      versioned: false
+    - path: /teams/([^/]*)/features
       envs:
       - all
-    - path: ~* ^/teams/([^/]*)/features/([^/])*
+    - path: /teams/([^/]*)/features/([^/])*
       envs:
       - all
-    - path: ~* /i/teams/([^/]*)/features/([^/]*)
+    - path: /i/teams/([^/]*)/features/enforceFileDownloadLocation/([^/])*
       envs:
       - staging
       disable_zauth: true
       basic_auth: true
-    - path: ~* ^/feature-configs(.*)
+      versioned: false
+    - path: /i/teams/([^/]*)/features/([^/]*)
       envs:
-      - all
-    - path: /galley-api/swagger-ui
+      - staging
       disable_zauth: true
+      basic_auth: true
+      versioned: false
+    - path: /i/teams/([^/]*)/search-visibility$
+      envs:
+        - staging
+      disable_zauth: true
+      basic_auth: true
+      versioned: false
+    - path: /feature-configs(.*)
       envs:
       - all
+      oauth_scope: feature_configs
+    - path: /mls/welcome
+      envs:
+      - all
+    - path: /mls/messages
+      envs:
+      - all
+    - path: /mls/commit-bundles
+      envs:
+      - all
+      max_body_size: 70m
+      body_buffer_size: 256k
+    - path: /mls/public-keys
+      envs:
+      - all
+    - path: /i/federation-status$
+      envs:
+      - all
+      disable_zauth: true
+      basic_auth: true
+      versioned: false
     gundeck:
     - path: /push
       envs:
@@ -383,7 +665,6 @@ nginx_conf:
       - all
     spar:
     - path: /identity-providers
-      max_body_size: 256k
       envs:
       - all
     - path: /i/sso
@@ -391,52 +672,101 @@ nginx_conf:
       basic_auth: true
       envs:
       - staging
-    - path: /sso-initiate-bind
-      envs:
-      - all
+      versioned: false
     - path: /sso/initiate-login
       envs:
       - all
       disable_zauth: true
       allow_credentials: true
+      specific_user_rate_limit: reqs_per_addr_sso
+      specific_user_rate_limit_burst: "10"
     - path: /sso/finalize-login
       envs:
       - all
       disable_zauth: true
       allow_credentials: true
+      specific_user_rate_limit: reqs_per_addr_sso
+      specific_user_rate_limit_burst: "10"
     - path: /sso
       envs:
       - all
       disable_zauth: true
+      specific_user_rate_limit: reqs_per_addr_sso
+      specific_user_rate_limit_burst: "10"
     - path: /scim/v2
       envs:
       - all
       disable_zauth: true
       allow_credentials: true
+      specific_user_rate_limit: reqs_per_addr_sso
+      specific_user_rate_limit_burst: "10"
     - path: /scim
       envs:
       - all
+
+  # Possible 'extra_extra_upstreams' are:
+  #   - 'ibis'
+  #   - 'galeb'
+  #   - 'calling-test'
+  #   - 'proxy'
+  # For security reasons, these should only be enabled if they are deployed.
+  # (Otherwise, there are open routes into the cluster.)
+  enabled_extra_upstreams: []
+
+  # Services that are optionally deployed.
+  extra_upstreams:
     proxy:
     - path: /proxy
       envs:
       - all
-      doc: true
-    cannon:
-    - path: /await
-      envs:
-      - all
-      use_websockets: true
       doc: true
     ibis:
     - path: /billing
       envs:
       - all
       disable_zauth: true
-    - path: ~* ^/teams/([^/]*)/billing(.*)
+      versioned: false
+      strip_version: true
+    - path: /teams/([^/]*)/billing(.*)
       envs:
       - all
+      versioned: false
+      strip_version: true
+    galeb:
+    - path: /consent(.*)
+      envs:
+      - all
+      disable_zauth: true
+      versioned: false
+      strip_version: true
+    - path: /self/consent
+      envs:
+      - all
+      versioned: false
+      strip_version: true
+    - path: /signature
+      envs:
+      - all
+      versioned: false
+      specific_user_rate_limit: reqs_per_user_signatures
+      strip_version: true
+    - path: /i/marketo/emails/([^/]*)$
+      disable_zauth: true
+      versioned: false
+      basic_auth: true
+      envs:
+      - staging
     calling-test:
     - path: /calling-test
       envs:
       - all
       disable_zauth: true
+
+podSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault

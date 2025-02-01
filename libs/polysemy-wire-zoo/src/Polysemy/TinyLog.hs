@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,38 +15,48 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Polysemy.TinyLog where
+-- NOTE: This is an obsolete module. Instead, please use the more general
+-- Wire.Sem.Logger logging effect.
+module Polysemy.TinyLog
+  ( module Polysemy.TinyLog,
+    Logger (..),
+    trace,
+    debug,
+    info,
+    warn,
+    err,
+    fatal,
+  )
+where
 
 import Imports
 import Polysemy
-import System.Logger (Level (..))
+import Polysemy.Error (Error)
+import qualified Polysemy.Error
 import qualified System.Logger as Log
+import Wire.Sem.Logger
+import qualified Wire.Sem.Logger as Logger
 
-data TinyLog m a where
-  Polylog :: Log.Level -> (Log.Msg -> Log.Msg) -> TinyLog m ()
+type TinyLog = Logger (Log.Msg -> Log.Msg)
 
-makeSem ''TinyLog
+logErrors ::
+  ( Member TinyLog r,
+    Member (Error e) r
+  ) =>
+  (e -> Text) ->
+  Text ->
+  Sem r a ->
+  Sem r a
+logErrors showError msg action = Polysemy.Error.catch action $ \e -> do
+  Logger.err $ Log.msg msg . Log.field "error" (showError e)
+  Polysemy.Error.throw e
 
-runTinyLog :: Member (Embed IO) r => Log.Logger -> Sem (TinyLog ': r) a -> Sem r a
-runTinyLog logger = interpret $ \(Polylog lvl msg) -> Log.log logger lvl msg
-
-discardLogs :: Sem (TinyLog ': r) a -> Sem r a
-discardLogs = interpret f
-  where
-    f :: Applicative n => TinyLog m x -> n x
-    f (Polylog _ _) = pure ()
-
--- | Abbreviation of 'log' using the corresponding log level.
-trace, debug, info, warn, err, fatal :: Member TinyLog r => (Log.Msg -> Log.Msg) -> Sem r ()
-trace = polylog Trace
-debug = polylog Debug
-info = polylog Info
-warn = polylog Warn
-err = polylog Error
-fatal = polylog Fatal
-{-# INLINE trace #-}
-{-# INLINE debug #-}
-{-# INLINE info #-}
-{-# INLINE warn #-}
-{-# INLINE err #-}
-{-# INLINE fatal #-}
+logAndIgnoreErrors ::
+  forall e r.
+  ( Member TinyLog r
+  ) =>
+  (e -> Text) ->
+  Text ->
+  Sem (Error e ': r) () ->
+  Sem r ()
+logAndIgnoreErrors showError msg = void . Polysemy.Error.runError . logErrors showError msg

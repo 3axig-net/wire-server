@@ -1,7 +1,7 @@
 {
-    "email": "g\u0000-J𐃗@\u0003H󼛨eU",
+    "allow_existing": true,
+    "email": "some@example",
     "locale": null,
     "name": null,
-    "phone": "+570029592986",
     "role": "admin"
 }

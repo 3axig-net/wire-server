@@ -15,6 +15,13 @@ dependencies:
 ########################
 ## wire-servers/services
 ########################
+- name: backoffice
+  version: "0.0.42"
+  repository: "file://../backoffice"
+  tags:
+    - backoffice
+    - haskellServices
+    - services
 - name: cannon
   version: "0.0.42"
   repository: "file://../cannon"
@@ -70,26 +77,6 @@ dependencies:
   tags:
     - nginz
     - services
-- name: webapp
-  version: "0.0.42"
-  repository: "file://../webapp"
-  tags:
-    - web
-    - webapp
-- name: team-settings
-  version: "0.0.42"
-  repository: "file://../team-settings"
-  tags:
-    - web
-    - team-settings
-    - private
-- name: account-pages
-  version: "0.0.42"
-  repository: "file://../account-pages"
-  tags:
-    - web
-    - account-pages
-    - private
 - name: legalhold
   version: "0.0.42"
   repository: "file://../legalhold"
@@ -101,10 +88,23 @@ dependencies:
   repository: "file://../federator"
   tags:
     - federator
+    - federation
     - haskellServices
     - services
-- name: sftd
+- name: background-worker
   version: "0.0.42"
-  repository: "file://../sftd"
+  repository: "file://../background-worker"
   tags:
-    - sftd
+    - background-worker
+    - haskellServices
+    - services
+- name: integration
+  version: "0.0.42"
+  repository: "file://../integration"
+  tags:
+    - integration
+- name: mlsstats
+  version: "0.0.42"
+  repository: "file://../mlsstats"
+  tags:
+    - mlsstats

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,19 +26,20 @@ import API.User.Util
 import Bilge hiding (accept, timeout)
 import Bilge.Assert
 import Brig.Options
-import qualified Brig.Options as Opt
-import Brig.Types
-import qualified Data.CaseInsensitive as CI
-import qualified Data.List1 as List1
-import qualified Data.Text as Text
-import qualified Galley.Types.Teams as Team
+import Brig.Options qualified as Opt
+import Data.CaseInsensitive qualified as CI
+import Data.List1 qualified as List1
+import Data.Text qualified as Text
 import Imports
 import Test.Tasty hiding (Timeout)
 import Test.Tasty.HUnit
 import Util
+import Util.Timeout
+import Wire.API.Team.Permission
+import Wire.API.User
 import Wire.API.User.RichInfo
 
-tests :: ConnectionLimit -> Opt.Timeout -> Opt.Opts -> Manager -> Brig -> Cannon -> Galley -> TestTree
+tests :: ConnectionLimit -> Timeout -> Opt.Opts -> Manager -> Brig -> Cannon -> Galley -> TestTree
 tests _cl _at conf p b _c g =
   testGroup
     "rich info"
@@ -56,8 +57,8 @@ testDefaultRichInfo :: Brig -> Galley -> Http ()
 testDefaultRichInfo brig galley = do
   -- Create a team with two users
   (owner, tid) <- createUserWithTeam brig
-  member1 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
-  member2 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
+  member1 <- userId <$> createTeamMember brig galley owner tid noPermissions
+  member2 <- userId <$> createTeamMember brig galley owner tid noPermissions
   -- The first user should see the second user's rich info and it should be empty
   richInfo <- getRichInfo brig member1 member2
   liftIO $
@@ -69,8 +70,8 @@ testDefaultRichInfo brig galley = do
 testDeleteMissingFieldsInUpdates :: Brig -> Galley -> Http ()
 testDeleteMissingFieldsInUpdates brig galley = do
   (owner, tid) <- createUserWithTeam brig
-  member1 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
-  member2 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
+  member1 <- userId <$> createTeamMember brig galley owner tid noPermissions
+  member2 <- userId <$> createTeamMember brig galley owner tid noPermissions
   let superset =
         mkRichInfoAssocList
           [ RichField "department" "blue",
@@ -88,8 +89,8 @@ testDeleteMissingFieldsInUpdates brig galley = do
 testDeleteEmptyFields :: Brig -> Galley -> Http ()
 testDeleteEmptyFields brig galley = do
   (owner, tid) <- createUserWithTeam brig
-  member1 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
-  member2 <- userId <$> createTeamMember brig galley owner tid Team.noPermissions
+  member1 <- userId <$> createTeamMember brig galley owner tid noPermissions
+  member2 <- userId <$> createTeamMember brig galley owner tid noPermissions
   let withEmpty =
         mkRichInfoAssocList
           [ RichField "department" ""
@@ -114,9 +115,9 @@ testDedupeDuplicateFieldNames brig = do
   ri <- getRichInfo brig owner owner
   liftIO $ assertEqual "duplicate rich info fields" (Right deduped) ri
 
-testRichInfoSizeLimit :: HasCallStack => Brig -> Opt.Opts -> Http ()
+testRichInfoSizeLimit :: (HasCallStack) => Brig -> Opt.Opts -> Http ()
 testRichInfoSizeLimit brig conf = do
-  let maxSize :: Int = setRichInfoLimit $ optSettings conf
+  let maxSize :: Int = conf.settings.richInfoLimit
   (owner, _) <- createUserWithTeam brig
   let bad1 =
         mkRichInfoAssocList
@@ -124,7 +125,7 @@ testRichInfoSizeLimit brig conf = do
           ]
       bad2 =
         mkRichInfoAssocList $
-          [0 .. ((maxSize `div` 2))]
+          [0 .. (maxSize `div` 2)]
             <&> \i -> RichField (CI.mk $ Text.pack $ show i) "#"
   putRichInfo brig owner bad1 !!! const 413 === statusCode
   putRichInfo brig owner bad2 !!! const 413 === statusCode

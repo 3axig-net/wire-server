@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,9 +18,10 @@
 module Data.Metrics.Test where
 
 import Data.Metrics.Types
-import Data.String.Conversions (cs)
-import qualified Data.Text as Text
-import qualified Data.Tree as Tree
+import Data.Text qualified as Text
+import Data.Text.Encoding
+import Data.Text.Encoding.Error
+import Data.Tree qualified as Tree
 import Imports
 
 -- | It is an error for one prefix to end in two different capture variables.  eg., these two
@@ -44,16 +45,19 @@ pathsConsistencyCheck :: Paths -> [SiteConsistencyError]
 pathsConsistencyCheck (Paths forest) = mconcat $ go [] <$> forest
   where
     go :: [PathSegment] -> Tree.Tree PathSegment -> [SiteConsistencyError]
-    go prefix (Tree.Node root trees) = maybeToList here <> (mconcat $ go (root : prefix) <$> trees)
+    go prefix (Tree.Node root trees) = maybeToList here <> mconcat (go (root : prefix) <$> trees)
       where
         here = findSiteConsistencyError (reverse $ root : prefix) trees
     findSiteConsistencyError :: [PathSegment] -> Tree.Forest PathSegment -> Maybe SiteConsistencyError
-    findSiteConsistencyError prefix subtrees = case catMaybes $ captureVars <$> subtrees of
+    findSiteConsistencyError prefix subtrees = case mapMaybe captureVars subtrees of
       [] -> Nothing
       [_] -> Nothing
-      bad@(_ : _ : _) -> Just $ SiteConsistencyError (either cs cs <$> prefix) bad
+      bad@(_ : _ : _) ->
+        Just $
+          SiteConsistencyError (either decode decode <$> prefix) bad
     captureVars :: Tree.Tree (Either ByteString any) -> Maybe (Text, Int)
-    captureVars (Tree.Node (Left root) trees) = Just (cs root, weight trees)
+    captureVars (Tree.Node (Left root) trees) = Just (decode root, weight trees)
     captureVars (Tree.Node (Right _) _) = Nothing
     weight :: Tree.Forest a -> Int
     weight = sum . fmap (length . Tree.flatten)
+    decode = decodeUtf8With lenientDecode

@@ -1,179 +1,297 @@
 cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 7476868d5acce0bd802155cbab24a29a80fd5eec48f540dd3e6dcb492a47d683
-
-name:           cargohold
-version:        1.5.0
-synopsis:       Asset Storage API
-description:    API for asset storage.
-category:       Network
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2017 Wire Swiss GmbH
-license:        AGPL-3
-license-file:   LICENSE
-build-type:     Simple
+name:          cargohold
+version:       1.5.0
+synopsis:      Asset Storage API
+description:   API for asset storage.
+category:      Network
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2017 Wire Swiss GmbH
+license:       AGPL-3
+license-file:  LICENSE
+build-type:    Simple
 
 flag static
   description: Enable static linking
-  manual: True
-  default: False
+  manual:      True
+  default:     False
 
 library
   exposed-modules:
-      CargoHold.API
-      CargoHold.API.Error
-      CargoHold.API.Legacy
-      CargoHold.API.Public
-      CargoHold.API.V3
-      CargoHold.API.V3.Resumable
-      CargoHold.App
-      CargoHold.AWS
-      CargoHold.CloudFront
-      CargoHold.Metrics
-      CargoHold.Options
-      CargoHold.Run
-      CargoHold.S3
-      CargoHold.TUS
-      CargoHold.Util
-      Main
-  other-modules:
-      Paths_cargohold
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    CargoHold.API.Error
+    CargoHold.API.Federation
+    CargoHold.API.Legacy
+    CargoHold.API.Public
+    CargoHold.API.Util
+    CargoHold.API.V3
+    CargoHold.App
+    CargoHold.AWS
+    CargoHold.CloudFront
+    CargoHold.Federation
+    CargoHold.Metrics
+    CargoHold.Options
+    CargoHold.Run
+    CargoHold.S3
+    CargoHold.Util
+
+  other-modules:      Paths_cargohold
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL >=0.11
-    , HsOpenSSL-x509-system >=0.1
-    , aeson >=0.11
-    , amazonka >=1.3.7
-    , amazonka-core >=1.3.7
-    , amazonka-s3 >=1.3.7
-    , attoparsec >=0.12
-    , auto-update >=0.1.4
-    , base >=4 && <5
-    , base64-bytestring >=1.0
-    , bilge >=0.21
-    , bytestring >=0.10
-    , bytestring-conversion >=0.2
-    , cargohold-types >=0.5
-    , case-insensitive >=1.0
-    , conduit >=1.2
-    , conduit-extra >=1.1.5
-    , containers >=0.5
-    , cryptonite >=0.20
-    , data-default >=0.5
-    , errors >=1.4
-    , exceptions >=0.6
+      aeson                  >=2.0.1.0
+    , amazonka               >=1.3.7
+    , amazonka-s3            >=1.3.7
+    , attoparsec             >=0.12
+    , auto-update            >=0.1.4
+    , base                   >=4       && <5
+    , base64-bytestring      >=1.0
+    , bilge                  >=0.21
+    , bytestring             >=0.10
+    , bytestring-conversion  >=0.2
+    , cargohold-types        >=0.5
+    , case-insensitive       >=1.0
+    , conduit                >=1.2
+    , conduit-extra          >=1.1.5
+    , containers
+    , crypton                >=0.20
+    , errors                 >=1.4
+    , exceptions             >=0.6
     , extended
-    , http-client >=0.4
-    , http-client-openssl >=0.2
-    , http-types >=0.8
+    , HsOpenSSL              >=0.11
+    , http-client            >=0.7
+    , http-client-openssl    >=0.2
+    , http-types             >=0.8
+    , http2-manager
     , imports
-    , lens >=4.1
-    , metrics-wai >=0.4
-    , mime >=0.4
-    , optparse-applicative >=0.10
-    , resourcet >=1.1
-    , retry >=0.5
-    , safe >=0.3
-    , swagger >=0.2
-    , text >=1.1
-    , time >=1.4
-    , tinylog >=0.10
-    , types-common >=0.16
-    , unordered-containers >=0.2
-    , uri-bytestring >=0.2
-    , uuid >=1.3.5
-    , wai >=3.0
-    , wai-conduit >=3.0
-    , wai-extra >=3.0
-    , wai-predicates >=0.8
-    , wai-routing >=0.12
-    , wai-utilities >=0.16.1
+    , kan-extensions
+    , lens                   >=4.1
+    , metrics-core
+    , metrics-wai            >=0.4
+    , mime                   >=0.4
+    , prometheus-client
+    , resourcet              >=1.1
+    , retry                  >=0.5
+    , servant
+    , servant-client
+    , servant-server
+    , text                   >=1.1
+    , time                   >=1.4
+    , tinylog                >=0.10
+    , transformers
+    , types-common           >=0.16
+    , types-common-aws
+    , unliftio
+    , unordered-containers   >=0.2
+    , uri-bytestring         >=0.2
+    , uuid                   >=1.3.5
+    , wai                    >=3.0
+    , wai-extra
+    , wai-utilities          >=0.16.1
     , wire-api
-    , yaml >=0.8
-  default-language: Haskell2010
+    , wire-api-federation
+    , yaml                   >=0.8
+
+  default-language:   Haskell2010
 
 executable cargohold
-  main-is: src/Main.hs
-  other-modules:
-      Paths_cargohold
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -rtsopts -with-rtsopts=-T
+  main-is:            exec/Main.hs
+  other-modules:      Paths_cargohold
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -rtsopts -with-rtsopts=-T -Wredundant-constraints
+    -Wunused-packages
+
   build-depends:
-      HsOpenSSL >=0.11
-    , aeson >=0.11
-    , base
-    , base64-bytestring >=1.0
-    , bilge >=0.21
-    , bytestring >=0.10
-    , bytestring-conversion >=0.2
+      base
     , cargohold
-    , containers >=0.5
-    , data-default >=0.5
-    , errors >=1.4
-    , exceptions >=0.6
-    , extended
-    , http-client >=0.4
-    , http-types >=0.8
+    , HsOpenSSL     >=0.11
     , imports
-    , mime >=0.4
-    , safe >=0.3
-    , text >=1.1
     , types-common
-    , yaml >=0.8
+
   if flag(static)
     ld-options: -static
-  default-language: Haskell2010
+
+  default-language:   Haskell2010
 
 executable cargohold-integration
-  main-is: Main.hs
+  main-is:            Main.hs
   other-modules:
-      API.V3
-      Metrics
-      TestSetup
-      Paths_cargohold
-  hs-source-dirs:
-      test/integration
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    API
+    API.Util
+    App
+    Paths_cargohold
+    TestSetup
+
+  hs-source-dirs:     test/integration
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL >=0.11
-    , aeson >=0.11
-    , base ==4.*
-    , base64-bytestring >=1.0
-    , bilge >=0.21
-    , bytestring >=0.10
-    , bytestring-conversion >=0.2
+      aeson                  >=2.0.1.0
+    , base                   >=4       && <5
+    , bilge                  >=0.21
+    , bytestring             >=0.10
+    , bytestring-conversion  >=0.2
     , cargohold
     , cargohold-types
-    , containers >=0.5
-    , data-default >=0.5
-    , errors >=1.4
-    , exceptions >=0.6
-    , extended
-    , http-client >=0.4
-    , http-client-tls >=0.2
-    , http-types >=0.8
+    , containers
+    , data-default
+    , federator
+    , http-api-data
+    , http-client            >=0.7
+    , http-client-tls        >=0.3
+    , http-media
+    , http-types             >=0.8
     , imports
-    , lens >=3.8
-    , metrics-wai
-    , mime >=0.4
+    , kan-extensions
+    , lens                   >=3.8
+    , mmorph
+    , mtl
     , optparse-applicative
-    , safe >=0.3
-    , tagged >=0.8
-    , tasty >=1.0
-    , tasty-hunit >=0.9
-    , text >=1.1
-    , time >=1.5
-    , types-common >=0.7
-    , uuid >=1.3
-    , wai-utilities >=0.12
-    , yaml >=0.8
-  default-language: Haskell2010
+    , servant-client
+    , tagged                 >=0.8
+    , tasty                  >=1.0
+    , tasty-ant-xml
+    , tasty-hunit            >=0.9
+    , text                   >=1.1
+    , types-common           >=0.7
+    , uuid                   >=1.3
+    , wai-utilities          >=0.12
+    , wire-api
+    , wire-api-federation
+    , yaml                   >=0.8
+
+  default-language:   Haskell2010

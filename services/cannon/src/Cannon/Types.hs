@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,51 +18,53 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 module Cannon.Types
-  ( Env,
-    mon,
-    opts,
-    applog,
-    dict,
-    env,
-    logger,
+  ( Env (..),
     Cannon,
+    numDictSlices,
     mapConcurrentlyCannon,
     mkEnv,
     runCannon,
-    runCannon',
-    options,
     clients,
-    monitor,
     wsenv,
+    runCannonToServant,
   )
 where
 
-import Bilge (Manager, RequestId (..), requestIdName)
+import Bilge (Manager)
 import Bilge.RPC (HasRequestId (..))
 import Cannon.Dict (Dict)
 import Cannon.Options
+import Cannon.RabbitMq
 import Cannon.WS (Clock, Key, Websocket)
-import qualified Cannon.WS as WS
+import Cannon.WS qualified as WS
+import Cassandra (ClientState)
 import Control.Concurrent.Async (mapConcurrently)
-import Control.Lens
+import Control.Lens ((^.))
 import Control.Monad.Catch
-import Data.Default (def)
-import Data.Metrics.Middleware
+import Control.Monad.Codensity
+import Data.Id
 import Data.Text.Encoding
+import Data.Unique
 import Imports
-import Network.Wai
-import qualified System.Logger as Logger
+import Network.AMQP qualified as Q
+import Network.AMQP.Extended (AmqpEndpoint)
+import Prometheus
+import Servant qualified
+import System.Logger qualified as Logger
 import System.Logger.Class hiding (info)
 import System.Random.MWC (GenIO)
+
+numDictSlices :: Int
+numDictSlices = 128
 
 -----------------------------------------------------------------------------
 -- Cannon monad
 
 data Env = Env
-  { mon :: !Metrics,
-    opts :: !Opts,
+  { opts :: !Opts,
     applog :: !Logger,
-    dict :: !(Dict Key Websocket),
+    websockets :: !(Dict Key Websocket),
+    rabbitConnections :: (Dict Unique Q.Connection),
     reqId :: !RequestId,
     env :: !WS.Env
   }
@@ -77,10 +79,11 @@ newtype Cannon a = Cannon
       MonadIO,
       MonadThrow,
       MonadCatch,
-      MonadMask
+      MonadMask,
+      MonadMonitor
     )
 
-mapConcurrentlyCannon :: Traversable t => (a -> Cannon b) -> t a -> Cannon (t b)
+mapConcurrentlyCannon :: (Traversable t) => (a -> Cannon b) -> t a -> Cannon (t b)
 mapConcurrentlyCannon action inputs =
   Cannon $
     ask >>= \e ->
@@ -96,45 +99,56 @@ instance HasRequestId Cannon where
   getRequestId = Cannon $ asks reqId
 
 mkEnv ::
-  Metrics ->
   ByteString ->
   Opts ->
+  ClientState ->
   Logger ->
   Dict Key Websocket ->
+  Dict Unique Q.Connection ->
   Manager ->
   GenIO ->
   Clock ->
-  Env
-mkEnv m external o l d p g t =
-  Env m o l d def $
-    WS.env external (o ^. cannon . port) (encodeUtf8 $ o ^. gundeck . host) (o ^. gundeck . port) l p d g t
+  AmqpEndpoint ->
+  Codensity IO Env
+mkEnv external o cs l d conns p g t endpoint = do
+  let poolOpts =
+        RabbitMqPoolOptions
+          { endpoint = endpoint,
+            maxConnections = o ^. rabbitMqMaxConnections,
+            maxChannels = o ^. rabbitMqMaxChannels,
+            retryEnabled = False
+          }
+  pool <- createRabbitMqPool poolOpts l
+  let wsEnv =
+        WS.env
+          external
+          (o ^. cannon . port)
+          (encodeUtf8 $ o ^. gundeck . host)
+          (o ^. gundeck . port)
+          l
+          p
+          d
+          conns
+          g
+          t
+          (o ^. drainOpts)
+          cs
+          pool
+  pure $ Env o l d conns (RequestId defRequestId) wsEnv
 
-runCannon :: Env -> Cannon a -> Request -> IO a
-runCannon e c r =
-  let e' = e {reqId = lookupReqId r}
-   in runCannon' e' c
-
-runCannon' :: Env -> Cannon a -> IO a
-runCannon' e c = runReaderT (unCannon c) e
-
-lookupReqId :: Request -> RequestId
-lookupReqId = maybe def RequestId . lookup requestIdName . requestHeaders
-{-# INLINE lookupReqId #-}
-
-options :: Cannon Opts
-options = Cannon $ asks opts
+runCannon :: Env -> Cannon a -> IO a
+runCannon e c = runReaderT (unCannon c) e
 
 clients :: Cannon (Dict Key Websocket)
-clients = Cannon $ asks dict
-
-monitor :: Cannon Metrics
-monitor = Cannon $ asks mon
+clients = Cannon $ asks websockets
 
 wsenv :: Cannon WS.Env
 wsenv = Cannon $ do
   e <- asks env
   r <- asks reqId
-  return $ WS.setRequestId r e
+  pure $ WS.setRequestId r e
 
-logger :: Cannon Logger
-logger = Cannon $ asks applog
+-- | Natural transformation from 'Cannon' to 'Handler' monad.
+-- Used to call 'Cannon' from servant.
+runCannonToServant :: Cannon.Types.Env -> Cannon x -> Servant.Handler x
+runCannonToServant env c = liftIO $ runCannon env c

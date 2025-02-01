@@ -1,11 +1,14 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -Wno-ambiguous-fields #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,410 +26,359 @@
 module Galley.Types.Teams
   ( TeamCreationTime (..),
     tcTime,
-    FeatureFlags (..),
-    flagSSO,
-    flagLegalHold,
-    flagTeamSearchVisibility,
-    flagFileSharing,
-    flagAppLockDefaults,
-    flagClassifiedDomains,
-    flagConferenceCalling,
-    flagSelfDeletingMessages,
-    Defaults (..),
-    unDefaults,
-    FeatureSSO (..),
-    FeatureLegalHold (..),
-    FeatureTeamSearchVisibility (..),
+    GetFeatureDefaults (..),
+    FeatureDefaults (..),
+    FeatureFlags,
+    DefaultsInitial (..),
+    initialFeature,
+    featureDefaults,
     notTeamMember,
     findTeamMember,
     isTeamMember,
     isTeamOwner,
     canSeePermsOf,
-    rolePermissions,
-    roleHiddenPermissions,
-    permissionsRole,
-    HiddenPerm (..),
-    IsPerm (..),
-
-    -- * re-exports
-    Team,
-    TeamBinding (..),
-    newTeam,
-    teamId,
-    teamCreator,
-    teamName,
-    teamIcon,
-    teamIconKey,
-    teamBinding,
-    TeamList,
-    newTeamList,
-    teamListTeams,
-    teamListHasMore,
-    TeamMember,
-    userId,
-    permissions,
-    invitation,
-    legalHoldStatus,
-    teamMemberJson,
-    TeamMemberList,
-    ListType (..),
-    newTeamMemberList,
-    teamMembers,
-    teamMemberListType,
-    teamMemberListJson,
-    TeamConversation,
-    newTeamConversation,
-    conversationId,
-    managedConversation,
-    TeamConversationList,
-    newTeamConversationList,
-    teamConversations,
-    Permissions,
-    newPermissions,
-    fullPermissions,
-    noPermissions,
-    serviceWhitelistPermissions,
-    self,
-    copy,
-    Perm (..),
-    permToInt,
-    permsToInt,
-    intToPerm,
-    intToPerms,
-    Role (..),
-    defaultRole,
-    BindingNewTeam (..),
-    NonBindingNewTeam (..),
-    NewTeam,
-    newNewTeam,
-    newTeamName,
-    newTeamIcon,
-    newTeamIconKey,
-    newTeamMembers,
-    NewTeamMember,
-    newNewTeamMember,
-    ntmNewTeamMember,
-    Event,
-    newEvent,
-    eventType,
-    eventTime,
-    eventTeam,
-    eventData,
-    EventType (..),
-    EventData (..),
-    TeamUpdateData,
-    newTeamUpdateData,
-    nameUpdate,
-    iconUpdate,
-    iconKeyUpdate,
-    TeamMemberDeleteData,
-    tmdAuthPassword,
-    newTeamMemberDeleteData,
-    TeamDeleteData,
-    tdAuthPassword,
-    newTeamDeleteData,
-    HardTruncationLimit,
-    hardTruncationLimit,
   )
 where
 
-import Control.Lens (makeLenses, view, (^.))
+import Control.Lens (makeLenses, view)
 import Data.Aeson
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.Types qualified as A
+import Data.ByteString (toStrict)
+import Data.ByteString.UTF8 qualified as UTF8
+import Data.Default
 import Data.Id (UserId)
-import qualified Data.Maybe as Maybe
-import qualified Data.Set as Set
-import Data.String.Conversions (cs)
+import Data.SOP
+import Data.Schema qualified as S
+import Data.Set qualified as Set
 import Imports
-import Test.QuickCheck (Arbitrary)
-import Wire.API.Event.Team
-import Wire.API.Team
-import Wire.API.Team.Conversation
 import Wire.API.Team.Feature
 import Wire.API.Team.Member
 import Wire.API.Team.Permission
-import Wire.API.Team.Role
-
-rolePermissions :: Role -> Permissions
-rolePermissions role = Permissions p p where p = rolePerms role
-
-permissionsRole :: Permissions -> Maybe Role
-permissionsRole (Permissions p p') =
-  if p /= p'
-    then do
-      -- we never did use @p /= p'@ for anything, fingers crossed that it doesn't occur anywhere
-      -- in the wild.  but if it does, this implementation prevents privilege escalation.
-      let p'' = Set.intersection p p'
-       in permissionsRole (Permissions p'' p'')
-    else permsRole p
-  where
-    permsRole :: Set Perm -> Maybe Role
-    permsRole perms =
-      Maybe.listToMaybe
-        [ role
-          | role <- [minBound ..],
-            -- if a there is a role that is strictly less permissive than the perms set that
-            -- we encounter, we downgrade.  this shouldn't happen in real life, but it has
-            -- happened to very old users on a staging environment, where a user (probably)
-            -- was create before the current publicly visible permissions had been stabilized.
-            rolePerms role `Set.isSubsetOf` perms
-        ]
-
--- | Internal function for 'rolePermissions'.  (It works iff the two sets in 'Permissions' are
--- identical for every 'Role', otherwise it'll need to be specialized for the resp. sides.)
-rolePerms :: Role -> Set Perm
-rolePerms RoleOwner =
-  rolePerms RoleAdmin
-    <> Set.fromList
-      [ GetBilling,
-        SetBilling,
-        DeleteTeam
-      ]
-rolePerms RoleAdmin =
-  rolePerms RoleMember
-    <> Set.fromList
-      [ AddTeamMember,
-        RemoveTeamMember,
-        SetTeamData,
-        SetMemberPermissions
-      ]
-rolePerms RoleMember =
-  rolePerms RoleExternalPartner
-    <> Set.fromList
-      [ DoNotUseDeprecatedDeleteConversation,
-        DoNotUseDeprecatedAddRemoveConvMember,
-        DoNotUseDeprecatedModifyConvName,
-        GetMemberPermissions
-      ]
-rolePerms RoleExternalPartner =
-  Set.fromList
-    [ CreateConversation,
-      GetTeamConversations
-    ]
 
 -- This is the cassandra timestamp of writetime(binding)
 newtype TeamCreationTime = TeamCreationTime
   { _tcTime :: Int64
   }
 
-data FeatureFlags = FeatureFlags
-  { _flagSSO :: !FeatureSSO,
-    _flagLegalHold :: !FeatureLegalHold,
-    _flagTeamSearchVisibility :: !FeatureTeamSearchVisibility,
-    _flagAppLockDefaults :: !(Defaults (TeamFeatureStatus 'TeamFeatureAppLock)),
-    _flagClassifiedDomains :: !(TeamFeatureStatus 'TeamFeatureClassifiedDomains),
-    _flagFileSharing :: !(Defaults (TeamFeatureStatus 'TeamFeatureFileSharing)),
-    _flagConferenceCalling :: !(Defaults (TeamFeatureStatus 'TeamFeatureConferenceCalling)),
-    _flagSelfDeletingMessages :: !(Defaults (TeamFeatureStatus 'TeamFeatureSelfDeletingMessages))
-  }
-  deriving (Eq, Show, Generic)
+-- | Used to extract the feature config type out of 'FeatureDefaults' or
+-- related types.
+type family ConfigOf a
 
-newtype Defaults a = Defaults {_unDefaults :: a}
-  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
-  deriving newtype (Arbitrary)
+type instance ConfigOf (FeatureDefaults cfg) = cfg
 
-instance FromJSON a => FromJSON (Defaults a) where
-  parseJSON = withObject "default object" $ \ob ->
-    Defaults <$> (ob .: "defaults")
+-- | Convert a feature default value to an actual 'LockableFeature'.
+class GetFeatureDefaults a where
+  featureDefaults1 :: a -> LockableFeature (ConfigOf a)
 
-instance ToJSON a => ToJSON (Defaults a) where
-  toJSON (Defaults x) =
-    object ["defaults" .= toJSON x]
+type instance ConfigOf (Feature cfg) = cfg
 
-data FeatureSSO
-  = FeatureSSOEnabledByDefault
-  | FeatureSSODisabledByDefault
-  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
+instance (IsFeatureConfig cfg) => GetFeatureDefaults (Feature cfg) where
+  featureDefaults1 = withLockStatus (def @(LockableFeature cfg)).lockStatus
 
-data FeatureLegalHold
+-- | Some features do not have a configured default value, so this takes it
+-- wholly from the 'Default' instance.
+newtype FixedDefaults cfg = FixedDefaults (FeatureDefaults cfg)
+
+type instance ConfigOf (FixedDefaults cfg) = cfg
+
+instance (IsFeatureConfig cfg) => GetFeatureDefaults (FixedDefaults cfg) where
+  featureDefaults1 _ = def
+
+type instance ConfigOf (LockableFeature cfg) = cfg
+
+instance GetFeatureDefaults (LockableFeature cfg) where
+  featureDefaults1 = id
+
+data family FeatureDefaults cfg
+
+data instance FeatureDefaults LegalholdConfig
   = FeatureLegalHoldDisabledPermanently
   | FeatureLegalHoldDisabledByDefault
   | FeatureLegalHoldWhitelistTeamsAndImplicitConsent
-  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
+  deriving stock (Eq, Ord, Show)
+  deriving (ParseFeatureDefaults) via RequiredField LegalholdConfig
+  deriving (GetFeatureDefaults) via FixedDefaults LegalholdConfig
 
--- | Default value for all teams that have not enabled or disabled this feature explicitly.
--- See also 'Wire.API.Team.SearchVisibility.TeamSearchVisibilityEnabled',
--- 'Wire.API.Team.SearchVisibility.TeamSearchVisibility'.
-data FeatureTeamSearchVisibility
-  = FeatureTeamSearchVisibilityEnabledByDefault
-  | FeatureTeamSearchVisibilityDisabledByDefault
-  deriving (Eq, Ord, Show, Enum, Bounded, Generic)
-
--- NOTE: This is used only in the config and thus YAML... camelcase
-instance FromJSON FeatureFlags where
-  parseJSON = withObject "FeatureFlags" $ \obj ->
-    FeatureFlags
-      <$> obj .: "sso"
-      <*> obj .: "legalhold"
-      <*> obj .: "teamSearchVisibility"
-      <*> (fromMaybe (Defaults defaultAppLockStatus) <$> (obj .:? "appLock"))
-      <*> (fromMaybe defaultClassifiedDomains <$> (obj .:? "classifiedDomains"))
-      <*> (fromMaybe (Defaults (TeamFeatureStatusNoConfig TeamFeatureEnabled)) <$> (obj .:? "fileSharing"))
-      <*> (fromMaybe (Defaults (TeamFeatureStatusNoConfig TeamFeatureEnabled)) <$> (obj .:? "conferenceCalling"))
-      <*> (fromMaybe (Defaults defaultSelfDeletingMessagesStatus) <$> (obj .:? "selfDeletingMessages"))
-
-instance ToJSON FeatureFlags where
-  toJSON (FeatureFlags sso legalhold searchVisibility appLock classifiedDomains fileSharing conferenceCalling selfDeletingMessages) =
-    object $
-      [ "sso" .= sso,
-        "legalhold" .= legalhold,
-        "teamSearchVisibility" .= searchVisibility,
-        "appLock" .= appLock,
-        "classifiedDomains" .= classifiedDomains,
-        "fileSharing" .= fileSharing,
-        "conferenceCalling" .= conferenceCalling,
-        "selfDeletingMessages" .= selfDeletingMessages
-      ]
-
-instance FromJSON FeatureSSO where
-  parseJSON (String "enabled-by-default") = pure FeatureSSOEnabledByDefault
-  parseJSON (String "disabled-by-default") = pure FeatureSSODisabledByDefault
-  parseJSON bad = fail $ "FeatureSSO: " <> cs (encode bad)
-
-instance ToJSON FeatureSSO where
-  toJSON FeatureSSOEnabledByDefault = String "enabled-by-default"
-  toJSON FeatureSSODisabledByDefault = String "disabled-by-default"
-
-instance FromJSON FeatureLegalHold where
+instance FromJSON (FeatureDefaults LegalholdConfig) where
   parseJSON (String "disabled-permanently") = pure $ FeatureLegalHoldDisabledPermanently
   parseJSON (String "disabled-by-default") = pure $ FeatureLegalHoldDisabledByDefault
   parseJSON (String "whitelist-teams-and-implicit-consent") = pure FeatureLegalHoldWhitelistTeamsAndImplicitConsent
-  parseJSON bad = fail $ "FeatureLegalHold: " <> cs (encode bad)
+  parseJSON bad = fail $ "FeatureLegalHold: " <> (UTF8.toString . toStrict . encode $ bad)
 
-instance ToJSON FeatureLegalHold where
-  toJSON FeatureLegalHoldDisabledPermanently = String "disabled-permanently"
-  toJSON FeatureLegalHoldDisabledByDefault = String "disabled-by-default"
-  toJSON FeatureLegalHoldWhitelistTeamsAndImplicitConsent = String "whitelist-teams-and-implicit-consent"
+data instance FeatureDefaults SSOConfig
+  = FeatureSSOEnabledByDefault
+  | FeatureSSODisabledByDefault
+  deriving stock (Eq, Ord, Show)
+  deriving (ParseFeatureDefaults) via RequiredField SSOConfig
 
-instance FromJSON FeatureTeamSearchVisibility where
-  parseJSON (String "enabled-by-default") = pure FeatureTeamSearchVisibilityEnabledByDefault
-  parseJSON (String "disabled-by-default") = pure FeatureTeamSearchVisibilityDisabledByDefault
-  parseJSON bad = fail $ "FeatureSearchVisibility: " <> cs (encode bad)
+instance FromJSON (FeatureDefaults SSOConfig) where
+  parseJSON (String "enabled-by-default") = pure FeatureSSOEnabledByDefault
+  parseJSON (String "disabled-by-default") = pure FeatureSSODisabledByDefault
+  parseJSON bad = fail $ "FeatureSSO: " <> (UTF8.toString . toStrict . encode $ bad)
 
-instance ToJSON FeatureTeamSearchVisibility where
-  toJSON FeatureTeamSearchVisibilityEnabledByDefault = String "enabled-by-default"
-  toJSON FeatureTeamSearchVisibilityDisabledByDefault = String "disabled-by-default"
+instance GetFeatureDefaults (FeatureDefaults SSOConfig) where
+  featureDefaults1 flag =
+    def
+      { status = case flag of
+          FeatureSSOEnabledByDefault -> FeatureStatusEnabled
+          FeatureSSODisabledByDefault -> FeatureStatusDisabled
+      }
+
+-- | Default value for all teams that have not enabled or disabled this feature explicitly.
+data instance FeatureDefaults SearchVisibilityAvailableConfig
+  = FeatureTeamSearchVisibilityAvailableByDefault
+  | FeatureTeamSearchVisibilityUnavailableByDefault
+  deriving stock (Eq, Ord, Show)
+
+instance ParseFeatureDefaults (FeatureDefaults SearchVisibilityAvailableConfig) where
+  parseFeatureDefaults obj = obj .: "teamSearchVisibility"
+
+instance FromJSON (FeatureDefaults SearchVisibilityAvailableConfig) where
+  parseJSON (String "enabled-by-default") = pure FeatureTeamSearchVisibilityAvailableByDefault
+  parseJSON (String "disabled-by-default") = pure FeatureTeamSearchVisibilityUnavailableByDefault
+  parseJSON bad = fail $ "FeatureSearchVisibility: " <> (UTF8.toString . toStrict . encode $ bad)
+
+instance GetFeatureDefaults (FeatureDefaults SearchVisibilityAvailableConfig) where
+  featureDefaults1 flag =
+    def
+      { status = case flag of
+          FeatureTeamSearchVisibilityAvailableByDefault -> FeatureStatusEnabled
+          FeatureTeamSearchVisibilityUnavailableByDefault -> FeatureStatusDisabled
+      }
+
+newtype instance FeatureDefaults SearchVisibilityInboundConfig
+  = SearchVisibilityInboundDefaults (Feature SearchVisibilityInboundConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (Feature SearchVisibilityInboundConfig)
+  deriving (ParseFeatureDefaults) via OptionalField SearchVisibilityInboundConfig
+
+newtype instance FeatureDefaults ValidateSAMLEmailsConfig
+  = ValidateSAMLEmailsDefaults (Feature ValidateSAMLEmailsConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (Feature ValidateSAMLEmailsConfig)
+  deriving (ParseFeatureDefaults) via OptionalField ValidateSAMLEmailsConfig
+
+data instance FeatureDefaults DigitalSignaturesConfig = DigitalSignaturesDefaults
+  deriving stock (Eq, Show)
+  deriving (GetFeatureDefaults) via FixedDefaults DigitalSignaturesConfig
+
+instance ParseFeatureDefaults (FeatureDefaults DigitalSignaturesConfig) where
+  parseFeatureDefaults _ = pure DigitalSignaturesDefaults
+
+newtype instance FeatureDefaults AppLockConfig
+  = AppLockDefaults (Feature AppLockConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (Feature AppLockConfig)
+  deriving (ParseFeatureDefaults) via OptionalField AppLockConfig
+
+newtype instance FeatureDefaults FileSharingConfig
+  = FileSharingDefaults (LockableFeature FileSharingConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature FileSharingConfig)
+  deriving (ParseFeatureDefaults) via OptionalField FileSharingConfig
+
+newtype instance FeatureDefaults ClassifiedDomainsConfig
+  = ClassifiedDomainsDefaults (Feature ClassifiedDomainsConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, FromJSON)
+  deriving (ParseFeatureDefaults) via OptionalField ClassifiedDomainsConfig
+  deriving (GetFeatureDefaults) via Feature ClassifiedDomainsConfig
+
+newtype instance FeatureDefaults ConferenceCallingConfig
+  = ConferenceCallingDefaults (LockableFeature ConferenceCallingConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature ConferenceCallingConfig)
+  deriving (ParseFeatureDefaults) via OptionalField ConferenceCallingConfig
+
+newtype instance FeatureDefaults SelfDeletingMessagesConfig
+  = SelfDeletingMessagesDefaults (LockableFeature SelfDeletingMessagesConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature SelfDeletingMessagesConfig)
+  deriving (ParseFeatureDefaults) via OptionalField SelfDeletingMessagesConfig
+
+newtype instance FeatureDefaults GuestLinksConfig
+  = GuestLinksDefaults (LockableFeature GuestLinksConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature GuestLinksConfig)
+  deriving (ParseFeatureDefaults) via OptionalField GuestLinksConfig
+
+newtype instance FeatureDefaults SndFactorPasswordChallengeConfig
+  = SndFactorPasswordChallengeDefaults (LockableFeature SndFactorPasswordChallengeConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature SndFactorPasswordChallengeConfig)
+  deriving (ParseFeatureDefaults) via OptionalField SndFactorPasswordChallengeConfig
+
+newtype instance FeatureDefaults MLSConfig = MLSDefaults (DefaultsInitial MLSConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via DefaultsInitial MLSConfig
+  deriving (ParseFeatureDefaults) via OptionalField MLSConfig
+
+data instance FeatureDefaults ExposeInvitationURLsToTeamAdminConfig
+  = ExposeInvitationURLsToTeamAdminDefaults
+  deriving stock (Eq, Show)
+  deriving (GetFeatureDefaults) via FixedDefaults ExposeInvitationURLsToTeamAdminConfig
+
+instance ParseFeatureDefaults (FeatureDefaults ExposeInvitationURLsToTeamAdminConfig) where
+  parseFeatureDefaults _ = pure ExposeInvitationURLsToTeamAdminDefaults
+
+newtype instance FeatureDefaults OutlookCalIntegrationConfig
+  = OutlookCalIntegrationDefaults (LockableFeature OutlookCalIntegrationConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature OutlookCalIntegrationConfig)
+  deriving (ParseFeatureDefaults) via OptionalField OutlookCalIntegrationConfig
+
+newtype instance FeatureDefaults MlsE2EIdConfig
+  = MlsE2EIdDefaults (LockableFeature MlsE2EIdConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature MlsE2EIdConfig)
+  deriving (ParseFeatureDefaults) via OptionalField MlsE2EIdConfig
+
+newtype instance FeatureDefaults MlsMigrationConfig
+  = MlsMigrationDefaults (LockableFeature MlsMigrationConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature MlsMigrationConfig)
+  deriving (ParseFeatureDefaults) via OptionalField MlsMigrationConfig
+
+newtype instance FeatureDefaults EnforceFileDownloadLocationConfig
+  = EnforceFileDownloadLocationDefaults (LockableFeature EnforceFileDownloadLocationConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature EnforceFileDownloadLocationConfig)
+  deriving (ParseFeatureDefaults) via OptionalField EnforceFileDownloadLocationConfig
+
+newtype instance FeatureDefaults LimitedEventFanoutConfig
+  = LimitedEventFanoutDefaults (Feature LimitedEventFanoutConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (Feature LimitedEventFanoutConfig)
+  deriving (ParseFeatureDefaults) via OptionalField LimitedEventFanoutConfig
+
+newtype instance FeatureDefaults DomainRegistrationConfig
+  = DomainRegistrationConfigDefaults (LockableFeature DomainRegistrationConfig)
+  deriving stock (Eq, Show)
+  deriving newtype (Default, GetFeatureDefaults)
+  deriving (FromJSON) via Defaults (LockableFeature DomainRegistrationConfig)
+  deriving (ParseFeatureDefaults) via OptionalField DomainRegistrationConfig
+
+featureKey :: forall cfg. (IsFeatureConfig cfg) => Key.Key
+featureKey = Key.fromText $ featureName @cfg
+
+class ParseFeatureDefaults a where
+  parseFeatureDefaults :: A.Object -> A.Parser a
+
+newtype RequiredField cfg = RequiredField (FeatureDefaults cfg)
+
+instance
+  (IsFeatureConfig cfg, FromJSON (FeatureDefaults cfg)) =>
+  ParseFeatureDefaults (RequiredField cfg)
+  where
+  parseFeatureDefaults obj = RequiredField <$> obj .: featureKey @cfg
+
+newtype OptionalField cfg = OptionalField (FeatureDefaults cfg)
+
+instance
+  ( IsFeatureConfig cfg,
+    Default (FeatureDefaults cfg),
+    FromJSON (FeatureDefaults cfg)
+  ) =>
+  ParseFeatureDefaults (OptionalField cfg)
+  where
+  parseFeatureDefaults obj = OptionalField <$> obj .:? featureKey @cfg .!= def
+
+type FeatureFlags = AllFeatures FeatureDefaults
+
+featureDefaults ::
+  forall cfg.
+  ( GetFeatureDefaults (FeatureDefaults cfg),
+    NpProject cfg Features
+  ) =>
+  FeatureFlags ->
+  LockableFeature cfg
+featureDefaults = featureDefaults1 . npProject
+
+class FeatureFlagsFromObject f cfgs where
+  featureFlagsFromObject :: A.Object -> A.Parser (NP f cfgs)
+
+instance FeatureFlagsFromObject f '[] where
+  featureFlagsFromObject _ = pure Nil
+
+instance
+  ( ParseFeatureDefaults (f cfg),
+    FeatureFlagsFromObject f cfgs
+  ) =>
+  FeatureFlagsFromObject f (cfg : cfgs)
+  where
+  featureFlagsFromObject obj =
+    (:*)
+      <$> parseFeatureDefaults obj
+      <*> featureFlagsFromObject obj
+
+instance
+  (FeatureFlagsFromObject FeatureDefaults Features) =>
+  FromJSON FeatureFlags
+  where
+  parseJSON = withObject "FeatureFlags" featureFlagsFromObject
+
+newtype Defaults a = Defaults {_unDefaults :: a}
+
+instance (FromJSON a) => FromJSON (Defaults a) where
+  parseJSON = withObject "default object" $ \ob ->
+    Defaults <$> (ob .: "defaults")
+
+data DefaultsInitial cfg = DefaultsInitial
+  { defFeature :: LockableFeature cfg,
+    initial :: cfg
+  }
+  deriving (Eq, Show)
+
+instance (IsFeatureConfig cfg) => Default (DefaultsInitial cfg) where
+  def = DefaultsInitial def def
+
+type instance ConfigOf (DefaultsInitial cfg) = cfg
+
+instance GetFeatureDefaults (DefaultsInitial cfg) where
+  featureDefaults1 = defFeature
+
+instance (IsFeatureConfig cfg) => FromJSON (DefaultsInitial cfg) where
+  parseJSON = withObject "default with initial" $ \ob -> do
+    feat <- ob .:? "defaults" .!= def
+    mc <-
+      fromMaybe feat.config
+        <$> A.explicitParseFieldMaybe S.schemaParseJSON ob "initialConfig"
+    pure $ DefaultsInitial feat mc
+
+initialFeature :: DefaultsInitial cfg -> LockableFeature cfg
+initialFeature d = d.defFeature {config = d.initial}
 
 makeLenses ''TeamCreationTime
-makeLenses ''FeatureFlags
-makeLenses ''Defaults
-
--- Note [hidden team roles]
---
--- The problem: the mapping between 'Role' and 'Permissions' is fixed by external contracts:
--- client apps treat permission bit matrices as opaque role identifiers, so if we add new
--- permission flags, things will break there.
---
--- "Hidden" in "HiddenPerm", therefore, refers to a permission hidden from
--- clients, thereby making it internal to the backend.
---
--- The solution: add new permission bits to 'HiddenPerm', 'HiddenPermissions', and make
--- 'hasPermission', 'mayGrantPermission' polymorphic.  Now you can check both for the hidden
--- permission bits and the old ones that we share with the client apps.
-
--- | See Note [hidden team roles]
-data HiddenPerm
-  = ChangeLegalHoldTeamSettings
-  | ChangeLegalHoldUserSettings
-  | ViewLegalHoldUserSettings
-  | ViewTeamFeature TeamFeatureName
-  | ChangeTeamFeature TeamFeatureName
-  | ChangeTeamSearchVisibility
-  | ViewTeamSearchVisibility
-  | ViewSameTeamEmails
-  | ReadIdp
-  | CreateUpdateDeleteIdp
-  | CreateReadDeleteScimToken
-  | -- | this has its own permission because we're not sure how
-    -- efficient this end-point is.  better not let all team members
-    -- play with it unless we have to.
-    DownloadTeamMembersCsv
-  | ChangeTeamMemberProfiles
-  deriving (Eq, Ord, Show)
-
--- | See Note [hidden team roles]
-data HiddenPermissions = HiddenPermissions
-  { _hself :: Set HiddenPerm,
-    _hcopy :: Set HiddenPerm
-  }
-  deriving (Eq, Ord, Show)
-
-makeLenses ''HiddenPermissions
-
-roleHiddenPermissions :: Role -> HiddenPermissions
-roleHiddenPermissions role = HiddenPermissions p p
-  where
-    p = roleHiddenPerms role
-    roleHiddenPerms :: Role -> Set HiddenPerm
-    roleHiddenPerms RoleOwner = roleHiddenPerms RoleAdmin
-    roleHiddenPerms RoleAdmin =
-      (roleHiddenPerms RoleMember <>) $
-        Set.fromList
-          [ ChangeLegalHoldTeamSettings,
-            ChangeLegalHoldUserSettings,
-            ChangeTeamSearchVisibility,
-            ChangeTeamFeature TeamFeatureAppLock,
-            ChangeTeamFeature TeamFeatureFileSharing,
-            ChangeTeamFeature TeamFeatureClassifiedDomains {- the features not listed here can only be changed in stern -},
-            ChangeTeamFeature TeamFeatureSelfDeletingMessages,
-            ChangeTeamMemberProfiles,
-            ReadIdp,
-            CreateUpdateDeleteIdp,
-            CreateReadDeleteScimToken,
-            DownloadTeamMembersCsv
-          ]
-    roleHiddenPerms RoleMember =
-      (roleHiddenPerms RoleExternalPartner <>) $
-        Set.fromList [ViewSameTeamEmails]
-    roleHiddenPerms RoleExternalPartner =
-      Set.fromList
-        [ ViewTeamFeature TeamFeatureLegalHold,
-          ViewTeamFeature TeamFeatureSSO,
-          ViewTeamFeature TeamFeatureSearchVisibility,
-          ViewTeamFeature TeamFeatureValidateSAMLEmails,
-          ViewTeamFeature TeamFeatureDigitalSignatures,
-          ViewTeamFeature TeamFeatureAppLock,
-          ViewTeamFeature TeamFeatureFileSharing,
-          ViewTeamFeature TeamFeatureClassifiedDomains,
-          ViewTeamFeature TeamFeatureConferenceCalling,
-          ViewTeamFeature TeamFeatureSelfDeletingMessages,
-          ViewLegalHoldUserSettings,
-          ViewTeamSearchVisibility
-        ]
-
--- | See Note [hidden team roles]
-class IsPerm perm where
-  roleHasPerm :: Role -> perm -> Bool
-  roleGrantsPerm :: Role -> perm -> Bool
-  hasPermission :: TeamMember -> perm -> Bool
-  hasPermission tm perm = maybe False (`roleHasPerm` perm) . permissionsRole $ tm ^. permissions
-  mayGrantPermission :: TeamMember -> perm -> Bool
-  mayGrantPermission tm perm = maybe False (`roleGrantsPerm` perm) . permissionsRole $ tm ^. permissions
-
-instance IsPerm Perm where
-  roleHasPerm r p = p `Set.member` (rolePermissions r ^. self)
-  roleGrantsPerm r p = p `Set.member` (rolePermissions r ^. copy)
-  hasPermission tm p = p `Set.member` (tm ^. permissions . self)
-  mayGrantPermission tm p = p `Set.member` (tm ^. permissions . copy)
-
-instance IsPerm HiddenPerm where
-  roleHasPerm r p = p `Set.member` (roleHiddenPermissions r ^. hself)
-  roleGrantsPerm r p = p `Set.member` (roleHiddenPermissions r ^. hcopy)
 
 notTeamMember :: [UserId] -> [TeamMember] -> [UserId]
 notTeamMember uids tmms =
   Set.toList $
     Set.fromList uids `Set.difference` Set.fromList (map (view userId) tmms)
 
-isTeamMember :: Foldable m => UserId -> m TeamMember -> Bool
+isTeamMember :: (Foldable m) => UserId -> m TeamMember -> Bool
 isTeamMember u = isJust . findTeamMember u
 
-findTeamMember :: Foldable m => UserId -> m TeamMember -> Maybe TeamMember
+findTeamMember :: (Foldable m) => UserId -> m TeamMember -> Maybe TeamMember
 findTeamMember u = find ((u ==) . view userId)
 
-isTeamOwner :: TeamMember -> Bool
-isTeamOwner tm = fullPermissions == (tm ^. permissions)
+isTeamOwner :: TeamMemberOptPerms -> Bool
+isTeamOwner tm = optionalPermissions tm == Just fullPermissions
 
--- | Use this to construct the condition expected by 'teamMemberJson', 'teamMemberListJson'
 canSeePermsOf :: TeamMember -> TeamMember -> Bool
 canSeePermsOf seeer seeee =
   seeer `hasPermission` GetMemberPermissions || seeer == seeee

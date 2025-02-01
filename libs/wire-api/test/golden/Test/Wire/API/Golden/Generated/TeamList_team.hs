@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,42 +16,41 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.TeamList_team where
 
-import Control.Lens ((.~))
+import Control.Lens ((.~), (?~))
 import Data.Id (Id (Id))
-import qualified Data.UUID as UUID (fromString)
-import Imports (Bool (False, True), Maybe (Just, Nothing), fromJust, (&))
-import Wire.API.Team (TeamBinding (Binding, NonBinding), TeamList (..), newTeam, teamIconKey)
+import Data.UUID qualified as UUID (fromString)
+import Imports (Bool (False, True), Maybe (..), fromJust, (&))
+import Wire.API.Asset
+import Wire.API.Team (Icon (..), TeamBinding (Binding, NonBinding), TeamList (..), newTeam, teamIconKey)
 
 testObject_TeamList_team_1 :: TeamList
 testObject_TeamList_team_1 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")))
+            ""
+            DefaultIcon
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = False
     }
@@ -60,22 +59,20 @@ testObject_TeamList_team_2 :: TeamList
 testObject_TeamList_team_2 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ("7")
-              ("\174380")
-              (Binding)
-              & teamIconKey .~ (Just "@")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            "7"
+            DefaultIcon
+            Binding
+            & teamIconKey ?~ "@",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = False
     }
@@ -84,14 +81,13 @@ testObject_TeamList_team_3 :: TeamList
 testObject_TeamList_team_3 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0002-0000-000200000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000002"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0002-0000-000200000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000002")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = False
     }
@@ -100,22 +96,20 @@ testObject_TeamList_team_4 :: TeamList
 testObject_TeamList_team_4 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))))
-              ("\1065164")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")))
+            "\1065164"
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = False
     }
@@ -124,62 +118,55 @@ testObject_TeamList_team_5 :: TeamList
 testObject_TeamList_team_5 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = True
     }
@@ -188,14 +175,13 @@ testObject_TeamList_team_6 :: TeamList
 testObject_TeamList_team_6 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              (" ")
-              ("\1027039")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            " "
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = True
     }
@@ -204,22 +190,20 @@ testObject_TeamList_team_7 :: TeamList
 testObject_TeamList_team_7 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001"))))
-              ("")
-              ("\DC1")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = False
     }
@@ -231,54 +215,48 @@ testObject_TeamList_team_9 :: TeamList
 testObject_TeamList_team_9 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = True
     }
@@ -293,14 +271,13 @@ testObject_TeamList_team_12 :: TeamList
 testObject_TeamList_team_12 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0002-0000-000200000001"))))
-              ((Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000100000000"))))
-              ("/\38175")
-              ("bi")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0002-0000-000200000001")))
+            (Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000100000000")))
+            "/\38175"
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ ""
         ],
       _teamListHasMore = True
     }
@@ -312,54 +289,48 @@ testObject_TeamList_team_14 :: TeamList
 testObject_TeamList_team_14 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            ""
+            DefaultIcon
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            ""
+            DefaultIcon
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            ""
+            DefaultIcon
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000000")))
+            ""
+            DefaultIcon
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = True
     }
@@ -368,46 +339,41 @@ testObject_TeamList_team_15 :: TeamList
 testObject_TeamList_team_15 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000100000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = False
     }
@@ -416,14 +382,13 @@ testObject_TeamList_team_16 :: TeamList
 testObject_TeamList_team_16 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000002"))))
-              ((Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000200000000"))))
-              ("\170783")
-              ("e\20069")
-              (Binding)
-              & teamIconKey .~ (Just "\1113463(")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000100000002")))
+            (Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000200000000")))
+            "\170783"
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "\1113463("
         ],
       _teamListHasMore = True
     }
@@ -435,14 +400,13 @@ testObject_TeamList_team_18 :: TeamList
 testObject_TeamList_team_18 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000002"))))
-              ((Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000000000000"))))
-              ("W1")
-              ("!")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000002")))
+            (Id (fromJust (UUID.fromString "00000002-0000-0000-0000-000000000000")))
+            "W1"
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = True
     }
@@ -451,14 +415,13 @@ testObject_TeamList_team_19 :: TeamList
 testObject_TeamList_team_19 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0002-0000-000200000000"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000200000002"))))
-              ("")
-              ("7")
-              (Binding)
-              & teamIconKey .~ (Just "\189413(")
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0002-0000-000200000000")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000200000002")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "\189413("
         ],
       _teamListHasMore = False
     }
@@ -467,38 +430,34 @@ testObject_TeamList_team_20 :: TeamList
 testObject_TeamList_team_20 =
   TeamList
     { _teamListTeams =
-        [ ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Nothing)
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001"))))
-              ((Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001"))))
-              ("")
-              ("")
-              (Binding)
-              & teamIconKey .~ (Just "")
-          ),
-          ( newTeam
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001"))))
-              ((Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000"))))
-              ("")
-              ("")
-              (NonBinding)
-              & teamIconKey .~ (Nothing)
-          )
+        [ newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0000-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey .~ Nothing,
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0000-0000-000000000000")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000100000001")))
+            (Id (fromJust (UUID.fromString "00000000-0000-0001-0000-000000000001")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            Binding
+            & teamIconKey ?~ "",
+          newTeam
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000001")))
+            (Id (fromJust (UUID.fromString "00000001-0000-0001-0000-000000000000")))
+            ""
+            (Icon (AssetKeyV3 (Id (fromJust (UUID.fromString "55b9ad19-315c-4bda-8c0f-5d7b0e143008"))) AssetEternal))
+            NonBinding
+            & teamIconKey .~ Nothing
         ],
       _teamListHasMore = False
     }

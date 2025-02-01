@@ -1,10 +1,11 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,10 +26,9 @@ module Test.Schema.UserSpec
 where
 
 import Data.Aeson
-import qualified Data.CaseInsensitive as CI
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Either (isLeft, isRight)
 import Data.Foldable (for_)
-import qualified Data.HashMap.Strict as HM
 import Data.Text (Text)
 import HaskellWorks.Hspec.Hedgehog (require)
 import Hedgehog
@@ -38,10 +38,10 @@ import Lens.Micro
 import Network.URI.Static (uri)
 import Test.Hspec
 import Test.Schema.Util (genUri, mk_prop_caseInsensitive)
-import Text.Email.Validate (emailAddress)
+import Text.Email.Validate (emailAddress, validate)
 import qualified Web.Scim.Class.User as UserClass
 import Web.Scim.Filter (AttrPath (..))
-import Web.Scim.Schema.Common (ScimBool (ScimBool), URI (..), WithId (..))
+import Web.Scim.Schema.Common (ScimBool (ScimBool), URI (..), WithId (..), lowerKey)
 import qualified Web.Scim.Schema.ListResponse as ListResponse
 import Web.Scim.Schema.Meta (ETag (Strong, Weak), Meta (..), WithMeta (..))
 import Web.Scim.Schema.PatchOp (Op (..), Operation (..), PatchOp (..), Patchable (..), Path (..))
@@ -65,14 +65,46 @@ prop_roundtrip = property $ do
 
 type PatchTag = TestTag Text () () UserExtraPatch
 
-type UserExtraPatch = HM.HashMap Text Text
+type UserExtraPatch = KeyMap.KeyMap Text
 
 spec :: Spec
 spec = do
+  describe "scimEmailsToEmailAddress" $ do
+    let Right adr1 = validate "one@example.com"
+        Right adr2 = validate "two@example.com"
+        Right adr3 = validate "three@example.com"
+
+        false1 = Nothing
+        false2 = Just (ScimBool False)
+        true = Just (ScimBool True)
+
+    it "returns Nothing if empty" $ do
+      scimEmailsToEmailAddress [] `shouldBe` Nothing
+
+    it "returns first primary if it exists" $ do
+      scimEmailsToEmailAddress
+        [ Email Nothing (EmailAddress adr1) false1,
+          Email Nothing (EmailAddress adr2) false2,
+          Email (Just "this is ignored") (EmailAddress adr3) true
+        ]
+        `shouldBe` Just adr3
+
+    it "returns first entry if no primary exists" $ do
+      scimEmailsToEmailAddress
+        [ Email Nothing (EmailAddress adr1) false1,
+          Email Nothing (EmailAddress adr2) false2
+        ]
+        `shouldBe` Just adr1
+      scimEmailsToEmailAddress
+        [ Email Nothing (EmailAddress adr1) false2,
+          Email Nothing (EmailAddress adr2) false1
+        ]
+        `shouldBe` Just adr1
+
   describe "applyPatch" $ do
     it "only applies patch for supported fields" $ do
       let schemas' = []
-      let extras = HM.empty
+      let extras = KeyMap.empty
       let user :: User PatchTag = User.empty schemas' "hello" extras
       for_
         [ ("username", String "lol"),
@@ -86,7 +118,7 @@ spec = do
           User.applyPatch user patchOp `shouldSatisfy` isRight
     it "does not support multi-value attributes" $ do
       let schemas' = []
-      let extras = HM.empty
+      let extras = KeyMap.empty
       let user :: User PatchTag = User.empty schemas' "hello" extras
       for_
         [ ("schemas", toJSON @[Schema] mempty),
@@ -104,7 +136,6 @@ spec = do
           ("photos", toJSON @[Photo] mempty),
           ("addresses", toJSON @[Address] mempty),
           ("entitlements", toJSON @[Text] mempty),
-          ("roles", toJSON @[Text] mempty),
           ("x509Certificates", toJSON @[Certificate] mempty)
         ]
         $ \(key, upd) -> do
@@ -113,12 +144,12 @@ spec = do
           User.applyPatch user patchOp `shouldSatisfy` isLeft
     it "applies patch to `extra`" $ do
       let schemas' = []
-      let extras = HM.empty
+      let extras = KeyMap.empty
       let user :: User PatchTag = User.empty schemas' "hello" extras
       let Right programmingLanguagePath = PatchOp.parsePath (User.supportedSchemas @PatchTag) "urn:hscim:test:programmingLanguage"
       let operation = Operation Replace (Just programmingLanguagePath) (Just (toJSON @Text "haskell"))
       let patchOp = PatchOp [operation]
-      User.extra <$> (User.applyPatch user patchOp) `shouldBe` Right (HM.singleton "programmingLanguage" "haskell")
+      User.extra <$> User.applyPatch user patchOp `shouldBe` Right (KeyMap.singleton "programmingLanguage" "haskell")
   describe "JSON serialization" $ do
     it "handles all fields" $ do
       require prop_roundtrip
@@ -128,13 +159,15 @@ spec = do
       toJSON minimalUser `shouldBe` minimalUserJson
       eitherDecode (encode minimalUserJson) `shouldBe` Right minimalUser
     it "treats 'null' and '[]' as absence of fields" $
-      eitherDecode (encode minimalUserJsonRedundant) `shouldBe` Right minimalUser
+      eitherDecode (encode minimalUserJsonRedundant)
+        `shouldBe` Right minimalUser
     it "allows casing variations in field names" $ do
-      require $ mk_prop_caseInsensitive (genUser)
+      require $ mk_prop_caseInsensitive genUser
       require $ mk_prop_caseInsensitive (ListResponse.fromList . (: []) <$> genStoredUser)
       eitherDecode (encode minimalUserJsonNonCanonical) `shouldBe` Right minimalUser
     it "doesn't require the 'schemas' field" $
-      eitherDecode (encode minimalUserJsonNoSchemas) `shouldBe` Right minimalUser
+      eitherDecode (encode minimalUserJsonNoSchemas)
+        `shouldBe` Right minimalUser
     it "doesn't add 'extra' if it's an empty object" $ do
       toJSON (extendedUser UserExtraEmpty) `shouldBe` extendedUserEmptyJson
       eitherDecode (encode extendedUserEmptyJson)
@@ -157,13 +190,13 @@ genName =
 genStoredUser :: Gen (UserClass.StoredUser (TestTag Text () () NoUserExtra))
 genStoredUser = do
   m <- genMeta
-  i <- Gen.element @_ @Text ["wef", "asdf", "@", "#", "1"]
-  u <- genUser
-  pure $ WithMeta m (WithId i u)
+  i <- Gen.element ["wef", "asdf", "@", "#", "1"]
+  WithMeta m . WithId i <$> genUser
 
 genMeta :: Gen Meta
 genMeta =
-  Meta <$> Gen.enumBounded
+  Meta
+    <$> Gen.enumBounded
     <*> Gen.element [read "2021-08-23 13:13:31.450140036 UTC", read "2019-01-01 09:55:59 UTC"]
     <*> Gen.element [read "2021-08-23 13:13:31.450140036 UTC", read "2022-01-01 09:55:59 UTC"]
     <*> (Gen.element [Weak, Strong] <*> Gen.text (Range.constant 0 20) Gen.unicode)
@@ -173,7 +206,7 @@ genMeta =
 -- lists in the first place
 genUser :: Gen (User (TestTag Text () () NoUserExtra))
 genUser = do
-  schemas' <- pure [User20] -- TODO random schemas or?
+  let schemas' = [User20] -- TODO random schemas or?
   userName' <- Gen.text (Range.constant 0 20) Gen.unicode
   externalId' <- Gen.maybe $ Gen.text (Range.constant 0 20) Gen.unicode
   name' <- Gen.maybe genName
@@ -186,14 +219,14 @@ genUser = do
   locale' <- Gen.maybe $ Gen.text (Range.constant 0 20) Gen.unicode
   active' <- Gen.maybe $ (ScimBool <$> Gen.bool)
   password' <- Gen.maybe $ Gen.text (Range.constant 0 20) Gen.unicode
-  emails' <- pure [] -- Gen.list (Range.constant 0 20) genEmail
-  phoneNumbers' <- pure [] -- Gen.list (Range.constant 0 20) genPhone
-  ims' <- pure [] -- Gen.list (Range.constant 0 20) genIM
-  photos' <- pure [] -- Gen.list (Range.constant 0 20) genPhoto
-  addresses' <- pure [] -- Gen.list (Range.constant 0 20) genAddress
-  entitlements' <- pure [] -- Gen.list (Range.constant 0 20) (Gen.text (Range.constant 0 20) Gen.unicode)
-  roles' <- pure [] -- Gen.list (Range.constant 0 20) (Gen.text (Range.constant 0 10) Gen.unicode)
-  x509Certificates' <- pure [] -- Gen.list (Range.constant 0 20) genCertificate
+  let emails' = [] -- Gen.list (Range.constant 0 20) genEmail
+  let phoneNumbers' = [] -- Gen.list (Range.constant 0 20) genPhone
+  let ims' = [] -- Gen.list (Range.constant 0 20) genIM
+  let photos' = [] -- Gen.list (Range.constant 0 20) genPhoto
+  let addresses' = [] -- Gen.list (Range.constant 0 20) genAddress
+  let entitlements' = [] -- Gen.list (Range.constant 0 20) (Gen.text (Range.constant 0 20) Gen.unicode)
+  let roles' = [] -- Gen.list (Range.constant 0 20) (Gen.text (Range.constant 0 10) Gen.unicode)
+  let x509Certificates' = [] -- Gen.list (Range.constant 0 20) genCertificate
   pure $
     User
       { schemas = schemas',
@@ -252,7 +285,7 @@ completeUser =
               Email.value =
                 maybe
                   (error "couldn't parse email")
-                  EmailAddress2
+                  EmailAddress
                   (emailAddress "user@example.com"),
               Email.primary = Nothing
             }
@@ -444,7 +477,7 @@ instance FromJSON UserExtraTest where
       Nothing -> pure UserExtraEmpty
       Just (lowercase -> o2) -> UserExtraObject <$> o2 .: "test"
     where
-      lowercase = HM.fromList . map (over _1 CI.foldCase) . HM.toList
+      lowercase = KeyMap.fromList . map (over _1 lowerKey) . KeyMap.toList
 
 instance ToJSON UserExtraTest where
   toJSON UserExtraEmpty = object []
@@ -457,7 +490,7 @@ instance Patchable UserExtraTest where
 -- | A 'User' with extra fields present.
 extendedUser :: UserExtraTest -> User (TestTag Text () () UserExtraTest)
 extendedUser e =
-  (User.empty [User20, CustomSchema "urn:hscim:test"] "sample userName" e)
+  User.empty [User20, CustomSchema "urn:hscim:test"] "sample userName" e
 
 -- | Encoding of @extendedUser UserExtraEmpty@.
 extendedUserEmptyJson :: Value

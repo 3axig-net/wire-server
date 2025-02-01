@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,12 +33,14 @@ module Galley.Aws
   )
 where
 
+import Amazonka qualified as AWS
+import Amazonka.SQS qualified as SQS
+import Amazonka.SQS.Lens qualified as SQS
 import Control.Lens hiding ((.=))
 import Control.Monad.Catch
-import qualified Control.Monad.Trans.AWS as AWST
 import Control.Monad.Trans.Resource
 import Control.Retry (exponentialBackoff, limitRetries, retrying)
-import qualified Data.ByteString.Base64 as B64
+import Data.ByteString.Base64 qualified as B64
 import Data.ByteString.Builder (toLazyByteString)
 import Data.ProtoLens.Encoding
 import Data.Text.Encoding (decodeLatin1)
@@ -45,19 +48,16 @@ import Data.UUID (toText)
 import Data.UUID.V4
 import Galley.Options
 import Imports
-import qualified Network.AWS as AWS
-import qualified Network.AWS.Env as AWS
-import qualified Network.AWS.SQS as SQS
 import Network.HTTP.Client
   ( HttpException (..),
     HttpExceptionContent (..),
     Manager,
   )
-import qualified Network.TLS as TLS
-import qualified Proto.TeamEvents as E
-import qualified System.Logger as Logger
+import Network.TLS qualified as TLS
+import Proto.TeamEvents qualified as E
+import System.Logger qualified as Logger
 import System.Logger.Class
-import Util.Options
+import Util.Options hiding (endpoint)
 
 newtype QueueUrl = QueueUrl Text
   deriving (Show)
@@ -91,33 +91,31 @@ newtype Amazon a = Amazon
       MonadCatch,
       MonadMask,
       MonadReader Env,
-      MonadResource
+      MonadResource,
+      MonadUnliftIO
     )
-
-instance MonadUnliftIO Amazon where
-  askUnliftIO = Amazon . ReaderT $ \r ->
-    withUnliftIO $ \u ->
-      return (UnliftIO (unliftIO u . flip runReaderT r . unAmazon))
 
 instance MonadLogger Amazon where
   log l m = view logger >>= \g -> Logger.log g l m
-
-instance AWS.MonadAWS Amazon where
-  liftAWS aws = view awsEnv >>= \e -> AWS.runAWS e aws
 
 mkEnv :: Logger -> Manager -> JournalOpts -> IO Env
 mkEnv lgr mgr opts = do
   let g = Logger.clone (Just "aws.galley") lgr
   e <- mkAwsEnv g
-  q <- getQueueUrl e (opts ^. awsQueueName)
-  return (Env e g q)
+  q <- getQueueUrl e (opts ^. queueName)
+  pure (Env e g q)
   where
-    sqs e = AWS.setEndpoint (e ^. awsSecure) (e ^. awsHost) (e ^. awsPort) SQS.sqs
-    mkAwsEnv g =
-      set AWS.envLogger (awsLogger g)
-        . set AWS.envRetryCheck retryCheck
-        <$> AWS.newEnvWith AWS.Discover Nothing mgr
-        <&> AWS.configure (sqs (opts ^. awsEndpoint))
+    sqs e = AWS.setEndpoint (e ^. awsSecure) (e ^. awsHost) (e ^. awsPort) SQS.defaultService
+    mkAwsEnv g = do
+      baseEnv <-
+        AWS.newEnv AWS.discover
+          <&> AWS.configureService (sqs (opts ^. endpoint))
+      pure $
+        baseEnv
+          { AWS.logger = awsLogger g,
+            AWS.retryCheck = retryCheck,
+            AWS.manager = mgr
+          }
     awsLogger g l = Logger.log g (mapLevel l) . Logger.msg . toLazyByteString
     mapLevel AWS.Info = Logger.Info
     -- Debug output from amazonka can be very useful for tracing requests
@@ -150,38 +148,47 @@ mkEnv lgr mgr opts = do
     getQueueUrl :: AWS.Env -> Text -> IO QueueUrl
     getQueueUrl e q = do
       x <-
-        runResourceT . AWST.runAWST e $
-          AWST.trying AWS._Error $
-            AWST.send (SQS.getQueueURL q)
+        runResourceT $
+          AWS.trying AWS._Error $
+            AWS.send e (SQS.newGetQueueUrl q)
       either
         (throwM . GeneralError)
-        (return . QueueUrl . view SQS.gqursQueueURL)
+        (pure . QueueUrl . view SQS.getQueueUrlResponse_queueUrl)
         x
 
-execute :: MonadIO m => Env -> Amazon a -> m a
+execute :: (MonadIO m) => Env -> Amazon a -> m a
 execute e m = liftIO $ runResourceT (runReaderT (unAmazon m) e)
 
 enqueue :: E.TeamEvent -> Amazon ()
 enqueue e = do
   QueueUrl url <- view eventQueue
   rnd <- liftIO nextRandom
-  res <- retrying (limitRetries 5 <> exponentialBackoff 1000000) (const canRetry) $ const (sendCatch (req url rnd))
-  either (throwM . GeneralError) (const (return ())) res
+  amaznkaEnv <- view awsEnv
+  res <- retrying (limitRetries 5 <> exponentialBackoff 1000000) (const canRetry) $ const (sendCatch amaznkaEnv (req url rnd))
+  either (throwM . GeneralError) (const (pure ())) res
   where
     event = decodeLatin1 $ B64.encode $ encodeMessage e
     req url dedup =
-      SQS.sendMessage url event & SQS.smMessageGroupId .~ Just "team.events"
-        & SQS.smMessageDeduplicationId .~ Just (toText dedup)
+      SQS.newSendMessage url event
+        & SQS.sendMessage_messageGroupId ?~ "team.events"
+        & SQS.sendMessage_messageDeduplicationId ?~ toText dedup
 
 --------------------------------------------------------------------------------
 -- Utilities
 
-sendCatch :: AWS.AWSRequest r => r -> Amazon (Either AWS.Error (AWS.Rs r))
-sendCatch = AWST.trying AWS._Error . AWS.send
+sendCatch ::
+  ( AWS.AWSRequest r,
+    Typeable r,
+    Typeable (AWS.AWSResponse r)
+  ) =>
+  AWS.Env ->
+  r ->
+  Amazon (Either AWS.Error (AWS.AWSResponse r))
+sendCatch e = AWS.trying AWS._Error . AWS.send e
 
-canRetry :: MonadIO m => Either AWS.Error a -> m Bool
+canRetry :: (MonadIO m) => Either AWS.Error a -> m Bool
 canRetry (Right _) = pure False
 canRetry (Left e) = case e of
   AWS.TransportError (HttpExceptionRequest _ ResponseTimeout) -> pure True
-  AWS.ServiceError se | se ^. AWS.serviceCode == AWS.ErrorCode "RequestThrottled" -> pure True
+  AWS.ServiceError se | se ^. AWS.serviceError_code == AWS.ErrorCode "RequestThrottled" -> pure True
   _ -> pure False

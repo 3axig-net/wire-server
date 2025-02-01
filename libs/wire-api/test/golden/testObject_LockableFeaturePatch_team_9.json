@@ -1,0 +1,10 @@
+{
+    "config": {
+        "domains": [
+            "test.foobar"
+        ]
+    },
+    "lockStatus": "unlocked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

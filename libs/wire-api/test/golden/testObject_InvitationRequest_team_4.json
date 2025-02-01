@@ -1,7 +1,7 @@
 {
-    "email": "@",
+    "allow_existing": true,
+    "email": "some@example",
     "locale": null,
     "name": null,
-    "phone": "+2467751810",
     "role": "member"
 }

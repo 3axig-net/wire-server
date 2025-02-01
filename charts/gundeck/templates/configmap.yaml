@@ -5,22 +5,63 @@ metadata:
 data:
   {{- with .Values.config }}
   gundeck.yaml: |
-    logNetStrings: True # log using netstrings encoding: http://cr.yp.to/proto/netstrings.txt
+    logFormat: {{ .logFormat }}
     logLevel: {{ .logLevel }}
+    logNetStrings: {{ .logNetStrings }}
 
     gundeck:
       host: 0.0.0.0
       port: {{ $.Values.service.internalPort }}
+
+    brig:
+      host: brig
+      port: 8080
 
     cassandra:
       endpoint:
         host: {{ .cassandra.host }}
         port: 9042
       keyspace: gundeck
+      {{- if hasKey .cassandra "filterNodesByDatacentre" }}
+      filterNodesByDatacentre: {{ .cassandra.filterNodesByDatacentre }}
+      {{- end }}
+      {{- if eq (include "useCassandraTLS" .) "true" }}
+      tlsCa: /etc/wire/gundeck/cassandra/{{- (include "tlsSecretRef" . | fromYaml).key }}
+      {{- end }}
+
+    {{- with .rabbitmq }}
+    rabbitmq:
+      host: {{ .host }}
+      port: {{ .port }}
+      vHost: {{ .vHost }}
+      enableTls: {{ .enableTls }}
+      insecureSkipVerifyTls: {{ .insecureSkipVerifyTls }}
+      {{- if .tlsCaSecretRef }}
+      caCert: /etc/wire/gundeck/rabbitmq-ca/{{ .tlsCaSecretRef.key }}
+      {{- end }}
+    {{- end }}
 
     redis:
       host: {{ .redis.host }}
       port: {{ .redis.port }}
+      connectionMode: {{ .redis.connectionMode }}
+      enableTls: {{ .redis.enableTls }}
+      insecureSkipVerifyTls: {{ .redis.insecureSkipVerifyTls }}
+      {{- if eq (include "configureRedisCa" .) "true" }}
+      tlsCa: /etc/wire/gundeck/redis-ca/{{ include "redisTlsSecretKey" .}}
+      {{- end }}
+
+    {{- if .redisAdditionalWrite }}
+    redisAdditionalWrite:
+      host: {{ .redisAdditionalWrite.host }}
+      port: {{ .redisAdditionalWrite.port }}
+      connectionMode: {{ .redisAdditionalWrite.connectionMode }}
+      enableTls: {{ .redisAdditionalWrite.enableTls }}
+      insecureSkipVerifyTls: {{ .redisAdditionalWrite.insecureSkipVerifyTls }}
+      {{- if eq (include "configureAdditionalRedisCa" .) "true" }}
+      tlsCa: /etc/wire/gundeck/additional-redis-ca/{{ include "additionalRedisTlsSecretKey" .}}
+      {{- end }}
+    {{- end }}
 
     # Gundeck uses discovery for AWS access key / secrets
     # For more details, check amazonka's documentation at:
@@ -34,14 +75,23 @@ data:
       arnEnv: {{ .arnEnv }}
       sqsEndpoint: {{ .sqsEndpoint | quote }}
       snsEndpoint: {{ .snsEndpoint | quote }}
-      connectionLimit: 256
     {{- end }}
 
     settings:
       httpPoolSize: 1024
-      notificationTTL: 2419200
-      bulkPush: {{ .bulkPush }}
+      notificationTTL: {{ required "config.notificationTTL" .notificationTTL }}
+      {{- if hasKey . "perNativePushConcurrency" }}
+      perNativePushConcurrency: {{ .perNativePushConcurrency }}
+      {{- end }}
+      disabledAPIVersions: {{ toJson .disabledAPIVersions }}
+      # disabledAPIVersions: [ 2 ]
       maxConcurrentNativePushes:
-        soft: 1000
+        soft: {{ .maxConcurrentNativePushes.soft }}
+        {{- if hasKey .maxConcurrentNativePushes "hard" }}
+        hard: {{ .maxConcurrentNativePushes.hard }}
+        {{- end }}
         # hard: 30  # more than this number of threads will not be allowed
+      maxPayloadLoadSize : {{ .maxPayloadLoadSize }}
+      internalPageSize : {{ .internalPageSize }}
+
   {{- end }}

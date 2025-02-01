@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,22 +15,17 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Cannon.App
-  ( wsapp,
-    terminate,
-    maxPingInterval,
-  )
-where
+module Cannon.App where
 
 import Cannon.WS
 import Control.Concurrent.Async
 import Control.Concurrent.Timeout
 import Control.Monad.Catch
-import Data.Aeson hiding (Error, (.=))
+import Data.Aeson hiding (Error, Key, (.=))
 import Data.ByteString.Conversion
 import Data.ByteString.Lazy (toStrict)
-import Data.Id (ClientId)
-import qualified Data.Text.Lazy as Text
+import Data.Id
+import Data.Text.Lazy qualified as Text
 import Data.Timeout
 import Imports hiding (threadDelay)
 import Lens.Family hiding (reset, set)
@@ -38,7 +33,7 @@ import Network.HTTP.Types.Status
 import Network.Wai.Utilities.Error
 import Network.WebSockets hiding (Request, Response, requestHeaders)
 import System.Logger.Class hiding (Error, close)
-import qualified System.Logger.Class as Logger
+import System.Logger.Class qualified as Logger
 
 -- | Connection state, updated by {read, write}Loop.
 data State = State !Int !Timeout
@@ -46,12 +41,12 @@ data State = State !Int !Timeout
 -- | The lifetime of a websocket.
 newtype TTL = TTL Word64
 
-counter :: Functor f => LensLike' f State Int
-counter f (State c p) = (\x -> State x p) `fmap` (f c)
+counter :: (Functor f) => LensLike' f State Int
+counter f (State c p) = (\x -> State x p) `fmap` f c
 {-# INLINE counter #-}
 
-pingFreq :: Functor f => LensLike' f State Timeout
-pingFreq f (State c p) = (\x -> State c x) `fmap` (f p)
+pingFreq :: (Functor f) => LensLike' f State Timeout
+pingFreq f (State c p) = (\x -> State c x) `fmap` f p
 {-# INLINE pingFreq #-}
 
 -- | Maximum ping interval in seconds. The ping interval controls
@@ -76,7 +71,7 @@ wsapp k c e pc = runWS e (go `catches` ioErrors k)
       clock <- getClock
       continue ws clock k `finally` terminate k ws
 
-continue :: (MonadLogger m, MonadUnliftIO m, MonadIO m) => Websocket -> Clock -> Key -> m ()
+continue :: (MonadLogger m, MonadUnliftIO m) => Websocket -> Clock -> Key -> m ()
 continue ws clock k = do
   runInIO <- askRunInIO
   liftIO $ do
@@ -92,14 +87,14 @@ continue ws clock k = do
       (Right (Left x)) ->
         let text = client (key2bytes k) . msg (val "write: " +++ show x)
          in runInIO $ Logger.debug text
-      _ -> return ()
+      _ -> pure ()
 
 terminate :: Key -> Websocket -> WS ()
 terminate k ws = do
   success <- unregisterLocal k ws
   debug $ client (key2bytes k) ~~ "websocket" .= connIdent ws ~~ "removed" .= success
   when success $
-    close k ws `catchAll` const (return ())
+    close k ws `catchAll` const (pure ())
 
 writeLoop :: Websocket -> Clock -> TTL -> IORef State -> IO ()
 writeLoop ws clock (TTL ttl) st = loop
@@ -107,16 +102,16 @@ writeLoop ws clock (TTL ttl) st = loop
     loop = do
       s <- readIORef st
       if
-          | s ^. counter == 0 -> do
+        | s ^. counter == 0 -> do
             set counter st succ
             threadDelay $ s ^. pingFreq
             keepAlive
-          | s ^. counter < 3 -> do
+        | s ^. counter < 3 -> do
             set counter st succ
             send (connection ws) ping
             threadDelay $ (10 # Second) `min` (s ^. pingFreq)
             keepAlive
-          | otherwise -> return ()
+        | otherwise -> pure ()
     keepAlive = do
       time <- getTime clock
       unless (time > ttl) loop
@@ -132,14 +127,14 @@ readLoop ws s = loop
           reset counter s 0
           send (connection ws) (pong p)
           loop
-        ControlMessage (Close _ _) -> return ()
+        ControlMessage (Close _ _) -> pure ()
         perhapsPingMsg -> do
           reset counter s 0
           when (isAppLevelPing perhapsPingMsg) sendAppLevelPong
           loop
     adjustPingFreq p = case fromByteString (toStrict p) of
       Just i | i > 0 && i < maxPingInterval -> reset pingFreq s (i # Second)
-      _ -> return ()
+      _ -> pure ()
     -- control messages are internal to the browser that manages the websockets
     -- <https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#Pings_and_Pongs_The_Heartbeat_of_WebSockets>.
     -- since the browser may silently lose a websocket connection, wire clients are allowed send
@@ -149,19 +144,19 @@ readLoop ws s = loop
       (DataMessage _ _ _ (Text "ping" _)) -> True
       (DataMessage _ _ _ (Binary "ping")) -> True
       _ -> False
-    sendAppLevelPong = sendMsgIO "pong" ws
+    sendAppLevelPong = sendMsgIO @ByteString "pong" ws
 
 rejectOnError :: PendingConnection -> HandshakeException -> IO a
 rejectOnError p x = do
   let f lb mg = toStrict . encode $ mkError status400 lb mg
   case x of
-    NotSupported -> rejectRequest p (f "protocol not supported" "N/A")
+    NotSupported -> rejectRequest p (f "protocol not supported" defRequestId)
     MalformedRequest _ m -> rejectRequest p (f "malformed-request" (Text.pack m))
     OtherHandshakeException m -> rejectRequest p (f "other-error" (Text.pack m))
     _ -> pure ()
   throwM x
 
-ioErrors :: (MonadLogger m, MonadIO m) => Key -> [Handler m ()]
+ioErrors :: (MonadLogger m) => Key -> [Handler m ()]
 ioErrors k =
   let f s = Logger.err $ client (key2bytes k) . msg s
    in [ Handler $ \(x :: HandshakeException) -> f (show x),

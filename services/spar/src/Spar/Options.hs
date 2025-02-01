@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,26 +19,67 @@
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
 -- | Reading the Spar config.
---
--- The config type itself, 'Opts', is defined in "Spar.Types".
 module Spar.Options
-  ( getOpts,
+  ( Opts' (..),
+    Opts,
+    DerivedOpts (..),
+    getOpts,
     deriveOpts,
     readOptsFile,
+    maxttlAuthreqDiffTime,
   )
 where
 
 import Control.Exception
 import Control.Lens
+import Data.Aeson hiding (fieldLabelModifier)
 import qualified Data.ByteString as SBS
+import Data.Time
 import qualified Data.Yaml as Yaml
 import Imports
 import Options.Applicative
+import SAML2.WebSSO
 import qualified SAML2.WebSSO as SAML
+import System.Logger.Extended (LogFormat)
 import Text.Ascii (ascii)
-import URI.ByteString as URI
-import Wire.API.Routes.Public.Spar
+import URI.ByteString
+import Util.Options
+import Wire.API.Routes.Version
+import Wire.API.User.Orphans ()
 import Wire.API.User.Saml
+
+type Opts = Opts' DerivedOpts
+
+data Opts' a = Opts
+  { saml :: !SAML.Config,
+    brig :: !Endpoint,
+    galley :: !Endpoint,
+    cassandra :: !CassandraOpts,
+    maxttlAuthreq :: !(TTL "authreq"),
+    maxttlAuthresp :: !(TTL "authresp"),
+    -- | The maximum number of SCIM tokens that we will allow teams to have.
+    maxScimTokens :: !Int,
+    -- | The maximum size of rich info. Should be in sync with 'Brig.Types.richInfoLimit'.
+    richInfoLimit :: !Int,
+    -- | Wire/AWS specific; optional; used to discover Cassandra instance
+    -- IPs using describe-instances.
+    discoUrl :: !(Maybe Text),
+    logNetStrings :: !(Maybe (Last Bool)),
+    logFormat :: !(Maybe (Last LogFormat)),
+    disabledAPIVersions :: !(Set VersionExp),
+    derivedOpts :: !a
+  }
+  deriving (Functor, Show, Generic)
+
+instance FromJSON (Opts' (Maybe ()))
+
+data DerivedOpts = DerivedOpts
+  { derivedOptsScimBaseURI :: !URI
+  }
+  deriving (Show, Generic)
+
+maxttlAuthreqDiffTime :: Opts -> NominalDiffTime
+maxttlAuthreqDiffTime = ttlToNominalDiffTime . maxttlAuthreq
 
 type OptsRaw = Opts' (Maybe ())
 
@@ -53,11 +94,6 @@ getOpts = do
 deriveOpts :: OptsRaw -> IO Opts
 deriveOpts raw = do
   derived <- do
-    let respuri =
-          -- respuri is only needed for 'derivedOptsBindCookiePath'; we want the prefix of the
-          -- V2 path that includes the team id.
-          runWithConfig raw (sparResponseURI Nothing)
-        derivedOptsBindCookiePath = URI.uriPath respuri
     -- We could also make this selectable in the config file, but it seems easier to derive it from
     -- the SAML base uri.
     let derivedOptsScimBaseURI = (saml raw ^. SAML.cfgSPSsoURI) & pathL %~ derive
@@ -79,9 +115,6 @@ newtype WithConfig a = WithConfig (Reader OptsRaw a)
 
 instance SAML.HasConfig WithConfig where
   getConfig = WithConfig $ asks saml
-
-runWithConfig :: OptsRaw -> WithConfig a -> a
-runWithConfig opts (WithConfig act) = act `runReader` opts
 
 -- | Accept config file location as cli option.
 --

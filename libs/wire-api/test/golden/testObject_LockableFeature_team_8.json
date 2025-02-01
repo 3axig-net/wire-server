@@ -1,0 +1,11 @@
+{
+    "config": {
+        "domains": [
+            "example.com",
+            "test.foobar"
+        ]
+    },
+    "lockStatus": "locked",
+    "status": "enabled",
+    "ttl": "unlimited"
+}

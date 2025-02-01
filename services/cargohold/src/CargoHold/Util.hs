@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,15 +21,14 @@ import CargoHold.AWS
 import CargoHold.App
 import qualified CargoHold.CloudFront as CloudFront
 import qualified CargoHold.S3 as S3
-import Control.Lens
 import Data.ByteString.Conversion
 import Imports
 import URI.ByteString hiding (urlEncode)
 
-genSignedURL :: (ToByteString p) => p -> Handler URI
-genSignedURL path = do
+genSignedURL :: (ToByteString p) => p -> Maybe Text -> Handler URI
+genSignedURL path mbHost = do
   uri <-
-    view (aws . cloudFront) >>= \case
-      Nothing -> S3.signedURL path
+    asks (.aws.cloudFront) >>= \case
+      Nothing -> S3.signedURL path mbHost
       Just cf -> CloudFront.signedURL cf path
-  return $! uri
+  pure $! uri

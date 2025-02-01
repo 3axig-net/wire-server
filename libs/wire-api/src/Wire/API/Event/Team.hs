@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,108 +32,72 @@ module Wire.API.Event.Team
 
     -- * EventData
     EventData (..),
-
-    -- * Swagger
-    modelEvent,
-    modelMemberEvent,
-    modelMemberData,
-    modelConvEvent,
-    modelConversationData,
-    modelUpdateEvent,
-    typeEventType,
   )
 where
 
-import Control.Lens (makeLenses)
-import Data.Aeson
+import Control.Lens (makeLenses, (?~))
+import Data.Aeson hiding (object, (.=))
+import Data.Aeson qualified as A
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.Aeson.Types (Parser)
-import qualified Data.HashMap.Strict as HashMap
 import Data.Id (ConvId, TeamId, UserId)
 import Data.Json.Util
-import qualified Data.Swagger.Build.Api as Doc
+import Data.OpenApi qualified as S
+import Data.Schema
 import Data.Time (UTCTime)
 import Imports
-import qualified Test.QuickCheck as QC
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
-import Wire.API.Team (Team, TeamUpdateData, modelUpdateData)
+import Test.QuickCheck qualified as QC
+import Wire.API.Team (Team, TeamUpdateData)
 import Wire.API.Team.Permission (Permissions)
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- Event
 
 data Event = Event
-  { _eventType :: EventType,
-    _eventTeam :: TeamId,
+  { _eventTeam :: TeamId,
     _eventTime :: UTCTime,
-    _eventData :: Maybe EventData
+    _eventData :: EventData
   }
   deriving stock (Eq, Show, Generic)
 
-newEvent :: EventType -> TeamId -> UTCTime -> Event
-newEvent typ tid tme = Event typ tid tme Nothing
+instance ToSchema Event where
+  schema =
+    object "Event" $
+      Event
+        <$> _eventTeam .= field "team" schema
+        <*> _eventTime .= field "time" utcTimeSchema
+        <*> _eventData .= fieldWithDocModifier "data" (description ?~ dataFieldDesc) schema
+        <* eventType .= field "version" schema
+    where
+      dataFieldDesc = "FUTUREWORK: this part of the docs is lying; we're working on it!"
 
-modelEvent :: Doc.Model
-modelEvent = Doc.defineModel "TeamEvent" $ do
-  Doc.description "team event data"
-  Doc.property "type" typeEventType $
-    Doc.description "event type"
-  Doc.property "team" Doc.bytes' $
-    Doc.description "team ID"
-  Doc.property "time" Doc.dateTime' $
-    Doc.description "date and time this event occurred"
-  -- This doesn't really seem to work in swagger-ui.
-  -- The children/subTypes are not displayed.
-  Doc.children
-    "type"
-    [ modelMemberEvent,
-      modelConvEvent,
-      modelUpdateEvent
-    ]
+instance S.ToSchema Event where
+  declareNamedSchema = schemaToSwagger
 
-modelMemberEvent :: Doc.Model
-modelMemberEvent = Doc.defineModel "TeamMemberEvent" $ do
-  Doc.description "team member event"
-  Doc.property "data" (Doc.ref modelMemberData) $ Doc.description "member data"
+eventType :: Event -> EventType
+eventType = eventDataType . _eventData
 
-modelMemberData :: Doc.Model
-modelMemberData =
-  Doc.defineModel "MemberData" $
-    Doc.property "user" Doc.bytes' $
-      Doc.description "user ID"
-
-modelConvEvent :: Doc.Model
-modelConvEvent = Doc.defineModel "TeamConversationEvent" $ do
-  Doc.description "team conversation event"
-  Doc.property "data" (Doc.ref modelConversationData) $ Doc.description "conversation data"
-
-modelConversationData :: Doc.Model
-modelConversationData =
-  Doc.defineModel "ConversationData" $
-    Doc.property "conv" Doc.bytes' $
-      Doc.description "conversation ID"
-
-modelUpdateEvent :: Doc.Model
-modelUpdateEvent = Doc.defineModel "TeamUpdateEvent" $ do
-  Doc.description "team update event"
-  Doc.property "data" (Doc.ref modelUpdateData) $ Doc.description "update data"
+newEvent :: TeamId -> UTCTime -> EventData -> Event
+newEvent = Event
 
 instance ToJSON Event where
-  toJSON = Object . toJSONObject
+  toJSON = A.Object . toJSONObject
 
 instance ToJSONObject Event where
   toJSONObject e =
-    HashMap.fromList
-      [ "type" .= _eventType e,
-        "team" .= _eventTeam e,
-        "time" .= _eventTime e,
-        "data" .= _eventData e
+    KeyMap.fromList
+      [ "type" A..= eventType e,
+        "team" A..= _eventTeam e,
+        "time" A..= _eventTime e,
+        "data" A..= _eventData e
       ]
 
 instance FromJSON Event where
   parseJSON = withObject "event" $ \o -> do
     ty <- o .: "type"
     dt <- o .:? "data"
-    Event ty
+    Event
       <$> o .: "team"
       <*> o .: "time"
       <*> parseEventData ty dt
@@ -141,7 +105,7 @@ instance FromJSON Event where
 instance Arbitrary Event where
   arbitrary = do
     typ <- arbitrary
-    Event typ
+    Event
       <$> arbitrary
       <*> arbitrary
       <*> genEventData typ
@@ -160,46 +124,28 @@ data EventType
   | ConvDelete
   deriving stock (Eq, Show, Generic)
   deriving (Arbitrary) via (GenericUniform EventType)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema EventType
 
-typeEventType :: Doc.DataType
-typeEventType =
-  Doc.string $
-    Doc.enum
-      [ "team.create",
-        "team.delete",
-        "team.update",
-        "team.member-join",
-        "team.member-leave",
-        "team.conversation-create",
-        "team.conversation-delete"
-      ]
-
-instance ToJSON EventType where
-  toJSON TeamCreate = String "team.create"
-  toJSON TeamDelete = String "team.delete"
-  toJSON TeamUpdate = String "team.update"
-  toJSON MemberJoin = String "team.member-join"
-  toJSON MemberUpdate = String "team.member-update"
-  toJSON MemberLeave = String "team.member-leave"
-  toJSON ConvCreate = String "team.conversation-create"
-  toJSON ConvDelete = String "team.conversation-delete"
-
-instance FromJSON EventType where
-  parseJSON (String "team.create") = pure TeamCreate
-  parseJSON (String "team.delete") = pure TeamDelete
-  parseJSON (String "team.update") = pure TeamUpdate
-  parseJSON (String "team.member-join") = pure MemberJoin
-  parseJSON (String "team.member-update") = pure MemberUpdate
-  parseJSON (String "team.member-leave") = pure MemberLeave
-  parseJSON (String "team.conversation-create") = pure ConvCreate
-  parseJSON (String "team.conversation-delete") = pure ConvDelete
-  parseJSON other = fail $ "Unknown event type: " <> show other
+instance ToSchema EventType where
+  schema =
+    enum @Text "EventType" $
+      mconcat
+        [ element "team.create" TeamCreate,
+          element "team.delete" TeamDelete,
+          element "team.update" TeamUpdate,
+          element "team.member-join" MemberJoin,
+          element "team.member-leave" MemberLeave,
+          element "team.member-update" MemberUpdate,
+          element "team.conversation-create" ConvCreate,
+          element "team.conversation-delete" ConvDelete
+        ]
 
 --------------------------------------------------------------------------------
 -- EventData
 
 data EventData
   = EdTeamCreate Team
+  | EdTeamDelete
   | EdTeamUpdate TeamUpdateData
   | EdMemberJoin UserId
   | EdMemberLeave UserId
@@ -208,56 +154,76 @@ data EventData
   | EdConvDelete ConvId
   deriving stock (Eq, Show, Generic)
 
+-- FUTUREWORK: this is outright wrong; see "Wire.API.Event.Conversation" on how to do this properly.
+instance ToSchema EventData where
+  schema =
+    object "EventData" $
+      EdTeamCreate
+        <$> (undefined :: EventData -> Team) .= field "team" schema
+
 instance ToJSON EventData where
   toJSON (EdTeamCreate tem) = toJSON tem
-  toJSON (EdMemberJoin usr) = object ["user" .= usr]
+  toJSON EdTeamDelete = Null
+  toJSON (EdMemberJoin usr) = A.object ["user" A..= usr]
   toJSON (EdMemberUpdate usr mPerm) =
-    object $
-      "user" .= usr
-        # "permissions" .= mPerm
+    A.object $
+      "user"
+        A..= usr
+        # "permissions"
+        A..= mPerm
         # []
-  toJSON (EdMemberLeave usr) = object ["user" .= usr]
-  toJSON (EdConvCreate cnv) = object ["conv" .= cnv]
-  toJSON (EdConvDelete cnv) = object ["conv" .= cnv]
+  toJSON (EdMemberLeave usr) = A.object ["user" A..= usr]
+  toJSON (EdConvCreate cnv) = A.object ["conv" A..= cnv]
+  toJSON (EdConvDelete cnv) = A.object ["conv" A..= cnv]
   toJSON (EdTeamUpdate upd) = toJSON upd
 
-parseEventData :: EventType -> Maybe Value -> Parser (Maybe EventData)
+eventDataType :: EventData -> EventType
+eventDataType (EdTeamCreate _) = TeamCreate
+eventDataType EdTeamDelete = TeamDelete
+eventDataType (EdTeamUpdate _) = TeamUpdate
+eventDataType (EdMemberJoin _) = MemberJoin
+eventDataType (EdMemberLeave _) = MemberLeave
+eventDataType (EdMemberUpdate _ _) = MemberUpdate
+eventDataType (EdConvCreate _) = ConvCreate
+eventDataType (EdConvDelete _) = ConvDelete
+
+parseEventData :: EventType -> Maybe Value -> Parser EventData
 parseEventData MemberJoin Nothing = fail "missing event data for type 'team.member-join'"
 parseEventData MemberJoin (Just j) = do
-  let f o = Just . EdMemberJoin <$> o .: "user"
+  let f o = EdMemberJoin <$> o .: "user"
   withObject "member join data" f j
 parseEventData MemberUpdate Nothing = fail "missing event data for type 'team.member-update"
 parseEventData MemberUpdate (Just j) = do
-  let f o = Just <$> (EdMemberUpdate <$> o .: "user" <*> o .:? "permissions")
+  let f o = EdMemberUpdate <$> o .: "user" <*> o .:? "permissions"
   withObject "member update data" f j
 parseEventData MemberLeave Nothing = fail "missing event data for type 'team.member-leave'"
 parseEventData MemberLeave (Just j) = do
-  let f o = Just . EdMemberLeave <$> o .: "user"
+  let f o = EdMemberLeave <$> o .: "user"
   withObject "member leave data" f j
 parseEventData ConvCreate Nothing = fail "missing event data for type 'team.conversation-create"
 parseEventData ConvCreate (Just j) = do
-  let f o = Just . EdConvCreate <$> o .: "conv"
+  let f o = EdConvCreate <$> o .: "conv"
   withObject "conversation create data" f j
 parseEventData ConvDelete Nothing = fail "missing event data for type 'team.conversation-delete"
 parseEventData ConvDelete (Just j) = do
-  let f o = Just . EdConvDelete <$> o .: "conv"
+  let f o = EdConvDelete <$> o .: "conv"
   withObject "conversation delete data" f j
 parseEventData TeamCreate Nothing = fail "missing event data for type 'team.create'"
-parseEventData TeamCreate (Just j) = Just . EdTeamCreate <$> parseJSON j
+parseEventData TeamCreate (Just j) = EdTeamCreate <$> parseJSON j
 parseEventData TeamUpdate Nothing = fail "missing event data for type 'team.update'"
-parseEventData TeamUpdate (Just j) = Just . EdTeamUpdate <$> parseJSON j
-parseEventData _ Nothing = pure Nothing
+parseEventData TeamUpdate (Just j) = EdTeamUpdate <$> parseJSON j
+parseEventData _ Nothing = pure EdTeamDelete
 parseEventData t (Just _) = fail $ "unexpected event data for type " <> show t
 
-genEventData :: EventType -> QC.Gen (Maybe EventData)
+genEventData :: EventType -> QC.Gen EventData
 genEventData = \case
-  TeamCreate -> Just . EdTeamCreate <$> arbitrary
-  TeamDelete -> pure Nothing
-  TeamUpdate -> Just . EdTeamUpdate <$> arbitrary
-  MemberJoin -> Just . EdMemberJoin <$> arbitrary
-  MemberLeave -> Just . EdMemberLeave <$> arbitrary
-  MemberUpdate -> Just <$> (EdMemberUpdate <$> arbitrary <*> arbitrary)
-  ConvCreate -> Just . EdConvCreate <$> arbitrary
-  ConvDelete -> Just . EdConvDelete <$> arbitrary
+  TeamCreate -> EdTeamCreate <$> arbitrary
+  TeamDelete -> pure EdTeamDelete
+  TeamUpdate -> EdTeamUpdate <$> arbitrary
+  MemberJoin -> EdMemberJoin <$> arbitrary
+  MemberLeave -> EdMemberLeave <$> arbitrary
+  MemberUpdate -> EdMemberUpdate <$> arbitrary <*> arbitrary
+  ConvCreate -> EdConvCreate <$> arbitrary
+  ConvDelete -> EdConvDelete <$> arbitrary
 
 makeLenses ''Event

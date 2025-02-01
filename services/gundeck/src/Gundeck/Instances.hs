@@ -1,10 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,16 +23,16 @@ module Gundeck.Instances
   )
 where
 
+import Amazonka.Data
 import Cassandra.CQL
-import qualified Data.Attoparsec.Text as Parser
-import qualified Data.ByteString.Lazy as Bytes
+import Data.Attoparsec.Text qualified as Parser
+import Data.ByteString.Lazy qualified as Bytes
 import Data.Id
-import qualified Data.Text.Encoding as Text
-import qualified Data.UUID as Uuid
+import Data.Text.Encoding qualified as Text
+import Data.UUID qualified as Uuid
 import Gundeck.Aws.Arn (EndpointArn)
-import Gundeck.Types
 import Imports
-import Network.AWS.Data
+import Wire.API.Push.V2
 
 instance Cql Transport where
   ctype = Tagged IntColumn
@@ -45,11 +44,11 @@ instance Cql Transport where
   toCql APNSVoIPSandbox = CqlInt 4
 
   fromCql (CqlInt i) = case i of
-    0 -> return GCM
-    1 -> return APNS
-    2 -> return APNSSandbox
-    3 -> return APNSVoIP
-    4 -> return APNSVoIPSandbox
+    0 -> pure GCM
+    1 -> pure APNS
+    2 -> pure APNSSandbox
+    3 -> pure APNSVoIP
+    4 -> pure APNSVoIPSandbox
     n -> Left $ "unexpected transport: " ++ show n
   fromCql _ = Left "transport: int expected"
 
@@ -58,13 +57,13 @@ instance Cql ConnId where
 
   toCql (ConnId c) = CqlBlob (Bytes.fromStrict c)
 
-  fromCql (CqlBlob b) = return . ConnId $ Bytes.toStrict b
+  fromCql (CqlBlob b) = pure . ConnId $ Bytes.toStrict b
   fromCql _ = Left "ConnId: Blob expected"
 
 instance Cql EndpointArn where
   ctype = Tagged TextColumn
   toCql = CqlText . toText
-  fromCql (CqlText txt) = either Left return (fromText txt)
+  fromCql (CqlText txt) = fromText txt
   fromCql _ = Left "EndpointArn: Text expected"
 
 instance Cql Token where
@@ -83,8 +82,10 @@ instance ToText (Id a) where
   toText = Text.decodeUtf8 . Uuid.toASCIIBytes . toUUID
 
 instance FromText (Id a) where
-  parser =
-    Parser.take 36 >>= \txt ->
-      txt & Text.encodeUtf8
-        & Uuid.fromASCIIBytes
-        & maybe (fail "Invalid UUID") (return . Id)
+  fromText =
+    Parser.parseOnly $
+      Parser.take 36 >>= \txt ->
+        txt
+          & Text.encodeUtf8
+          & Uuid.fromASCIIBytes
+          & maybe (fail "Invalid UUID") (pure . Id)

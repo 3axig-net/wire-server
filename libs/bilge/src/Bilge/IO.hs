@@ -7,7 +7,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -73,15 +73,15 @@ import Bilge.TestSession
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Trans.Control
-import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Lazy qualified as LBS
 import Data.CaseInsensitive (CI)
 import Imports hiding (head)
 import Network.HTTP.Client as Client hiding (httpLbs, method)
-import qualified Network.HTTP.Client as Client (method)
-import qualified Network.HTTP.Client.Internal as Client (Response (..), ResponseClose (..))
+import Network.HTTP.Client qualified as Client (method)
+import Network.HTTP.Client.Internal qualified as Client (Response (..), ResponseClose (..))
 import Network.HTTP.Types
-import qualified Network.Wai as Wai
-import qualified Network.Wai.Test as WaiTest
+import Network.Wai qualified as Wai
+import Network.Wai.Test qualified as WaiTest
 
 -- | Debug settings may cause debug information to be printed to stdout.
 data Debug
@@ -113,10 +113,11 @@ class MonadHttp m where
   handleRequestWithCont :: Request -> (Response BodyReader -> IO a) -> m a
   {-# MINIMAL handleRequestWithCont #-}
 
-handleRequest :: MonadHttp m => Request -> m (Response (Maybe LByteString))
+handleRequest :: (MonadHttp m) => Request -> m (Response (Maybe LByteString))
 handleRequest req = handleRequestWithCont req consumeBody
 
-instance MonadIO m => MonadHttp (HttpT m) where
+instance (MonadIO m) => MonadHttp (HttpT m) where
+  handleRequestWithCont :: Request -> (Response BodyReader -> IO a) -> HttpT m a
   handleRequestWithCont req h = do
     m <- ask
     liftIO $ withResponse req m h
@@ -128,7 +129,7 @@ instance MonadIO m => MonadHttp (HttpT m) where
 trivialBodyReader :: ByteString -> IO BodyReader
 trivialBodyReader bodyBytes = do
   bodyVar <- newTVarIO bodyBytes
-  return $ mkBodyReader bodyVar
+  pure $ mkBodyReader bodyVar
   where
     mkBodyReader :: TVar ByteString -> BodyReader
     mkBodyReader bodyVar = do
@@ -137,14 +138,14 @@ trivialBodyReader bodyBytes = do
 instance MonadHttp WaiTest.Session where
   handleRequestWithCont req cont = unSessionT $ handleRequestWithCont req cont
 
-instance MonadIO m => MonadHttp (SessionT m) where
+instance (MonadIO m) => MonadHttp (SessionT m) where
   handleRequestWithCont req cont = do
     reqBody <- liftIO $ getHttpClientRequestBody (Client.requestBody req)
     -- `srequest` sets the requestBody for us
     wResponse :: WaiTest.SResponse <- liftSession $ WaiTest.srequest (WaiTest.SRequest wRequest reqBody)
     bodyReader <- liftIO $ trivialBodyReader $ LBS.toStrict $ WaiTest.simpleBody wResponse
     let bilgeResponse :: Response BodyReader
-        bilgeResponse = toBilgeResponse bodyReader wResponse
+        bilgeResponse = toBilgeResponse bodyReader wResponse req
 
     liftIO $ cont bilgeResponse
     where
@@ -161,14 +162,16 @@ instance MonadIO m => MonadHttp (SessionT m) where
               Wai.requestHeaderReferer = lookupHeader "REFERER" req,
               Wai.requestHeaderUserAgent = lookupHeader "USER-AGENT" req
             }
-      toBilgeResponse :: BodyReader -> WaiTest.SResponse -> Response BodyReader
-      toBilgeResponse bodyReader WaiTest.SResponse {WaiTest.simpleStatus, WaiTest.simpleHeaders} =
+      toBilgeResponse :: BodyReader -> WaiTest.SResponse -> Client.Request -> Response BodyReader
+      toBilgeResponse bodyReader WaiTest.SResponse {WaiTest.simpleStatus, WaiTest.simpleHeaders} originalReq =
         Client.Response
           { responseStatus = simpleStatus,
             -- I just picked an arbitrary version; shouldn't matter.
             responseVersion = http11,
             responseHeaders = simpleHeaders,
             responseBody = bodyReader,
+            responseOriginalRequest = originalReq,
+            responseEarlyHints = [],
             Client.responseCookieJar = mempty,
             Client.responseClose' = Client.ResponseClose $ pure ()
           }
@@ -177,7 +180,7 @@ instance MonadIO m => MonadHttp (SessionT m) where
 
 -- | Does not support all constructors, but so far we only use 'RequestBodyLBS'.
 -- The other ones are slightly less straight-forward, so we can implement them later if needed.
-getHttpClientRequestBody :: HasCallStack => Client.RequestBody -> IO LByteString
+getHttpClientRequestBody :: (HasCallStack) => Client.RequestBody -> IO LByteString
 getHttpClientRequestBody = \case
   Client.RequestBodyLBS lbs -> pure lbs
   Client.RequestBodyBS bs -> pure (LBS.fromStrict bs)
@@ -204,13 +207,13 @@ instance MonadBaseControl IO (HttpT IO) where
   liftBaseWith = defaultLiftBaseWith
   restoreM = defaultRestoreM
 
-instance MonadUnliftIO m => MonadUnliftIO (HttpT m) where
+instance (MonadUnliftIO m) => MonadUnliftIO (HttpT m) where
   withRunInIO inner =
     HttpT . ReaderT $ \r ->
       withRunInIO $ \run ->
         inner (run . runHttpT r)
 
-runHttpT :: Monad m => Manager -> HttpT m a -> m a
+runHttpT :: Manager -> HttpT m a -> m a
 runHttpT m h = runReaderT (unwrap h) m
 
 -- | Given a 'Request' builder function, perform an actual HTTP request using the
@@ -224,7 +227,7 @@ get,
   options,
   trace,
   patch ::
-    (MonadIO m, MonadHttp m) =>
+    (MonadHttp m) =>
     (Request -> Request) ->
     m (Response (Maybe LByteString))
 get f = httpLbs empty (method GET . f)
@@ -244,7 +247,7 @@ get',
   options',
   trace',
   patch' ::
-    (MonadIO m, MonadHttp m) =>
+    (MonadHttp m) =>
     Request ->
     (Request -> Request) ->
     m (Response (Maybe LByteString))
@@ -258,19 +261,19 @@ trace' r f = httpLbs r (method TRACE . f)
 patch' r f = httpLbs r (method PATCH . f)
 
 httpLbs ::
-  (MonadIO m, MonadHttp m) =>
+  (MonadHttp m) =>
   Request ->
   (Request -> Request) ->
   m (Response (Maybe LByteString))
 httpLbs r f = http r f consumeBody
 
 http ::
-  (MonadIO m, MonadHttp m) =>
+  (MonadHttp m) =>
   Request ->
   (Request -> Request) ->
   (Response BodyReader -> IO a) ->
   m a
-http r f h = handleRequestWithCont (f r) h
+http r f = handleRequestWithCont (f r)
 
 httpDebug ::
   (MonadIO m, MonadHttp m) =>
@@ -289,7 +292,7 @@ httpDebug debug r f h = do
     consumeBody >=> \rsp -> do
       if debug > Head
         then putStrLn (showResponse rsp)
-        else putStrLn (showResponse $ rsp {responseBody = ("" :: String)})
+        else putStrLn (showResponse $ rsp {responseBody = "" :: String})
       putStrLn "--"
       h rsp
 
@@ -300,4 +303,4 @@ consumeBody r = do
         if null chunks
           then Nothing
           else Just (LBS.fromChunks chunks)
-  return $ r {responseBody = bdy}
+  pure $ r {responseBody = bdy}

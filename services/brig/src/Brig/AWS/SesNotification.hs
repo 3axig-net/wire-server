@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,34 +22,35 @@ where
 
 import Brig.AWS.Types
 import Brig.App
-import qualified Brig.Data.Blacklist as Blacklist
-import Brig.Data.UserKey (userEmailKey)
-import Brig.Types (Email, fromEmail)
+import Data.Mailbox
 import Imports
+import Polysemy (Member)
 import System.Logger.Class (field, msg, (~~))
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
+import Wire.API.User.Identity
+import Wire.UserSubsystem
 
-onEvent :: SESNotification -> AppIO ()
-onEvent (MailBounce BouncePermanent es) = onPermanentBounce es
-onEvent (MailBounce BounceTransient es) = onTransientBounce es
-onEvent (MailBounce BounceUndetermined es) = onUndeterminedBounce es
-onEvent (MailComplaint es) = onComplaint es
+onEvent :: (Member UserSubsystem r) => SESNotification -> AppT r ()
+onEvent (MailBounce BouncePermanent recipients) = onPermanentBounce recipients
+onEvent (MailBounce BounceTransient recipients) = onTransientBounce recipients
+onEvent (MailBounce BounceUndetermined recipients) = onUndeterminedBounce recipients
+onEvent (MailComplaint recipients) = onComplaint recipients
 
-onPermanentBounce :: [Email] -> AppIO ()
-onPermanentBounce = mapM_ $ \e -> do
-  logEmailEvent "Permanent bounce" e
-  Blacklist.insert (userEmailKey e)
+onPermanentBounce :: (Member UserSubsystem r) => [Mailbox] -> AppT r ()
+onPermanentBounce = mapM_ $ \mailbox -> do
+  logEmailEvent "Permanent bounce" mailbox.address
+  liftSem $ blockListInsert mailbox.address
 
-onTransientBounce :: [Email] -> AppIO ()
-onTransientBounce = mapM_ (logEmailEvent "Transient bounce")
+onTransientBounce :: [Mailbox] -> AppT r ()
+onTransientBounce = mapM_ (logEmailEvent "Transient bounce" . (.address))
 
-onUndeterminedBounce :: [Email] -> AppIO ()
-onUndeterminedBounce = mapM_ (logEmailEvent "Undetermined bounce")
+onUndeterminedBounce :: [Mailbox] -> AppT r ()
+onUndeterminedBounce = mapM_ (logEmailEvent "Undetermined bounce" . (.address))
 
-onComplaint :: [Email] -> AppIO ()
-onComplaint = mapM_ $ \e -> do
-  logEmailEvent "Complaint" e
-  Blacklist.insert (userEmailKey e)
+onComplaint :: (Member UserSubsystem r) => [Mailbox] -> AppT r ()
+onComplaint = mapM_ $ \mailbox -> do
+  logEmailEvent "Complaint" mailbox.address
+  liftSem $ blockListInsert mailbox.address
 
-logEmailEvent :: Text -> Email -> AppIO ()
+logEmailEvent :: Text -> EmailAddress -> AppT r ()
 logEmailEvent t e = Log.info $ field "email" (fromEmail e) ~~ msg t

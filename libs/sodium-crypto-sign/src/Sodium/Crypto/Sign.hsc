@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,11 +30,11 @@ module Sodium.Crypto.Sign
   )
 where
 
-import qualified Data.ByteString as B
+import Data.ByteString qualified as B
 import Data.ByteString.Base64.URL
 import Data.ByteString.Char8 (pack, unpack)
-import qualified Data.ByteString.Internal as I
-import qualified Data.ByteString.Unsafe as U
+import Data.ByteString.Internal qualified as I
+import Data.ByteString.Unsafe qualified as U
 import Foreign hiding (void)
 import Foreign.C
 import Imports

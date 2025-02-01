@@ -1,0 +1,49 @@
+replicaCount: 1
+image:
+  repository: quay.io/wire/background-worker
+  tag: do-not-use
+service:
+  internalPort: 8080
+  externalPort: 8080
+# FUTUREWORK: Review these values when we have some experience
+resources:
+  requests:
+    memory: "200Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+metrics:
+  serviceMonitor:
+    enabled: false
+config:
+  logLevel: Info
+  logFormat: StructuredJSON
+  enableFederation: false # keep in sync with brig, cargohold and galley charts' config.enableFederation as well as wire-server chart's tags.federation
+  rabbitmq:
+    host: rabbitmq
+    port: 5672
+    vHost: /
+    adminPort: 15672
+    enableTls: false
+    insecureSkipVerifyTls: false
+    # tlsCaSecretRef:
+    #   name: <secret-name>
+    #   key: <ca-attribute>
+  cassandra:
+    host: aws-cassandra
+
+  backendNotificationPusher:
+    pushBackoffMinWait: 10000 # in microseconds, so 10ms
+    pushBackoffMaxWait: 300000000 # microseconds, so 300s
+    remotesRefreshInterval: 300000000 # microseconds, so 300s
+
+secrets: {}
+
+podSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault

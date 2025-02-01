@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -15,123 +15,161 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Federator.ExternalServer (callInward, serveInward, parseRequestData, RequestData (..)) where
+module Federator.ExternalServer
+  ( callInward,
+    serveInward,
+    RPC (..),
+    CertHeader (..),
+    server,
+  )
+where
 
-import qualified Data.ByteString as BS
-import Data.ByteString.Builder (toLazyByteString)
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text as Text
+import Data.Bifunctor
+import Data.ByteString qualified as BS
+import Data.ByteString.Builder
+import Data.ByteString.Lazy qualified as LBS
+import Data.Domain
+import Data.Sequence qualified as Seq
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Data.X509 qualified as X509
 import Federator.Discovery
 import Federator.Env
 import Federator.Error.ServerError
-import Federator.Options (RunSettings)
+import Federator.Health qualified as Health
+import Federator.Interpreter
+import Federator.Metrics
+import Federator.RPC
 import Federator.Response
 import Federator.Service
 import Federator.Validation
 import Imports
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.Wai as Wai
+import Network.HTTP.Client (Manager)
+import Network.HTTP.Types qualified as HTTP
+import Network.Wai qualified as Wai
 import Polysemy
 import Polysemy.Error
 import Polysemy.Input
 import Polysemy.TinyLog (TinyLog)
-import qualified Polysemy.TinyLog as Log
-import qualified System.Logger.Message as Log
+import Polysemy.TinyLog qualified as Log
+import Servant qualified
+import Servant.API
+import Servant.API.Extended.Endpath
+import Servant.API.Extended.RawM qualified as RawM
+import Servant.Client.Core
+import Servant.Server.Generic (AsServerT)
+import System.Logger.Message qualified as Log
 import Wire.API.Federation.Component
 import Wire.API.Federation.Domain
+import Wire.API.Routes.FederationDomainConfig
+import Wire.API.VersionInfo
+
+-- | Used to get PEM encoded certificate out of an HTTP header
+newtype CertHeader = CertHeader X509.Certificate
+
+instance FromHttpApiData CertHeader where
+  parseUrlPiece :: Text -> Either Text CertHeader
+  parseUrlPiece cert =
+    bimap Text.pack CertHeader $ decodeCertificate $ HTTP.urlDecode True $ Text.encodeUtf8 cert
+
+data API mode = API
+  { status ::
+      mode
+        :- "i"
+          :> "status"
+          -- When specified only returns status of the internal service,
+          -- otherwise ensures that the external service is also up.
+          :> QueryFlag "standalone"
+          :> Get '[PlainText] NoContent,
+    externalRequest ::
+      mode
+        :- "federation"
+          :> Capture "component" Component
+          :> Capture "rpc" RPC
+          :> Header' '[Required, Strict] OriginDomainHeaderName Domain
+          :> Header' '[Required, Strict] "X-SSL-Certificate" CertHeader
+          :> Endpath
+          -- We need to use 'RawM' so we can stream request body regardless of
+          -- content-type and send a response with arbitrary content-type.
+          :> RawM.RawM
+  }
+  deriving (Generic)
+
+server ::
+  ( Member ServiceStreaming r,
+    Member (Embed IO) r,
+    Member TinyLog r,
+    Member DiscoverFederator r,
+    Member (Error ValidationError) r,
+    Member (Error DiscoveryFailure) r,
+    Member (Error ServerError) r,
+    Member (Error Servant.ServerError) r,
+    Member (Input FederationDomainConfigs) r,
+    Member Metrics r
+  ) =>
+  Manager ->
+  Word16 ->
+  API (AsServerT (Sem r))
+server mgr intPort =
+  API
+    { status = Health.status mgr "internal server" intPort,
+      externalRequest = callInward
+    }
 
 -- FUTUREWORK(federation): Versioning of the federation API.
 callInward ::
-  Members
-    '[ Service,
-       Embed IO,
-       TinyLog,
-       DiscoverFederator,
-       Error ValidationError,
-       Error DiscoveryFailure,
-       Error ServerError,
-       Input RunSettings
-     ]
-    r =>
+  ( Member ServiceStreaming r,
+    Member (Embed IO) r,
+    Member TinyLog r,
+    Member DiscoverFederator r,
+    Member (Error ValidationError) r,
+    Member (Error DiscoveryFailure) r,
+    Member (Error ServerError) r,
+    Member (Input FederationDomainConfigs) r,
+    Member Metrics r
+  ) =>
+  Component ->
+  RPC ->
+  Domain ->
+  CertHeader ->
   Wai.Request ->
-  Sem r Wai.Response
-callInward wreq = do
-  req <- parseRequestData wreq
-  Log.debug $
-    Log.msg ("Inward Request" :: ByteString)
-      . Log.field "originDomain" (rdOriginDomain req)
-      . Log.field "component" (show (rdComponent req))
-      . Log.field "rpc" (rdRPC req)
-
-  validatedDomain <- validateDomain (rdCertificate req) (rdOriginDomain req)
-
-  let path = LBS.toStrict (toLazyByteString (HTTP.encodePathSegments ["federation", rdRPC req]))
-
-  (status, body) <- serviceCall (rdComponent req) path (rdBody req) validatedDomain
-  Log.debug $
-    Log.msg ("Inward Request response" :: ByteString)
-      . Log.field "status" (show status)
-
-  pure $ Wai.responseLBS status defaultHeaders (fromMaybe mempty body)
-
-data RequestData = RequestData
-  { rdComponent :: Component,
-    rdRPC :: Text,
-    rdBody :: LByteString,
-    rdCertificate :: Maybe ByteString,
-    rdOriginDomain :: ByteString
-  }
-
--- path format: /federation/<component>/<rpc-path>
--- inward service removes <component> and forwards to component
--- where component = brig|galley|..
--- Headers:
---   Wire-Origin-Domain
---   X-SSL-Certificate
---
--- FUTUREWORK: use higher-level effects
-parseRequestData ::
-  Members '[Error ServerError, Embed IO] r =>
-  Wai.Request ->
-  Sem r RequestData
-parseRequestData req = do
+  (Wai.Response -> IO Wai.ResponseReceived) ->
+  Sem r Wai.ResponseReceived
+callInward component (RPC rpc) originDomain (CertHeader cert) wreq cont = do
+  incomingCounterIncr originDomain
   -- only POST is supported
-  when (Wai.requestMethod req /= HTTP.methodPost) $
+  when (Wai.requestMethod wreq /= HTTP.methodPost) $
     throw InvalidRoute
   -- No query parameters are allowed
-  when (not . BS.null . Wai.rawQueryString $ req) $
-    throw InvalidRoute
-  -- check that the path has the expected form
-  (componentSeg, rpcPath) <- case Wai.pathInfo req of
-    ["federation", comp, rpc] -> pure (comp, rpc)
-    _ -> throw InvalidRoute
-
-  when (not (Text.all isAllowedRPCChar rpcPath)) $
+  unless (BS.null . Wai.rawQueryString $ wreq) $
     throw InvalidRoute
 
-  when (Text.null rpcPath) $
-    throw InvalidRoute
+  ensureCanFederateWith originDomain
+  Log.debug $
+    Log.msg ("Inward Request" :: ByteString)
+      . Log.field "originDomain" (domainText originDomain)
+      . Log.field "component" (show component)
+      . Log.field "rpc" rpc
 
-  -- get component, domain and body
-  component <- note (UnknownComponent componentSeg) $ parseComponent componentSeg
-  domain <-
-    note NoOriginDomain $
-      lookup originDomainHeaderName (Wai.requestHeaders req)
-  body <- embed $ Wai.lazyRequestBody req
-  pure $
-    RequestData
-      { rdComponent = component,
-        rdRPC = rpcPath,
-        rdBody = body,
-        rdCertificate = lookupCertificate req,
-        rdOriginDomain = domain
-      }
+  validatedDomain <- validateDomain cert originDomain
 
-isAllowedRPCChar :: Char -> Bool
-isAllowedRPCChar c = isAsciiLower c || isAsciiUpper c || isNumber c || c == '_' || c == '-'
+  let path = LBS.toStrict (toLazyByteString (HTTP.encodePathSegments ["federation", rpc]))
 
-serveInward :: Env -> Int -> IO ()
-serveInward = serve callInward
+  body <- embed $ Wai.lazyRequestBody wreq
+  let headers = filter ((== versionHeader) . fst) (Wai.requestHeaders wreq)
+  resp <- serviceCall component path headers body validatedDomain
+  Log.debug $
+    Log.msg ("Inward Request response" :: ByteString)
+      . Log.field "status" (show (responseStatusCode resp))
+  embed . cont $
+    streamingResponseToWai
+      resp
+        { responseHeaders =
+            Seq.filter
+              (\(name, _) -> name == "Content-Type")
+              (responseHeaders resp)
+        }
 
-lookupCertificate :: Wai.Request -> Maybe ByteString
-lookupCertificate req = HTTP.urlDecode True <$> lookup "X-SSL-Certificate" (Wai.requestHeaders req)
+serveInward :: Env -> Int -> IORef [IO ()] -> IO ()
+serveInward env port cleanupsRef =
+  serveServant @(ToServantApi API) env port cleanupsRef $ toServant $ server env._httpManager env._internalPort

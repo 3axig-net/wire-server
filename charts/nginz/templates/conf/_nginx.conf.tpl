@@ -1,5 +1,4 @@
 {{- define "nginz_nginx.conf" }}
-user {{ .Values.nginx_conf.user }} {{ .Values.nginx_conf.group }};
 worker_processes {{ .Values.nginx_conf.worker_processes }};
 worker_rlimit_nofile {{ .Values.nginx_conf.worker_rlimit_nofile | default 1024 }};
 pid /var/run/nginz.pid;
@@ -35,6 +34,9 @@ http {
   ignore_invalid_headers off;
 
   types_hash_max_size 2048;
+  map_hash_bucket_size 128;
+
+  variables_hash_bucket_size 256;
 
   server_names_hash_bucket_size 64;
   server_name_in_redirect off;
@@ -123,9 +125,34 @@ http {
       0 "";
   }
 
+  map $rate_limit $rate_limited_by_zuser_path {
+      1 "$zauth_user$uri";
+      0 "";
+  }
+
   map $http_origin $cors_header {
       default "";
-      "~^https://([^/]+\.)?{{ .Values.nginx_conf.external_env_domain | replace "." "\\." }}(:[0-9]{2,5})?$" "$http_origin";
+    {{ range $origin := .Values.nginx_conf.allowlisted_origins }}
+    {{- range $domain := (prepend
+                            $.Values.nginx_conf.additional_external_env_domains
+                            $.Values.nginx_conf.external_env_domain)
+    -}}
+      "https://{{ $origin }}.{{ $domain }}" "$http_origin";
+    {{ end }}
+    {{ end }}
+
+    # Allow additional origins at random ports. This is useful for testing with an HTTP proxy.
+    # It should not be used in production.
+    {{ range $origin := .Values.nginx_conf.randomport_allowlisted_origins }}
+      "~^https?://{{ $origin }}(:[0-9]{2,5})?$" "$http_origin";
+    {{ end }}
+    {{/* Allow additional origin FQDNs, if present */}}
+    {{- range $origin := .Values.nginx_conf.allowlisted_fqdn_origins }}
+      "https://{{ $origin }}" "$http_origin";
+    {{- end }}
+    {{- if and .Values.nginx_conf.allowlisted_fqdn_origins (not (eq .Values.nginx_conf.env  "staging")) -}}
+    {{ fail "allowlisted_fqdn_origins is only cleared for usage in staging."}}
+    {{- end }}
   }
 
 
@@ -133,8 +160,12 @@ http {
   # Rate Limiting
   #
 
-  limit_req_zone $rate_limited_by_zuser zone=reqs_per_user:12m rate=10r/s;
-  limit_req_zone $rate_limited_by_addr zone=reqs_per_addr:12m rate=5r/m;
+  limit_req_zone $rate_limited_by_zuser zone=reqs_per_user:12m rate={{ .Values.nginx_conf.rate_limit_reqs_per_user }};
+  limit_req_zone $rate_limited_by_addr zone=reqs_per_addr:12m rate={{ .Values.nginx_conf.rate_limit_reqs_per_addr }};
+
+{{- range $limit := .Values.nginx_conf.user_rate_limit_request_zones }}
+  {{ $limit }}
+{{- end }}
 
   limit_conn_zone $rate_limited_by_zuser zone=conns_per_user:10m;
   limit_conn_zone $rate_limited_by_addr zone=conns_per_addr:10m;
@@ -147,9 +178,7 @@ http {
   limit_req_log_level warn;
   limit_conn_log_level warn;
 
-  # Limit by $zauth_user if present and not part of rate limit exemptions
-  limit_req zone=reqs_per_user burst=20;
-  limit_conn conns_per_user 25;
+  limit_conn conns_per_user 75;
 
   #
   #  Proxied Upstream Services
@@ -178,25 +207,13 @@ http {
 
     zauth_keystore {{ .Values.nginx_conf.zauth_keystore }};
     zauth_acl      {{ .Values.nginx_conf.zauth_acl }};
+    oauth_pub_key  {{ .Values.nginx_conf.oauth_pub_key }};
 
     location /status {
         zauth off;
         access_log off;
-        allow 10.0.0.0/8;
-        deny all;
 
         return 200;
-    }
-
-    location /vts {
-        zauth off;
-        access_log off;
-        allow 10.0.0.0/8;
-        allow 127.0.0.1;
-        deny all;
-
-        vhost_traffic_status_display;
-        vhost_traffic_status_display_format html;
     }
 
     # Block "Franz" -- http://meetfranz.com
@@ -205,7 +222,7 @@ http {
     }
 
     {{ range $path := .Values.nginx_conf.disabled_paths }}
-      location {{ $path }} {
+      location ~* ^(/v[0-9]+)?{{ $path }} {
 
         return 404;
       }
@@ -215,17 +232,21 @@ http {
     # Service Routing
     #
 
-  {{ range $name, $locations := .Values.nginx_conf.upstreams -}}
+  {{- $validUpstreams := include "valid_upstreams" . | fromJson }}
+  {{ range $name, $locations := $validUpstreams -}}
     {{- range $location := $locations -}}
       {{- if hasKey $location "envs" -}}
         {{- range $env := $location.envs -}}
           {{- if or (eq $env $.Values.nginx_conf.env) (eq $env "all") -}}
+            {{- if $location.strip_version }}
 
-            {{- if and (not (eq $.Values.nginx_conf.env "prod")) ($location.doc) -}}
-    rewrite ^/api-docs{{ $location.path }}  {{ $location.path }}/api-docs?base_url=https://{{ $.Values.nginx_conf.env }}-nginz-https.{{ $.Values.nginx_conf.external_env_domain }}/ break;
+    rewrite ^/v[0-9]+({{ $location.path }}) $1;
             {{- end }}
 
-    location {{ $location.path }} {
+    {{- $versioned := ternary $location.versioned true (hasKey $location "versioned") -}}
+    {{- $path := printf "%s%s" (ternary "(/v[0-9]+)?" "" $versioned) $location.path }}
+
+    location ~* ^{{ $path }} {
 
         # remove access_token from logs, see 'Note sanitized_request' above.
         set $sanitized_request $request;
@@ -236,7 +257,7 @@ http {
             {{- if ($location.basic_auth) }}
         auth_basic "Restricted";
         auth_basic_user_file {{ $.Values.nginx_conf.basic_auth_file }};
-            {{- end -}}
+            {{- end }}
 
             {{- if ($location.disable_zauth) }}
         zauth off;
@@ -244,10 +265,30 @@ http {
         # If zauth is off, limit by remote address if not part of limit exemptions
               {{- if ($location.unlimited_requests_endpoint) }}
         # Note that this endpoint has no rate limit
-              {{- else -}}
-        limit_req zone=reqs_per_addr burst=5 nodelay;
+              {{- else }}
+                {{- if not (hasKey $location "specific_user_rate_limit") }}
+        limit_req zone=reqs_per_addr burst=10 nodelay;
         limit_conn conns_per_addr 20;
-              {{- end -}}
+                {{- end }}
+              {{- end }}
+            {{- else }}
+              {{- if ($location.unlimited_requests_endpoint) }}
+                 # Note that this endpoint has no rate limit per user for authenticated requests
+              {{- else }}
+        limit_req zone=reqs_per_user burst=20 nodelay;
+              {{- end }}
+            {{- end }}
+
+            {{- if ($location.oauth_scope) }}
+        oauth_scope {{ $location.oauth_scope }};
+            {{- end }}
+
+            {{- if hasKey $location "specific_user_rate_limit" }}
+        limit_req zone={{ $location.specific_user_rate_limit }}{{ if hasKey $location "specific_user_rate_limit_burst" }} burst={{ $location.specific_user_rate_limit_burst }}{{ end }} nodelay;
+            {{- end }}
+
+            {{- range $specific_limit := $location.specific_rate_limits }}
+        limit_req zone={{ $specific_limit.zone }}{{ if hasKey $specific_limit "burst" }} burst={{ $specific_limit.burst }}{{ end }} nodelay;
             {{- end }}
 
         if ($request_method = 'OPTIONS') {
@@ -258,7 +299,7 @@ http {
             return 204;
         }
 
-        proxy_pass         http://{{ $name }};
+        proxy_pass         http://{{ $name }}{{ if hasKey $.Values.nginx_conf.upstream_namespace $name }}.{{ get $.Values.nginx_conf.upstream_namespace $name }}{{end}};
         proxy_http_version 1.1;
 
             {{- if ($location.disable_request_buffering) }}
@@ -267,7 +308,7 @@ http {
             {{- if (hasKey $location "body_buffer_size") }}
         client_body_buffer_size {{ $location.body_buffer_size -}};
             {{- end }}
-        client_max_body_size {{ $location.max_body_size | default "64k" }};
+        client_max_body_size {{ $location.max_body_size | default $.Values.nginx_conf.default_client_max_body_size }};
 
             {{ if ($location.use_websockets) }}
         proxy_set_header   Upgrade        $http_upgrade;
@@ -283,23 +324,21 @@ http {
 
         proxy_set_header   Z-Type         $zauth_type;
         proxy_set_header   Z-User         $zauth_user;
+        proxy_set_header   Z-Client       $zauth_client;
         proxy_set_header   Z-Connection   $zauth_connection;
         proxy_set_header   Z-Provider     $zauth_provider;
         proxy_set_header   Z-Bot          $zauth_bot;
         proxy_set_header   Z-Conversation $zauth_conversation;
         proxy_set_header   Request-Id     $request_id;
+        proxy_set_header   Z-Host         $host;
 
             {{- if ($location.allow_credentials) }}
         more_set_headers 'Access-Control-Allow-Credentials: true';
             {{ end -}}
 
-            {{ if ($location.restrict_whitelisted_origin) -}}
         more_set_headers 'Access-Control-Allow-Origin: $cors_header';
-            {{- else }}
-        more_set_headers 'Access-Control-Allow-Origin: $http_origin';
-            {{- end }}
 
-        more_set_headers 'Access-Control-Expose-Headers: Request-Id, Location';
+        more_set_headers 'Access-Control-Expose-Headers: Request-Id, Location, Replay-Nonce';
         more_set_headers 'Request-Id: $request_id';
         more_set_headers 'Strict-Transport-Security: max-age=31536000; preload';
     }
@@ -310,40 +349,6 @@ http {
       {{- end -}}
     {{- end -}}
   {{- end }}
-
-    {{ if not (eq $.Values.nginx_conf.env "prod")  }}
-    #
-    # Swagger Resource Listing
-    #
-
-    location /api-docs {
-        default_type application/json;
-        root {{ $.Values.nginx_conf.swagger_root }};
-        index resources.json;
-        if ($request_method = 'OPTIONS') {
-              add_header 'Access-Control-Allow-Methods' "GET, POST, PUT, DELETE, OPTIONS";
-              add_header 'Access-Control-Allow-Headers' "$http_access_control_request_headers, DNT,X-Mx-ReqToken,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type";
-              add_header 'Content-Type' 'text/plain; charset=UTF-8';
-              add_header 'Content-Length' 0;
-              return 204;
-        }
-        more_set_headers 'Access-Control-Allow-Origin: $http_origin';
-    }
-    {{ end }}
-
-    # Swagger UI
-
-    location /swagger-ui {
-        zauth  off;
-        gzip   off;
-        alias /opt/zwagger-ui;
-        types {
-            application/javascript  js;
-            text/css                css;
-            text/html               html;
-            image/png               png;
-        }
-    }
 
     {{- if hasKey .Values.nginx_conf "deeplink" }}
     location ~* ^/deeplink.(json|html)$ {
@@ -364,5 +369,24 @@ http {
     }
     {{- end }}
   }
+
+  server {
+    # even though we don't use zauth for this server block,
+    # we need to specify zauth_keystore etc.
+    zauth_keystore {{ .Values.nginx_conf.zauth_keystore }};
+    zauth_acl      {{ .Values.nginx_conf.zauth_acl }};
+    oauth_pub_key  {{ .Values.nginx_conf.oauth_pub_key }};
+
+    listen {{ .Values.config.http.metricsPort }};
+
+    location /vts {
+        access_log off;
+        zauth off;
+
+        vhost_traffic_status_display;
+        vhost_traffic_status_display_format html;
+    }
+  }
+
 }
 {{- end }}

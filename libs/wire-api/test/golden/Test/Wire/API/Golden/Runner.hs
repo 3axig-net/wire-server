@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,6 +17,7 @@
 
 module Test.Wire.API.Golden.Runner
   ( testObjects,
+    testToJSON,
     protoTestObjects,
     testFromJSONFailure,
     testFromJSONFailureWithMsg,
@@ -26,17 +27,18 @@ module Test.Wire.API.Golden.Runner
 where
 
 import Data.Aeson
+import Data.Aeson.Diff qualified as AD
 import Data.Aeson.Encode.Pretty (Config (..), defConfig, encodePretty')
-import qualified Data.ByteString as ByteString
-import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Lazy qualified as LBS
 import Data.ProtoLens.Encoding (decodeMessage, encodeMessage)
 import Data.ProtoLens.Message (Message)
-import Data.ProtoLens.TextFormat (pprintMessage, readMessage)
-import qualified Data.Text.Lazy.IO as LText
+import Data.ProtoLens.TextFormat (readMessage, showMessage)
+import Data.String.Conversions
+import Data.Text.Lazy.IO qualified as LText
 import Imports
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit
-import Text.PrettyPrint (render)
 import Type.Reflection (typeRep)
 import Wire.API.ServantProto
 
@@ -45,26 +47,42 @@ testObjects = fmap (\(obj, path) -> testCase path $ testObject obj path)
 
 testObject :: forall a. (Typeable a, ToJSON a, FromJSON a, Eq a, Show a) => a -> FilePath -> Assertion
 testObject obj path = do
+  assertJSONIsGolden obj path
+  assertEqual
+    (show (typeRep @a) <> ": FromJSON of " <> path <> " should match object")
+    (Success obj)
+    (fromJSON $ toJSON obj)
+
+testToJSON :: forall a. (Typeable a, ToJSON a) => a -> FilePath -> TestTree
+testToJSON obj path = testCase path $ assertJSONIsGolden obj path
+
+assertJSONIsGolden :: forall a. (Typeable a, ToJSON a) => a -> FilePath -> Assertion
+assertJSONIsGolden obj path = do
   let actualValue = toJSON obj :: Value
-      actualJson = encodePretty' config actualValue
+      actualJson = encodePretty' encodeConfig actualValue
       dir = "test/golden"
       fullPath = dir <> "/" <> path
   createDirectoryIfMissing True dir
   exists <- doesFileExist fullPath
   unless exists $ ByteString.writeFile fullPath (LBS.toStrict actualJson)
 
-  expectedValue <- assertRight =<< eitherDecodeFileStrict fullPath
-  assertEqual
-    (show (typeRep @a) <> ": ToJSON should match golden file: " <> path)
-    expectedValue
-    actualValue
-  assertEqual
-    (show (typeRep @a) <> ": FromJSON of " <> path <> " should match object")
-    (Success obj)
-    (fromJSON actualValue)
+  expectedValue :: Value <- assertRight =<< eitherDecodeFileStrict fullPath
+  assertBool
+    ( show (typeRep @a)
+        <> ": ToJSON should match golden file: "
+        <> path
+        <> "\n\nexpected:\n"
+        <> cs (encodePretty' encodeConfig expectedValue)
+        <> "\n\nactual:\n"
+        <> cs (encodePretty' encodeConfig actualValue)
+        <> "\n\ndiff:\n"
+        <> cs (encodePretty' encodeConfig (AD.diff expectedValue actualValue))
+    )
+    (expectedValue == actualValue)
   assertBool ("JSON golden file " <> path <> " does not exist") exists
-  where
-    config = defConfig {confCompare = compare, confTrailingNewline = True}
+
+encodeConfig :: Config
+encodeConfig = defConfig {confCompare = compare, confTrailingNewline = True}
 
 protoTestObjects ::
   forall m a.
@@ -83,8 +101,8 @@ protoTestObject ::
   IO Bool
 protoTestObject obj path = do
   let actual = toProto obj
-  msg <- assertRight (decodeMessage @m (LBS.toStrict actual))
-  let pretty = render (pprintMessage msg)
+  msg <- assertRight (decodeMessage @m actual)
+  let pretty = showMessage msg
       dir = "test/golden"
       fullPath = dir <> "/" <> path
   createDirectoryIfMissing True dir
@@ -100,7 +118,7 @@ protoTestObject obj path = do
   assertEqual
     (show (typeRep @a) <> ": FromProto of " <> path <> " should match object")
     (Right obj)
-    (fromProto (LBS.fromStrict (encodeMessage expected)))
+    (fromProto (encodeMessage expected))
 
   pure exists
 
@@ -128,7 +146,8 @@ testFromJSONFailureWithMsg msg path = do
       Nothing -> pure ()
       Just m ->
         assertBool
-          ( failurePrefix <> " had a wrong failure: "
+          ( failurePrefix
+              <> " had a wrong failure: "
               <> show m
               <> " is not contained in "
               <> show err
@@ -137,7 +156,7 @@ testFromJSONFailureWithMsg msg path = do
   where
     failurePrefix = show (typeRep @a) <> ": FromJSON of " <> path
 
-assertRight :: Show a => Either a b -> IO b
+assertRight :: (Show a) => Either a b -> IO b
 assertRight =
   \case
     Left a -> assertFailure $ "Expected Right, got Left: " <> show a

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,17 +20,20 @@ module Data.LegalHold where
 import Cassandra.CQL
 import Control.Lens ((?~))
 import Data.Aeson hiding (constructorTagModifier)
+import Data.OpenApi qualified as S
 import Data.Schema
-import qualified Data.Swagger as S
-import qualified Data.Swagger.Build.Api as Doc
 import Imports
 import Test.QuickCheck
 
 data UserLegalHoldStatus
-  = UserLegalHoldDisabled
-  | UserLegalHoldPending
-  | UserLegalHoldEnabled
-  | UserLegalHoldNoConsent
+  = -- | consent is given, but no device creation request has come in yet.
+    UserLegalHoldDisabled
+  | -- | device creation request has come in, waiting for 2nd round of ok from user before creating client device
+    UserLegalHoldPending
+  | -- | lh client ok'ed, requested, and created.
+    UserLegalHoldEnabled
+  | -- | no consent given (not even implicit)
+    UserLegalHoldNoConsent
   deriving stock (Show, Eq, Ord, Bounded, Enum, Generic)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema UserLegalHoldStatus
 
@@ -49,16 +52,6 @@ instance ToSchema UserLegalHoldStatus where
 
 defUserLegalHoldStatus :: UserLegalHoldStatus
 defUserLegalHoldStatus = UserLegalHoldNoConsent
-
-typeUserLegalHoldStatus :: Doc.DataType
-typeUserLegalHoldStatus =
-  Doc.string $
-    Doc.enum
-      [ "enabled",
-        "pending",
-        "disabled",
-        "no_consent"
-      ]
 
 instance Cql UserLegalHoldStatus where
   ctype = Tagged IntColumn

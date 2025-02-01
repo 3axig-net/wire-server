@@ -1,10 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,12 +18,14 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
+
+-- The above pragma is to ignore unused `genSingletons` definitions of promoted
+-- constructors
 
 module Wire.API.Team.Permission
   ( -- * Permissions
     Permissions (..),
-    self,
-    copy,
     newPermissions,
     fullPermissions,
     noPermissions,
@@ -31,58 +33,58 @@ module Wire.API.Team.Permission
 
     -- * Permissions
     Perm (..),
+    SPerm (..),
     permsToInt,
     intToPerms,
     permToInt,
     intToPerm,
-
-    -- * Swagger
-    modelPermissions,
   )
 where
 
-import qualified Cassandra as Cql
-import qualified Control.Error.Util as Err
-import Control.Lens (makeLenses, (^.))
-import Data.Aeson
+import Cassandra qualified as Cql
+import Control.Error.Util qualified as Err
+import Control.Lens ((?~))
+import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Bits (testBit, (.|.))
-import Data.Json.Util
-import qualified Data.Set as Set
-import qualified Data.Swagger.Build.Api as Doc
+import Data.OpenApi qualified as S
+import Data.Schema
+import Data.Set qualified as Set
+import Data.Singletons.Base.TH
 import Imports
-import Wire.API.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
+import Test.QuickCheck (oneof)
+import Wire.API.Util.Aeson (CustomEncoded (..))
+import Wire.Arbitrary (Arbitrary (arbitrary), GenericUniform (..))
 
 --------------------------------------------------------------------------------
 -- Permissions
 
 data Permissions = Permissions
-  { _self :: Set Perm,
-    _copy :: Set Perm
+  { -- | User's permissions
+    self :: Set Perm,
+    -- | Permissions this user is allowed to grant others
+    copy :: Set Perm
   }
   deriving stock (Eq, Ord, Show, Generic)
+  deriving (FromJSON, ToJSON, S.ToSchema) via (Schema Permissions)
 
-modelPermissions :: Doc.Model
-modelPermissions = Doc.defineModel "Permissions" $ do
-  Doc.description
-    "Permissions constrain possible member actions.\
-    \ The currently defined permissions can be found in: \
-    \ https://github.com/wireapp/wire-server/blob/develop/libs/galley-types/src/Galley/Types/Teams.hs#L247"
-  Doc.property "self" (Doc.int64 $ Doc.min 0 . Doc.max 0x7FFFFFFFFFFFFFFF) $
-    Doc.description "The permissions bitmask which applies to this user"
-  Doc.property "copy" (Doc.int64 $ Doc.min 0 . Doc.max 0x7FFFFFFFFFFFFFFF) $
-    Doc.description "The permissions bitmask which this user can assign to others"
+permissionsSchema :: ValueSchema NamedSwaggerDoc Permissions
+permissionsSchema =
+  objectWithDocModifier "Permissions" (description ?~ docs) $
+    Permissions
+      <$> (permsToInt . self) .= fieldWithDocModifier "self" selfDoc (intToPerms <$> schema)
+      <*> (permsToInt . copy) .= fieldWithDocModifier "copy" copyDoc (intToPerms <$> schema)
+  where
+    selfDoc = S.description ?~ "Permissions that the user has"
+    copyDoc = S.description ?~ "Permissions that this user is able to grant others"
+    docs =
+      "This is just a complicated way of representing a team role.  self and copy \
+      \always have to contain the same integer, and only the following integers \
+      \are allowed: 1025 (partner), 1587 (member), 5951 (admin), 8191 (owner). \
+      \Unit tests of the galley-types package in wire-server contain an authoritative \
+      \list."
 
-instance ToJSON Permissions where
-  toJSON p =
-    object $
-      "self" .= permsToInt (_self p)
-        # "copy" .= permsToInt (_copy p)
-        # []
-
-instance FromJSON Permissions where
-  parseJSON = withObject "permissions" $ \o -> do
-    s <- intToPerms <$> o .: "self"
-    d <- intToPerms <$> o .: "copy"
+instance ToSchema Permissions where
+  schema = withParser permissionsSchema $ \(Permissions s d) ->
     case newPermissions s d of
       Nothing -> fail "invalid permissions"
       Just ps -> pure ps
@@ -90,7 +92,7 @@ instance FromJSON Permissions where
 instance Arbitrary Permissions where
   arbitrary =
     maybe (error "instance Arbitrary Permissions") pure =<< do
-      selfperms <- arbitrary
+      selfperms <- oneof $ map (pure . intToPerms) [1025, 1587, 5951, 8191]
       copyperms <- Set.intersection selfperms <$> arbitrary
       pure $ newPermissions selfperms copyperms
 
@@ -118,7 +120,7 @@ serviceWhitelistPermissions =
   Set.fromList
     [ AddTeamMember,
       RemoveTeamMember,
-      DoNotUseDeprecatedAddRemoveConvMember,
+      AddRemoveConvMember,
       SetTeamData
     ]
 
@@ -128,11 +130,20 @@ serviceWhitelistPermissions =
 -- | Team-level permission.  Analog to conversation-level 'Action'.
 data Perm
   = CreateConversation
-  | DoNotUseDeprecatedDeleteConversation -- NOTE: This gets now overruled by conv level checks
+  | -- NOTE: This may get overruled by conv level checks in case those are more restrictive
+    -- We currently cannot get rid of this team-level permission in favor of the conv-level action
+    -- because it is used for e.g. for the team role 'RoleExternalPartner'
+    DeleteConversation
   | AddTeamMember
   | RemoveTeamMember
-  | DoNotUseDeprecatedAddRemoveConvMember -- NOTE: This gets now overruled by conv level checks
-  | DoNotUseDeprecatedModifyConvName -- NOTE: This gets now overruled by conv level checks
+  | -- NOTE: This may get overruled by conv level checks in case those are more restrictive
+    -- We currently cannot get rid of this team-level permission in favor of the conv-level action
+    -- because it is used for e.g. for the team role 'RoleExternalPartner'
+    AddRemoveConvMember
+  | -- NOTE: This may get overruled by conv level checks in case those are more restrictive
+    -- We currently cannot get rid of this team-level permission in favor of the conv-level action
+    -- because it is used for e.g. for the team role 'RoleExternalPartner'
+    ModifyConvName
   | GetBilling
   | SetBilling
   | SetTeamData
@@ -146,6 +157,9 @@ data Perm
   -- read Note [team roles] first.
   deriving stock (Eq, Ord, Show, Enum, Bounded, Generic)
   deriving (Arbitrary) via (GenericUniform Perm)
+  deriving (FromJSON, ToJSON) via (CustomEncoded Perm)
+
+instance S.ToSchema Perm
 
 permsToInt :: Set Perm -> Word64
 permsToInt = Set.foldr' (\p n -> n .|. permToInt p) 0
@@ -157,11 +171,11 @@ intToPerms n =
 
 permToInt :: Perm -> Word64
 permToInt CreateConversation = 0x0001
-permToInt DoNotUseDeprecatedDeleteConversation = 0x0002
+permToInt DeleteConversation = 0x0002
 permToInt AddTeamMember = 0x0004
 permToInt RemoveTeamMember = 0x0008
-permToInt DoNotUseDeprecatedAddRemoveConvMember = 0x0010
-permToInt DoNotUseDeprecatedModifyConvName = 0x0020
+permToInt AddRemoveConvMember = 0x0010
+permToInt ModifyConvName = 0x0020
 permToInt GetBilling = 0x0040
 permToInt SetBilling = 0x0080
 permToInt SetTeamData = 0x0100
@@ -172,11 +186,11 @@ permToInt SetMemberPermissions = 0x1000
 
 intToPerm :: Word64 -> Maybe Perm
 intToPerm 0x0001 = Just CreateConversation
-intToPerm 0x0002 = Just DoNotUseDeprecatedDeleteConversation
+intToPerm 0x0002 = Just DeleteConversation
 intToPerm 0x0004 = Just AddTeamMember
 intToPerm 0x0008 = Just RemoveTeamMember
-intToPerm 0x0010 = Just DoNotUseDeprecatedAddRemoveConvMember
-intToPerm 0x0020 = Just DoNotUseDeprecatedModifyConvName
+intToPerm 0x0010 = Just AddRemoveConvMember
+intToPerm 0x0020 = Just ModifyConvName
 intToPerm 0x0040 = Just GetBilling
 intToPerm 0x0080 = Just SetBilling
 intToPerm 0x0100 = Just SetTeamData
@@ -186,19 +200,20 @@ intToPerm 0x0800 = Just DeleteTeam
 intToPerm 0x1000 = Just SetMemberPermissions
 intToPerm _ = Nothing
 
-makeLenses ''Permissions
-
 instance Cql.Cql Permissions where
   ctype = Cql.Tagged $ Cql.UdtColumn "permissions" [("self", Cql.BigIntColumn), ("copy", Cql.BigIntColumn)]
 
   toCql p =
     let f = Cql.CqlBigInt . fromIntegral . permsToInt
-     in Cql.CqlUdt [("self", f (p ^. self)), ("copy", f (p ^. copy))]
+     in Cql.CqlUdt [("self", f p.self), ("copy", f p.copy)]
 
   fromCql (Cql.CqlUdt p) = do
     let f = intToPerms . fromIntegral :: Int64 -> Set.Set Perm
     s <- Err.note "missing 'self' permissions" ("self" `lookup` p) >>= Cql.fromCql
     d <- Err.note "missing 'copy' permissions" ("copy" `lookup` p) >>= Cql.fromCql
-    r <- Err.note "invalid permissions" (newPermissions (f s) (f d))
-    pure r
+    Err.note "invalid permissions" (newPermissions (f s) (f d))
   fromCql _ = Left "permissions: udt expected"
+
+$(genSingletons [''Perm])
+
+$(promoteShowInstances [''Perm])

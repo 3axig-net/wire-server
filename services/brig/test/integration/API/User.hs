@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,41 +21,51 @@ module API.User
   )
 where
 
-import qualified API.User.Account
-import qualified API.User.Auth
-import qualified API.User.Client
-import qualified API.User.Connection
-import qualified API.User.Handles
-import qualified API.User.PasswordReset
-import qualified API.User.Property
-import qualified API.User.RichInfo
+import API.User.Account qualified
+import API.User.Auth qualified
+import API.User.Client qualified
+import API.User.Connection qualified
+import API.User.Handles qualified
+import API.User.RichInfo qualified
 import API.User.Util
 import Bilge hiding (accept, timeout)
-import qualified Brig.AWS as AWS
-import qualified Brig.Options as Opt
-import qualified Brig.ZAuth as ZAuth
-import qualified Cassandra as DB
+import Brig.AWS qualified as AWS
+import Brig.Options qualified as Opt
+import Brig.ZAuth qualified as ZAuth
+import Cassandra qualified as DB
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Imports
 import Test.Tasty hiding (Timeout)
 import Util
+import Util.AWS (UserJournalWatcher)
 import Util.Options.Common
+import Wire.API.Federation.Component
 
-tests :: Opt.Opts -> FedBrigClient -> FedGalleyClient -> Manager -> Brig -> Cannon -> CargoHold -> Galley -> Nginz -> AWS.Env -> DB.ClientState -> IO TestTree
-tests conf fbc fgc p b c ch g n aws db = do
-  let cl = ConnectionLimit $ Opt.setUserMaxConnections (Opt.optSettings conf)
-  let at = Opt.setActivationTimeout (Opt.optSettings conf)
+tests ::
+  Opt.Opts ->
+  FedClient 'Brig ->
+  Manager ->
+  Brig ->
+  Cannon ->
+  CargoHold ->
+  Galley ->
+  Nginz ->
+  AWS.Env ->
+  DB.ClientState ->
+  UserJournalWatcher ->
+  IO TestTree
+tests conf fbc p b c ch g n aws db userJournalWatcher = do
+  let cl = ConnectionLimit conf.settings.userMaxConnections
+  let at = conf.settings.activationTimeout
   z <- mkZAuthEnv (Just conf)
-  return $
+  pure $
     testGroup
       "user"
-      [ API.User.Client.tests cl at conf p b c g,
-        API.User.Account.tests cl at conf p b c ch g aws,
-        API.User.Auth.tests conf p z b g n,
-        API.User.Connection.tests cl at conf p b c g fbc fgc db,
+      [ API.User.Client.tests cl at conf p db n b c g,
+        API.User.Account.tests cl at conf p b c ch g aws userJournalWatcher,
+        API.User.Auth.tests conf p z db b g n,
+        API.User.Connection.tests cl at p b c g fbc db,
         API.User.Handles.tests cl at conf p b c g,
-        API.User.PasswordReset.tests cl at conf p b c g,
-        API.User.Property.tests cl at conf p b c g,
         API.User.RichInfo.tests cl at conf p b c g
       ]
 

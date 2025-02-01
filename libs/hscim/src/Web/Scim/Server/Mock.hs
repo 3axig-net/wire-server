@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,6 +23,7 @@
 -- <https://developer.okta.com/standards/SCIM/#step-2-test-your-scim-server>).
 module Web.Scim.Server.Mock where
 
+import Control.Monad
 import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.STM (STM, atomically)
@@ -88,7 +89,7 @@ emptyTestStorage =
 -- in-memory implementation of the API for tests
 type TestServer = ReaderT TestStorage Handler
 
-liftSTM :: MonadIO m => STM a -> m a
+liftSTM :: (MonadIO m) => STM a -> m a
 liftSTM = liftIO . atomically
 
 hoistSTM :: (MFunctor t, MonadIO m) => t STM a -> t m a
@@ -104,7 +105,7 @@ instance UserTypes Mock where
 
 instance UserDB Mock TestServer where
   getUsers () mbFilter = do
-    m <- userDB <$> ask
+    m <- asks userDB
     users <- liftSTM $ ListT.toList $ STMMap.listT m
     let check user = case mbFilter of
           Nothing -> pure True
@@ -116,20 +117,20 @@ instance UserDB Mock TestServer where
     fromList . sortWith (Common.id . thing) <$> filterM check (snd <$> users)
 
   getUser () uid = do
-    m <- userDB <$> ask
+    m <- asks userDB
     liftSTM (STMMap.lookup uid m) >>= \case
       Nothing -> throwScim (notFound "User" (pack (show uid)))
       Just x -> pure x
 
   postUser () user = do
-    m <- userDB <$> ask
+    m <- asks userDB
     uid <- Id <$> liftSTM (STMMap.size m)
     let newUser = WithMeta (createMeta UserResource) $ WithId uid user
     liftSTM $ STMMap.insert newUser uid m
-    return newUser
+    pure newUser
 
   putUser () uid user = do
-    m <- userDB <$> ask
+    m <- asks userDB
     liftSTM (STMMap.lookup uid m) >>= \case
       Nothing -> throwScim (notFound "User" (pack (show uid)))
       Just stored -> do
@@ -138,9 +139,9 @@ instance UserDB Mock TestServer where
         pure newUser
 
   deleteUser () uid = do
-    m <- userDB <$> ask
+    m <- asks userDB
     liftSTM (STMMap.lookup uid m) >>= \case
-      Nothing -> throwScim (notFound "User" (pack (show uid)))
+      Nothing -> pure ()
       Just _ -> liftSTM $ STMMap.delete uid m
 
 -- (there seems to be no readOnly fields in User)
@@ -155,25 +156,25 @@ instance GroupTypes Mock where
 
 instance GroupDB Mock TestServer where
   getGroups () = do
-    m <- groupDB <$> ask
+    m <- asks groupDB
     groups <- liftSTM $ ListT.toList $ STMMap.listT m
-    return $ fromList . sortWith (Common.id . thing) $ snd <$> groups
+    pure $ fromList . sortWith (Common.id . thing) $ snd <$> groups
 
   getGroup () gid = do
-    m <- groupDB <$> ask
+    m <- asks groupDB
     liftSTM (STMMap.lookup gid m) >>= \case
       Nothing -> throwScim (notFound "Group" (pack (show gid)))
       Just grp -> pure grp
 
   postGroup () grp = do
-    m <- groupDB <$> ask
+    m <- asks groupDB
     gid <- Id <$> liftSTM (STMMap.size m)
     let newGroup = WithMeta (createMeta GroupResource) $ WithId gid grp
     liftSTM $ STMMap.insert newGroup gid m
-    return newGroup
+    pure newGroup
 
   putGroup () gid grp = do
-    m <- groupDB <$> ask
+    m <- asks groupDB
     liftSTM (STMMap.lookup gid m) >>= \case
       Nothing -> throwScim (notFound "Group" (pack (show gid)))
       Just stored -> do
@@ -184,7 +185,7 @@ instance GroupDB Mock TestServer where
   patchGroup _ _ _ = throwScim (serverError "PATCH /Users not implemented")
 
   deleteGroup () gid = do
-    m <- groupDB <$> ask
+    m <- asks groupDB
     liftSTM (STMMap.lookup gid m) >>= \case
       Nothing -> throwScim (notFound "Group" (pack (show gid)))
       Just _ -> liftSTM $ STMMap.delete gid m
@@ -242,13 +243,13 @@ nt storage =
 filterUser :: Filter -> User extra -> Either Text Bool
 filterUser (FilterAttrCompare (AttrPath schema' attrib subAttr) op val) user
   | isUserSchema schema' =
-    case (subAttr, val) of
-      (Nothing, (ValString str))
-        | attrib == "userName" ->
-          Right (compareStr op (CI.foldCase (userName user)) (CI.foldCase str))
-      (Nothing, _)
-        | attrib == "userName" ->
-          Left "usernames can only be compared with strings"
-      (_, _) ->
-        Left "Only search on usernames is currently supported"
+      case (subAttr, val) of
+        (Nothing, ValString str)
+          | attrib == "userName" ->
+              Right (compareStr op (CI.foldCase (userName user)) (CI.foldCase str))
+        (Nothing, _)
+          | attrib == "userName" ->
+              Left "usernames can only be compared with strings"
+        (_, _) ->
+          Left "Only search on usernames is currently supported"
   | otherwise = Left "Invalid schema. Only user schema is supported"

@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: backoffice
   labels:
-    wireService: backoffice
+    app: backoffice
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -16,11 +16,11 @@ spec:
       maxSurge: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      wireService: backoffice
+      app: backoffice
   template:
     metadata:
       labels:
-        wireService: backoffice
+        app: backoffice
         release: {{ .Release.Name }}
       annotations:
         # An annotation of the configmap checksum ensures changes to the configmap cause a redeployment upon `helm upgrade`
@@ -32,20 +32,16 @@ spec:
             name: "backoffice"
       containers:
         - name: stern
-          image: "{{ .Values.images.stern.repository }}:{{ .Values.images.stern.tag }}"
-          imagePullPolicy: {{ default "" .Values.images.stern.pullPolicy | quote }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ default "" .Values.image.pullPolicy | quote }}
+        {{- if eq (include "includeSecurityContext" .) "true" }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+        {{- end }}
           volumeMounts:
           - name: "backoffice-config"
             mountPath: /etc/wire/stern/conf/stern.yaml
             subPath: stern.yaml
-        - name: backoffice-frontend
-          image: "{{ .Values.images.frontend.repository }}:{{ .Values.images.frontend.tag }}"
-          imagePullPolicy: {{ default "" .Values.images.frontend.pullPolicy | quote }}
-          volumeMounts:
-          - name: "backoffice-config"
-            # We don't want to override existing files under /etc/nginx except for nginx.conf
-            mountPath: "/etc/nginx/nginx.conf"
-            subPath: nginx.conf
           ports:
             - containerPort: {{ .Values.service.internalPort }}
           livenessProbe:

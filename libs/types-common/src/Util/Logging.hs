@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,17 +20,17 @@ module Util.Logging where
 import Crypto.Hash (SHA256, hash)
 import Data.Handle (Handle (fromHandle))
 import Data.Id (TeamId, UserId)
-import Data.String.Conversions (cs)
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Encoding (encodeUtf8)
 import Imports
-import qualified System.Logger.Class as Log
+import System.Logger.Class qualified as Log
 import System.Logger.Message (Msg)
+import Text.Email.Parser
 
 sha256String :: Text -> Text
 sha256String t =
   let digest = hash @ByteString @SHA256 (encodeUtf8 t)
-   in cs . show $ digest
+   in T.pack . show $ digest
 
 logHandle :: Handle -> (Msg -> Msg)
 logHandle handl =
@@ -45,7 +45,11 @@ logFunction fn = Log.field "fn" fn . Log.field "module" (getModule fn)
       x -> T.intercalate "." (init x)
 
 logUser :: UserId -> (Msg -> Msg)
-logUser uid = Log.field "user" (cs @_ @Text . show $ uid)
+logUser uid = Log.field "user" (T.pack . show $ uid)
 
 logTeam :: TeamId -> (Msg -> Msg)
-logTeam tid = Log.field "team" (cs @_ @Text . show $ tid)
+logTeam tid = Log.field "team" (T.pack . show $ tid)
+
+logEmail :: EmailAddress -> (Msg -> Msg)
+logEmail email =
+  Log.field "email_sha256" (sha256String . T.pack . show $ email)

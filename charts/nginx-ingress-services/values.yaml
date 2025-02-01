@@ -6,6 +6,12 @@ teamSettings:
 # Account pages may be useful to enable password reset or email validation done after the initial registration
 accountPages:
   enabled: false
+websockets:
+  enabled: true
+webapp:
+  enabled: true
+fakeS3:
+  enabled: true
 federator:
   enabled: false
   integrationTestHelper: false
@@ -31,6 +37,25 @@ tls:
   useCertManager: false
   # the validation depth between a federator client certificate and tlsClientCA
   verify_depth: 1
+  createIssuer: true
+  issuer:
+    # In a multi-domain backend (multi-ingress) setup, this name will be
+    # augmented with the 'ingressName' (e.g. 'letsencrypt-http01-<ingressName>')
+    # to ensure that certificates aren't created by the same issuer, which would
+    # leak a hint about a common origin.
+    name: letsencrypt-http01
+    kind: Issuer # Issuer | ClusterIssuer
+  # Namespace from which to obtain the secret containing the CA trusted by
+  # federator.
+  # caNamespace: wire-federation-v0
+
+# Name of the ingress.
+#
+# If there is only one backend domain to be served, this can stay the empty
+# string (doesn't need to be changed.) If there are multiple backend domains
+# (multi-ingress setup), use a descriptive name per backend domain. Technically,
+# this value can be any string.
+ingressName: ""
 
 certManager:
   # Indicates whether Letsencrypt's staging API server is used and therefore certificates are NOT trusted
@@ -41,30 +66,63 @@ certManager:
   #  (2) used by Letsencrypt to send expiration notices and alike
   certmasterEmail:
 
+  # List of acme.cert-manager.io/v1.ACMEChallengeSolver to be used instead of a
+  # http01 nginx based solver. You can use secrets.certManager.customSolvers to
+  # store a secret if customerSolvers requires one. The secret is named
+  # "<release-name>-nginx-ingress-services-cert-manager-additional-solvers".
+  #
+  # Example:
+  #
+  # To use an additional DNS01 challenge solver on AWS use this.
+  #
+  # customSolvers:
+  #
+  #  - http01:
+  #      ingress:
+  #        class: nginx
+  #  - dns01:
+  #      route53:
+  #        region: eu-west-1
+  #        hostedZoneID: ...
+  #        accessKeyID: ...
+  #        secretAccessKeySecretRef:
+  #          name: <release>-nginx-ingress-services-cert-manager-additional-solvers
+  #          key: awsSecretAccessKey
+  #
+  #    selector:
+  #      matchLabels:
+  #        "use-route53-dns-solver": "true"
+  customSolvers:
+
 service:
-  nginz:
-    externalHttpPort: 8080
-    externalTcpPort: 8081
   webapp:
     externalPort: 8080
   s3:
     externalPort: 9000
     serviceName: fake-aws-s3
-    externallyCreated: false # See note below
+  useFakeS3: true # See note below
   teamSettings:
     externalPort: 8080
   accountPages:
     externalPort: 8080
 
+config:
+  ingressClass: "nginx"
 # You will need to supply some DNS names, namely
-# config:
 #   dns:
+#     base: <domain>
+#     ^ base is only needed to render multi-backend-domain (multi-ingress) CSP headers
 #     https: nginz-https.<domain>
-#     ssl: nginz-ssl.<domain>
+#     ssl: nginz-ssl.<domain> # For websockets
+#     ^ ssl is ignored if websockets.enabled == false
 #     webapp: webapp.<domain>
+#     ^ webapp is ignored if webapp.enabled == false
 #     fakeS3: assets.<domain>
+#     ^ fakeS3 is ignored if fakeS3.enabled == false
 #     federator: federator.<domain>
 #     ^ federator is ignored unless federator.enabled == true
+#     certificateDomain: federator.<domain>
+#     ^ domain to use in the CSR when using cert-manager
 #     teamSettings: teams.<domain>
 #     ^ teamSettings is ignored unless teamSettings.enabled == true
 #     accountPages: account.<domain>
@@ -84,10 +142,21 @@ service:
 #
 # For Services:
 # service:
-#   s3:
-#     externallyCreated: true
-#     ^ externallyCreated might be useful if S3 access is provided by
-#       an external service such as `minio-external`: in such cases
-#       we do not want to create yet another service here but rather
-#       use that service instead in the ingress
-#     serviceName: minio-external
+#   useFakeS3: true
+#     ^ useFakeS3 should be enabled if S3 access is to be
+#       provided by fake-aws-s3, inside of the kubernetes cluster.
+#       when it is something outside of the cluster (like minio-external),
+#       we should leave this setting off. this setting creates a
+#       fake-aws-s3 service inside of the cluster, which should be
+#       what is referred to in the brig configuration.
+# Configure CSP headers directly in the ingress.
+#
+# This is only suggested / needed in setups with multiple backend domains
+# (multi-ingress), because the webapps can only provide CSP headers for one
+# (root) domain.
+  renderCSPInIngress: false
+# Is this a chart instantiation for an additional backend domain (multi-ingress)?
+#
+# If 'true' some resources aren't created because they're expected to already
+# exist. There must be one non-additional instantiation per deployment!
+  isAdditionalIngress: false

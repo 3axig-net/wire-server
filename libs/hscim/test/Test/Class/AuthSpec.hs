@@ -1,8 +1,6 @@
-{-# LANGUAGE QuasiQuotes #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,7 +35,7 @@ testStorage :: IO TestStorage
 testStorage = TestStorage <$> STMMap.newIO <*> STMMap.newIO
 
 spec :: Spec
-spec = beforeAll ((\s -> app @Mock empty (nt s)) <$> testStorage) $ do
+spec = with ((\s -> app @Mock empty (nt s)) <$> testStorage) $ do
   describe "/ServiceProviderConfig" $ do
     it "is accessible without authentication" $ do
       get "/ServiceProviderConfig" `shouldRespondWith` 200

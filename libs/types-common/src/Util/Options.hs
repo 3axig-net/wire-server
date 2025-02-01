@@ -1,11 +1,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,21 +21,23 @@
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
 
-module Util.Options where
+module Util.Options
+  ( module Util.Options,
+    -- TODO: Switch denpendees to the original module?
+    module Cassandra.Options,
+  )
+where
 
+import Cassandra.Options
 import Control.Lens
-import Data.Aeson.TH
-import qualified Data.ByteString.Char8 as BS
+import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Conversion
 import Data.Text.Encoding (encodeUtf8)
 import Data.Yaml hiding (Parser)
 import Imports
 import Options.Applicative
 import Options.Applicative.Types
-import System.Exit (die)
-import System.IO (hPutStrLn)
 import URI.ByteString
-import Util.Options.Common
 
 data AWSEndpoint = AWSEndpoint
   { _awsHost :: !ByteString,
@@ -47,73 +50,59 @@ instance FromByteString AWSEndpoint where
   parser = do
     url <- uriParser strictURIParserOptions
     secure <- case url ^. uriSchemeL . schemeBSL of
-      "https" -> return True
-      "http" -> return False
+      "https" -> pure True
+      "http" -> pure False
       x -> fail ("Unsupported scheme: " ++ show x)
-    host <- case (url ^. authorityL <&> view (authorityHostL . hostBSL)) of
-      Just h -> return h
+    awsHost <- case url ^. authorityL <&> view (authorityHostL . hostBSL) of
+      Just h -> pure h
       Nothing -> fail ("No host in: " ++ show url)
-    port <- case urlPort url of
-      Just p -> return p
+    awsPort <- case urlPort url of
+      Just p -> pure p
       Nothing ->
-        return $
+        pure $
           if secure
             then 443
             else 80
-    return $ AWSEndpoint host secure port
+    pure $ AWSEndpoint awsHost secure awsPort
 
 instance FromJSON AWSEndpoint where
   parseJSON =
     withText "AWSEndpoint" $
-      either fail return . runParser parser . encodeUtf8
+      either fail pure . runParser parser . encodeUtf8
 
 urlPort :: URIRef Absolute -> Maybe Int
 urlPort u = do
   a <- u ^. authorityL
   p <- a ^. authorityPortL
-  return (fromIntegral (p ^. portNumberL))
+  pure (fromIntegral (p ^. portNumberL))
 
 makeLenses ''AWSEndpoint
 
-data Endpoint = Endpoint
-  { _epHost :: !Text,
-    _epPort :: !Word16
-  }
-  deriving (Show, Generic)
-
-deriveFromJSON toOptionFieldName ''Endpoint
-
-makeLenses ''Endpoint
-
-data CassandraOpts = CassandraOpts
-  { _casEndpoint :: !Endpoint,
-    _casKeyspace :: !Text,
-    -- | If this option is unset, use all available nodes.
-    -- If this option is set, use only cassandra nodes in the given datacentre
-    --
-    -- This option is most likely only necessary during a cassandra DC migration
-    -- FUTUREWORK: remove this option again, or support a datacentre migration feature
-    _casFilterNodesByDatacentre :: !(Maybe Text)
-  }
-  deriving (Show, Generic)
-
-deriveFromJSON toOptionFieldName ''CassandraOpts
-
-makeLenses ''CassandraOpts
-
 newtype FilePathSecrets = FilePathSecrets FilePath
-  deriving (Eq, Show, FromJSON)
+  deriving (Eq, Show, FromJSON, IsString)
 
-loadSecret :: FromJSON a => FilePathSecrets -> IO (Either String a)
+initCredentials :: (MonadIO m, FromJSON a) => FilePathSecrets -> m a
+initCredentials secretFile = do
+  dat <- loadSecret secretFile
+  pure $ either (\e -> error $ "Could not load secrets from " ++ show secretFile ++ ": " ++ e) id dat
+
+loadSecret :: (MonadIO m, FromJSON a) => FilePathSecrets -> m (Either String a)
 loadSecret (FilePathSecrets p) = do
   path <- canonicalizePath p
   exists <- doesFileExist path
   if exists
-    then return . over _Left show . decodeEither' =<< BS.readFile path
-    else return (Left "File doesn't exist")
+    then liftIO $ over _Left show . decodeEither' <$> BS.readFile path
+    else pure (Left "File doesn't exist")
 
+-- | Get configuration options from the command line or configuration file.
+--
+-- This uses the provided optparse-applicative parser, if given. In all cases,
+-- it prepends a `config-file` option to the parser that accepts a file name.
+-- When that option is found, the config file is used to get the options,
+-- instead of the command line.
 getOptions ::
-  FromJSON a =>
+  forall a.
+  (FromJSON a) =>
   -- | Program description
   String ->
   -- | CLI parser for the options (if there is no config)
@@ -121,50 +110,66 @@ getOptions ::
   -- | Default config path, can be overridden with @--config-file@
   FilePath ->
   IO a
-getOptions desc pars defaultPath = do
-  path <- parseConfigPath defaultPath mkDesc
-  file <- doesFileExist path
-  case (file, pars) of
-    -- Config exists, we can just take options from there
+getOptions desc mp defaultPath = do
+  (path, mOpts) <-
+    execParser $
+      info
+        (optsOrConfigFile <**> helper)
+        (header desc <> fullDesc)
+  exists <- doesFileExist path
+  case (exists, mOpts) of
+    -- config file exists, take options from there
     (True, _) -> do
-      configFile <- decodeFileEither path
-      case configFile of
-        Left e -> fail $ show e
-        Right o -> return o
-    -- Config doesn't exist but at least we have a CLI options parser
-    (False, Just p) -> do
-      hPutStrLn stderr $
-        "Config file at " ++ path
-          ++ " does not exist, falling back to command-line arguments. \n"
-      execParser (info (helper <*> p) mkDesc)
-    -- No config, no parser :(
-    (False, Nothing) -> do
-      die $ "Config file at " ++ path ++ " does not exist. \n"
+      decodeFileEither path >>= \case
+        Left e ->
+          fail $
+            show e
+              <> " while attempting to decode "
+              <> path
+        Right o -> pure o
+    -- config doesn't exist, take options from command line
+    (False, Just opts) -> pure opts
+    -- no config, no parser, just fail
+    (False, Nothing) ->
+      fail $ "Config file at " <> path <> " does not exist."
   where
-    mkDesc :: InfoMod b
-    mkDesc = header desc <> fullDesc
-
-parseConfigPath :: FilePath -> InfoMod String -> IO String
-parseConfigPath defaultPath desc = do
-  args <- getArgs
-  let result =
-        getParseResult $
-          execParserPure defaultPrefs (info (helper <*> pathParser) desc) args
-  pure $ fromMaybe defaultPath result
-  where
-    pathParser :: Parser String
-    pathParser =
-      strOption $
-        long "config-file" <> short 'c' <> help "Config file to load"
-          <> showDefault
-          <> value defaultPath
+    optsOrConfigFile :: Parser (FilePath, Maybe a)
+    optsOrConfigFile =
+      (,)
+        <$> strOption
+          ( long "config-file"
+              <> short 'c'
+              <> help "Config file to load"
+              <> showDefault
+              <> value defaultPath
+          )
+        <*> sequenceA mp
 
 parseAWSEndpoint :: ReadM AWSEndpoint
-parseAWSEndpoint = readerAsk >>= maybe (error "Could not parse AWS endpoint") return . fromByteString . fromString
+parseAWSEndpoint = readerAsk >>= maybe (error "Could not parse AWS endpoint") pure . fromByteString . fromString
 
-discoUrlParser :: Parser Text
-discoUrlParser =
-  textOption $
-    long "disco-url"
-      <> metavar "URL"
-      <> help "klabautermann url"
+data PasswordHashingOptions
+  = PasswordHashingArgon2id Argon2idOptions
+  | PasswordHashingScrypt
+  deriving (Show, Generic)
+
+data Argon2idOptions = Argon2idOptions
+  { iterations :: !Word32,
+    memory :: !Word32,
+    parallelism :: !Word32
+  }
+  deriving (Show, Generic)
+
+instance FromJSON PasswordHashingOptions where
+  parseJSON =
+    withObject "PasswordHashingOptions" $ \obj -> do
+      algo :: String <- obj .: "algorithm"
+      case algo of
+        "argon2id" -> do
+          iterations <- obj .: "iterations"
+          memory <- obj .: "memory"
+          parallelism <- obj .: "parallelism"
+          pure . PasswordHashingArgon2id $ Argon2idOptions {..}
+        "scrypt" ->
+          pure PasswordHashingScrypt
+        x -> fail $ "Unknown password hashing algorithm: " <> x

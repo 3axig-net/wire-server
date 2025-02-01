@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -14,30 +14,33 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Use camelCase" #-}
 
 module Main
   ( main,
   )
 where
 
+import Amazonka (Region (Ireland))
 import Control.Lens ((^.))
 import Criterion.Main
 import Data.Id (ClientId (..), ConnId (..), randomId)
-import qualified Data.Text.Lazy as LT
+import Data.Text.Lazy qualified as LT
 import Data.UUID.V4 (nextRandom)
 import Gundeck.Options
 import Gundeck.Push.Native.Serialise
 import Gundeck.Push.Native.Types
 import Gundeck.ThreadBudget.Internal
-import Gundeck.Types.Push
 import Imports
-import Network.AWS (Region (Ireland))
 import OpenSSL (withOpenSSL)
 import System.Random (randomRIO)
+import Wire.API.Push.V2
 
 main :: IO ()
 main = withOpenSSL $ do
-  prepared <- prepareBudgetState (100000)
+  prepared <- prepareBudgetState 100000
   defaultMain
     [ bgroup
         "notice"
@@ -60,13 +63,13 @@ notice = do
   let msg = NativePush i HighPriority Nothing
       uid = a ^. addrUser
       transp = a ^. addrTransport
-  Right txt <- serialise msg uid transp
-  return $! LT.toStrict txt
+  Right txt <- pure $ serialise msg uid transp
+  pure $! LT.toStrict txt
 
 bench_BudgetSpent' :: IORef BudgetMap -> IO ()
 bench_BudgetSpent' ref = do
   budgetmap <- readIORef ref
-  void $ return $ budgetSpent' budgetmap
+  void $ pure $ budgetSpent' budgetmap
 
 -----------------------------------------------------------------------------
 -- Utilities
@@ -78,8 +81,8 @@ mkAddress t = do
   let ept = mkEndpoint t app
   let tok = Token "test"
   let con = ConnId "conn"
-  let clt = ClientId "client"
-  return $! Address u ept con (pushToken t app tok clt)
+  let clt = ClientId 3265102391
+  pure $! Address u ept con (pushToken t app tok clt)
 
 mkEndpoint :: Transport -> AppName -> EndpointArn
 mkEndpoint t a = mkSnsArn Ireland (Account "test") topic
@@ -93,4 +96,4 @@ prepareBudgetState size = do
     key <- nextRandom
     weight <- randomRIO (1, 1000)
     allocate ref key weight
-  return ref
+  pure ref

@@ -1,9 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,34 +21,43 @@
 
 module Federator.Env where
 
-import Bilge (RequestId)
-import qualified Bilge as RPC
 import Control.Lens (makeLenses)
-import Data.Metrics (Metrics)
-import Data.X509.CertificateStore
 import Federator.Options (RunSettings)
+import HTTP2.Client.Manager
 import Imports
 import Network.DNS.Resolver (Resolver)
-import qualified Network.HTTP.Client as HTTP
-import qualified Network.TLS as TLS
-import qualified System.Logger.Class as LC
+import Network.HTTP.Client qualified as HTTP
+import OpenSSL.Session (SSLContext)
+import Prometheus
+import System.Logger.Class qualified as LC
+import Util.Options
 import Wire.API.Federation.Component
 
-data TLSSettings = TLSSettings
-  { _caStore :: CertificateStore,
-    _creds :: TLS.Credential
+data FederatorMetrics = FederatorMetrics
+  { outgoingRequests :: Vector Text Counter,
+    incomingRequests :: Vector Text Counter
   }
 
 data Env = Env
-  { _metrics :: Metrics,
-    _applog :: LC.Logger,
-    _requestId :: RequestId,
+  { _applog :: LC.Logger,
     _dnsResolver :: Resolver,
     _runSettings :: RunSettings,
-    _service :: Component -> RPC.Request,
+    _service :: Component -> Endpoint,
+    _externalPort :: Word16,
+    _internalPort :: Word16,
     _httpManager :: HTTP.Manager,
-    _tls :: IORef TLSSettings
+    _http2Manager :: IORef Http2Manager,
+    _federatorMetrics :: FederatorMetrics
   }
 
-makeLenses ''TLSSettings
 makeLenses ''Env
+
+onNewSSLContext :: Env -> SSLContext -> IO ()
+onNewSSLContext env ctx =
+  atomicModifyIORef' (_http2Manager env) $ \mgr -> (setSSLContext ctx mgr, ())
+
+mkHttp2Manager :: Int -> SSLContext -> IO Http2Manager
+mkHttp2Manager tcpConnectionTimeout sslContext =
+  setTCPConnectionTimeout tcpConnectionTimeout
+    . setSSLRemoveTrailingDot True
+    <$> http2ManagerWithSSLCtx sslContext

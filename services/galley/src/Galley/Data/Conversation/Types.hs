@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,44 +18,44 @@
 module Galley.Data.Conversation.Types where
 
 import Data.Id
-import Data.Misc
-import Data.Range
 import Galley.Types.Conversations.Members
 import Galley.Types.UserList
-import Galley.Validation
 import Imports
 import Wire.API.Conversation hiding (Conversation)
+import Wire.API.Conversation.Protocol
 import Wire.API.Conversation.Role
+import Wire.API.User
 
 -- | Internal conversation type, corresponding directly to database schema.
 -- Should never be sent to users (and therefore doesn't have 'FromJSON' or
 -- 'ToJSON' instances).
 data Conversation = Conversation
   { convId :: ConvId,
-    convType :: ConvType,
-    convCreator :: UserId,
-    convName :: Maybe Text,
-    convAccess :: [Access],
-    convAccessRole :: AccessRole,
     convLocalMembers :: [LocalMember],
     convRemoteMembers :: [RemoteMember],
-    convTeam :: Maybe TeamId,
-    convDeleted :: Maybe Bool,
-    -- | Global message timer
-    convMessageTimer :: Maybe Milliseconds,
-    convReceiptMode :: Maybe ReceiptMode
+    convDeleted :: Bool,
+    convMetadata :: ConversationMetadata,
+    convProtocol :: Protocol
   }
   deriving (Show)
 
+convProtocolTag :: Conversation -> ProtocolTag
+convProtocolTag = protocolTag . convProtocol
+
 data NewConversation = NewConversation
-  { ncType :: ConvType,
-    ncCreator :: UserId,
-    ncAccess :: [Access],
-    ncAccessRole :: AccessRole,
-    ncName :: Maybe (Range 1 256 Text),
-    ncTeam :: Maybe TeamId,
-    ncMessageTimer :: Maybe Milliseconds,
-    ncReceiptMode :: Maybe ReceiptMode,
-    ncUsers :: ConvSizeChecked UserList UserId,
-    ncRole :: RoleName
+  { ncMetadata :: ConversationMetadata,
+    ncUsers :: UserList (UserId, RoleName),
+    ncProtocol :: BaseProtocolTag
   }
+
+data MLSMigrationState
+  = MLSMigrationMixed
+  | MLSMigrationMLS
+  deriving (Show, Eq, Ord)
+
+mlsMetadata :: Conversation -> Maybe (ConversationMLSData, MLSMigrationState)
+mlsMetadata conv =
+  case convProtocol conv of
+    ProtocolProteus -> Nothing
+    ProtocolMLS meta -> pure (meta, MLSMigrationMLS)
+    ProtocolMixed meta -> pure (meta, MLSMigrationMixed)

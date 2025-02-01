@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,12 +27,12 @@ module Brig.Queue.Stomp
 where
 
 import BasePrelude hiding (Handler, throwIO)
-import qualified Brig.Options as Opts
-import qualified Codec.MIME.Type as MIME
+import Brig.Options qualified as Opts
+import Codec.MIME.Type qualified as MIME
 import Control.Monad.Catch (Handler (..), MonadMask)
 import Control.Retry hiding (retryPolicy)
 import Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as BL
+import Data.ByteString.Lazy qualified as BL
 import Data.Conduit.Network.TLS
 import Data.Text
 import Data.Text.Encoding
@@ -76,10 +76,10 @@ mkEnv o cred =
   Env
     { broker =
         Broker
-          { host = Opts.stompHost o,
-            port = Opts.stompPort o,
+          { host = o.host,
+            port = o.port,
             auth = Just cred,
-            tls = Opts.stompTls o
+            tls = o.tls
           }
     }
 
@@ -132,6 +132,8 @@ enqueue b q m =
 -- configured properly, after failing on the same message several times the
 -- message will go into the Dead Letter Queue where it can be analyzed
 -- manually.
+--
+-- FUTUREWORK: This probably deserves a Polysemy action
 listen ::
   (FromJSON a, MonadLogger m, MonadMask m, MonadUnliftIO m) =>
   Broker ->
@@ -165,7 +167,7 @@ listen b q callback =
         msg (val "Exception when listening to a STOMP queue")
           ~~ field "queue" (show q)
           ~~ field "error" (show e)
-      return True
+      pure True
 
 -- Note [exception handling]
 -- ~~~
@@ -178,7 +180,7 @@ listen b q callback =
 -------------------------------------------------------------------------------
 -- Utilities
 
-iconv :: FromJSON a => Text -> InBound a
+iconv :: (FromJSON a) => Text -> InBound a
 iconv queue _ _ _ bs =
   case Aeson.eitherDecode (BL.fromStrict bs) of
     Right x -> pure x
@@ -186,7 +188,7 @@ iconv queue _ _ _ bs =
       convertError $
         "Error when parsing message from STOMP queue " <> unpack queue <> ": " <> e
 
-oconv :: ToJSON a => OutBound a
+oconv :: (ToJSON a) => OutBound a
 oconv = pure . BL.toStrict . Aeson.encode
 
 jsonType :: MIME.Type

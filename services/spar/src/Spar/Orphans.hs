@@ -1,10 +1,9 @@
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -25,7 +24,7 @@ module Spar.Orphans
   )
 where
 
-import Data.String.Conversions (cs)
+import qualified Data.Text.Lazy as LText
 import Imports
 import qualified SAML2.WebSSO as SAML
 import Servant (MimeRender (..), PlainText)
@@ -37,4 +36,4 @@ instance MimeRender PlainText Void where
   mimeRender _ = error "instance MimeRender HTML Void: impossible"
 
 instance MakeCustomError "wai-error" IdPMetadataInfo where
-  makeCustomError = sparToServerError . SAML.CustomError . SparNewIdPBadMetadata . cs
+  makeCustomError = sparToServerError . SAML.CustomError . SparNewIdPBadMetadata . LText.pack

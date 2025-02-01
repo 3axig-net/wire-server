@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: "federator"
   labels:
-    wireService: federator
+    app: federator
     chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
@@ -31,10 +31,13 @@ data:
       host: galley
       port: 8080
 
+    cargohold:
+      host: cargohold
+      port: 8080
+
     {{- with .Values.config }}
 
-    logNetStrings: True # log using netstrings encoding:
-                        # http://cr.yp.to/proto/netstrings.txt
+    logNetStrings: {{ .logNetStrings }}
     logFormat: {{ .logFormat }}
     logLevel: {{ .logLevel }}
 
@@ -48,18 +51,6 @@ data:
       clientCertificate: "/etc/wire/federator/secrets/tls.crt"
       clientPrivateKey: "/etc/wire/federator/secrets/tls.key"
       useSystemCAStore: {{ .useSystemCAStore }}
-      federationStrategy:
-        {{- if .federationStrategy.allowAll }}
-        allowAll:
-        {{- else if .federationStrategy.allowedDomains }}
-        allowedDomains:
-        {{- range $domain := .federationStrategy.allowedDomains }}
-          - {{ $domain | quote }}
-        {{- end }}
-        {{- else }}
-        # In gotemplate there is no way to distinguish between empty list and no
-        # list, we assume empty list when there is no list
-        allowedDomains: []
-        {{- end}}
+      tcpConnectionTimeout: {{ .tcpConnectionTimeout }}
     {{- end }}
     {{- end }}

@@ -1,6 +1,9 @@
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,7 +21,7 @@
 module API.RichInfo.Util where
 
 import Bilge
-import Brig.Types
+import Brig.Types.User (RichInfoUpdate (RichInfoUpdate))
 import Data.ByteString.Conversion
 import Data.Id
 import Imports
@@ -26,7 +29,7 @@ import Util
 import Wire.API.User.RichInfo
 
 getRichInfo ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   -- | The user who is performing the query
   UserId ->
@@ -41,16 +44,16 @@ getRichInfo brig self uid = do
           . zUser self
       )
   if
-      | statusCode r == 200 -> Right <$> responseJsonError r
-      | statusCode r `elem` [403, 404] -> pure . Left . statusCode $ r
-      | otherwise ->
+    | statusCode r == 200 -> Right <$> responseJsonError r
+    | statusCode r `elem` [403, 404] -> pure . Left . statusCode $ r
+    | otherwise ->
         error $
           "expected status code 200, 403, or 404, got: " <> show (statusCode r)
 
 -- | This contacts an internal end-point.  Note the asymmetry between this and the external
 -- GET end-point in the body: here we need to wrap the 'RichInfo' in a 'RichInfoUpdate'.
 putRichInfo ::
-  HasCallStack =>
+  (HasCallStack) =>
   Brig ->
   -- | The user whose rich info is being updated
   UserId ->

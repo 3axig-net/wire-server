@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -37,19 +39,20 @@ module Galley.Effects.CodeStore
   )
 where
 
-import Brig.Types.Code
+import Data.Code
 import Data.Id
 import Data.Misc
 import Galley.Data.Types
 import Imports
 import Polysemy
+import Wire.API.Password
 
 data CodeStore m a where
-  CreateCode :: Code -> CodeStore m ()
-  GetCode :: Key -> Scope -> CodeStore m (Maybe Code)
+  CreateCode :: Code -> Maybe Password -> CodeStore m ()
+  GetCode :: Key -> Scope -> CodeStore m (Maybe (Code, Maybe Password))
   DeleteCode :: Key -> Scope -> CodeStore m ()
   MakeKey :: ConvId -> CodeStore m Key
   GenerateCode :: ConvId -> Scope -> Timeout -> CodeStore m Code
-  GetConversationCodeURI :: CodeStore m HttpsUrl
+  GetConversationCodeURI :: Maybe Text -> CodeStore m (Maybe HttpsUrl)
 
 makeSem ''CodeStore

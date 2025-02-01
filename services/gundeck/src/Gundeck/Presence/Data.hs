@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,19 +24,21 @@ module Gundeck.Presence.Data
 where
 
 import Control.Monad.Catch
-import Data.Aeson
-import qualified Data.ByteString as Strict
+import Data.Aeson as Aeson
+import Data.ByteString qualified as Strict
 import Data.ByteString.Builder (byteString)
+import Data.ByteString.Char8 qualified as StrictChars
 import Data.ByteString.Conversion hiding (fromList)
-import qualified Data.ByteString.Lazy as Lazy
-import qualified Data.ByteString.Lazy.Char8 as LazyChars
+import Data.ByteString.Lazy qualified as Lazy
 import Data.Id
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Misc (Milliseconds)
-import Database.Redis.IO hiding (Milliseconds)
-import Gundeck.Monad (Gundeck, posixTime)
-import Gundeck.Types
+import Database.Redis
+import Gundeck.Monad (Gundeck, posixTime, runWithAdditionalRedis)
 import Gundeck.Util.Redis
 import Imports
+import System.Logger.Class (MonadLogger)
+import Wire.API.Presence
 
 -- Note [Migration] ---------------------------------------------------------
 --
@@ -59,43 +61,49 @@ add p = do
   now <- posixTime
   let k = toKey (userId p)
   let v = toField (connId p)
-  let d = encode $ PresenceData (resource p) (clientId p) now
-  retry x3 . commands $ do
-    multi
-    void $ hset k v d
-    -- nb. All presences of a user are expired 'maxIdleTime' after the
-    -- last presence was registered. A client who keeps a presence
-    -- (i.e. websocket) connected for longer than 'maxIdleTime' will be
-    -- silently dropped and receives no more notifications.
-    void $ expire k maxIdleTime
-    exec
+  let d = Lazy.toStrict $ Aeson.encode $ PresenceData p.resource p.clientId now
+  runWithAdditionalRedis . retry x3 $ do
+    void . fromTxResult <=< (liftRedis . multiExec) $ do
+      void $ hset k (NonEmpty.singleton (v, d))
+      -- nb. All presences of a user are expired 'maxIdleTime' after the
+      -- last presence was registered. A client who keeps a presence
+      -- (i.e. websocket) connected for longer than 'maxIdleTime' will be
+      -- silently dropped and receives no more notifications.
+      expire k maxIdleTime
   where
-    maxIdleTime = Seconds (7 * 24 * 60 * 60) -- 7 days
+    maxIdleTime = 7 * 24 * 60 * 60 -- 7 days in seconds
 
-deleteAll :: (MonadClient m, MonadMask m) => [Presence] -> m ()
-deleteAll [] = return ()
+deleteAll :: (MonadMask m, MonadIO m, RedisCtx m (Either Reply), MonadLogger m) => [Presence] -> m ()
+deleteAll [] = pure ()
 deleteAll pp = for_ pp $ \p -> do
   let k = toKey (userId p)
-  let f = __field p
-  retry x3 . commands $ do
-    watch (pure k)
-    value <- hget k f
-    multi
-    for_ value $ \v -> do
-      let p' = readPresence (userId p) (f, Lazy.toStrict v)
-      when (Just p == p') $
-        void (hdel k (pure f))
-    exec
+  let f = Lazy.toStrict $ __field p
+  void . retry x3 $ do
+    void . liftRedis $ watch (pure k)
+    value <- either (throwM . RedisSimpleError) id <$> hget k f
+    void . liftRedis . multiExec $ do
+      case value of
+        Nothing -> pure $ pure ()
+        Just v -> do
+          let p' = readPresence (userId p) (f, v)
+          if Just p == p'
+            then void <$> hdel k (pure f)
+            else pure $ pure ()
 
-list :: MonadClient m => UserId -> m [Presence]
-list u = mapMaybe (readPresence u) <$> commands (hgetall (toKey u))
+list :: (MonadRedis m, MonadThrow m) => UserId -> m [Presence]
+list u = do
+  ePresenses <- liftRedis $ list' u
+  case ePresenses of
+    Left r -> throwM $ RedisSimpleError r
+    Right ps -> pure ps
 
-listAll :: MonadClient m => [UserId] -> m [[Presence]]
-listAll [] = return []
-listAll uu =
-  zipWith fn uu <$> commands (mapM (hgetall . toKey) uu)
-  where
-    fn u = mapMaybe (readPresence u)
+list' :: (RedisCtx m f, Functor f) => UserId -> m (f [Presence])
+list' u = mapMaybe (readPresence u) <$$> hgetall (toKey u)
+
+-- FUTUREWORK: Make this not fail if it fails only for a few users.
+listAll :: (MonadRedis m, MonadThrow m) => [UserId] -> m [[Presence]]
+listAll [] = pure []
+listAll uu = mapM list uu
 
 -- Helpers -------------------------------------------------------------------
 
@@ -112,23 +120,28 @@ instance ToJSON PresenceData where
 
 instance FromJSON PresenceData where
   parseJSON = withObject "PresenceData" $ \o ->
-    PresenceData <$> o .: "r"
-      <*> o .:? "c"
-      <*> o .:? "t" .!= 0
+    PresenceData
+      <$> o
+        .: "r"
+      <*> o
+        .:? "c"
+      <*> o
+        .:? "t"
+        .!= 0
 
-toKey :: UserId -> Key
-toKey u = Key $ runBuilder (byteString "user:" <> builder u)
+toKey :: UserId -> ByteString
+toKey u = Lazy.toStrict $ runBuilder (byteString "user:" <> builder u)
 
-toField :: ConnId -> Field
-toField (ConnId con) = Lazy.fromStrict con
+toField :: ConnId -> ByteString
+toField (ConnId con) = con
 
-fromField :: Field -> ConnId
-fromField = ConnId . Lazy.toStrict . LazyChars.takeWhile (/= '@')
+fromField :: ByteString -> ConnId
+fromField = ConnId . StrictChars.takeWhile (/= '@')
 
-readPresence :: UserId -> (Field, ByteString) -> Maybe Presence
+readPresence :: UserId -> (ByteString, ByteString) -> Maybe Presence
 readPresence u (f, b) = do
   PresenceData uri clt tme <-
     if "http" `Strict.isPrefixOf` b
       then PresenceData <$> fromByteString b <*> pure Nothing <*> pure 0
       else decodeStrict' b
-  return (Presence u (fromField f) uri clt tme f)
+  pure (Presence u (fromField f) uri clt tme (Lazy.fromStrict f))

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -38,5 +38,6 @@ testObject_QualifiedUserClientPrekeyMap_2 =
       (Domain "epsilon.example.com", testObject_UserClientPrekeyMap_5),
       (Domain "zeta.example.com", testObject_UserClientPrekeyMap_6),
       (Domain "eta.example.com", testObject_UserClientPrekeyMap_7),
-      (Domain "theta.example.com", testObject_UserClientPrekeyMap_8)
+      (Domain "theta.example.com", testObject_UserClientPrekeyMap_8),
+      (Domain "meta.example.com", testObject_UserClientPrekeyMap_8)
     ]

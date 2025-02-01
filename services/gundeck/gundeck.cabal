@@ -1,258 +1,555 @@
-cabal-version: 1.12
-
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 4bb58f9c4f7c25e77c57457292940bd69410c8a372272ad5afb14252c2ac399b
-
-name:           gundeck
-version:        1.45.0
-synopsis:       Push Notification Hub
-category:       Network
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2017 Wire Swiss GmbH
-license:        AGPL-3
-license-file:   LICENSE
-build-type:     Simple
+cabal-version: 3.0
+name:          gundeck
+version:       1.45.0
+synopsis:      Push Notification Hub
+category:      Network
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2017 Wire Swiss GmbH
+license:       AGPL-3.0-only
+license-file:  LICENSE
+build-type:    Simple
 
 flag static
   description: Enable static linking
-  manual: True
-  default: False
+  manual:      True
+  default:     False
 
 library
+  -- cabal-fmt: expand src
   exposed-modules:
-      Gundeck.API
-      Gundeck.API.Error
-      Gundeck.API.Internal
-      Gundeck.API.Public
-      Gundeck.Aws
-      Gundeck.Aws.Arn
-      Gundeck.Aws.Sns
-      Gundeck.Client
-      Gundeck.Env
-      Gundeck.Instances
-      Gundeck.Monad
-      Gundeck.Notification
-      Gundeck.Notification.Data
-      Gundeck.Options
-      Gundeck.Presence
-      Gundeck.Presence.Data
-      Gundeck.Push
-      Gundeck.Push.Data
-      Gundeck.Push.Native
-      Gundeck.Push.Native.Serialise
-      Gundeck.Push.Native.Types
-      Gundeck.Push.Websocket
-      Gundeck.React
-      Gundeck.Run
-      Gundeck.ThreadBudget
-      Gundeck.ThreadBudget.Internal
-      Gundeck.Util
-      Gundeck.Util.DelayQueue
-      Gundeck.Util.Redis
-      Main
-  other-modules:
-      Paths_gundeck
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -fwarn-incomplete-uni-patterns
+    Gundeck.API.Internal
+    Gundeck.API.Public
+    Gundeck.Aws
+    Gundeck.Aws.Arn
+    Gundeck.Aws.Sns
+    Gundeck.Client
+    Gundeck.Env
+    Gundeck.Instances
+    Gundeck.Monad
+    Gundeck.Notification
+    Gundeck.Notification.Data
+    Gundeck.Options
+    Gundeck.Presence
+    Gundeck.Presence.Data
+    Gundeck.Push
+    Gundeck.Push.Data
+    Gundeck.Push.Native
+    Gundeck.Push.Native.Serialise
+    Gundeck.Push.Native.Types
+    Gundeck.Push.Websocket
+    Gundeck.React
+    Gundeck.Redis
+    Gundeck.Redis.HedisExtensions
+    Gundeck.Run
+    Gundeck.Schema.Run
+    Gundeck.Schema.V1
+    Gundeck.Schema.V10
+    Gundeck.Schema.V11
+    Gundeck.Schema.V12
+    Gundeck.Schema.V2
+    Gundeck.Schema.V3
+    Gundeck.Schema.V4
+    Gundeck.Schema.V5
+    Gundeck.Schema.V6
+    Gundeck.Schema.V7
+    Gundeck.Schema.V8
+    Gundeck.Schema.V9
+    Gundeck.ThreadBudget
+    Gundeck.ThreadBudget.Internal
+    Gundeck.Util
+    Gundeck.Util.DelayQueue
+    Gundeck.Util.Redis
+
+  other-modules:      Paths_gundeck
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    BlockArguments
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL >=0.11
-    , aeson >=0.11
-    , amazonka >=1.3.7
-    , amazonka-sns >=1.3.7
-    , amazonka-sqs >=1.3.7
-    , async >=2.0
-    , attoparsec >=0.10
-    , auto-update >=0.1
-    , base >=4.7 && <5
-    , bilge >=0.21
-    , bytestring >=0.9
-    , bytestring-conversion >=0.2
-    , cassandra-util >=0.16.2
-    , containers >=0.5
-    , data-default >=0.5
-    , errors >=2.0
-    , exceptions >=0.4
+    , aeson                                 >=2.0.1.0
+    , amazonka                              >=2
+    , amazonka-core                         >=2
+    , amazonka-sns                          >=2
+    , amazonka-sqs                          >=2
+    , amqp
+    , async                                 >=2.0
+    , attoparsec                            >=0.10
+    , auto-update                           >=0.1
+    , base                                  >=4.7     && <5
+    , bilge                                 >=0.21
+    , bytestring                            >=0.9
+    , bytestring-conversion                 >=0.2
+    , cassandra-util                        >=0.16.2
+    , containers                            >=0.5
+    , crypton-x509-store
+    , data-timeout
+    , errors                                >=2.0
+    , exceptions                            >=0.4
     , extended
-    , extra >=1.1
-    , gundeck-types >=1.0
-    , http-client >=0.4
-    , http-client-tls >=0.2.2
-    , http-types >=0.8
+    , extra                                 >=1.1
+    , foldl
+    , hedis                                 >=0.14.0
+    , hs-opentelemetry-instrumentation-wai
+    , hs-opentelemetry-sdk
+    , http-client                           >=0.7
+    , http-client-tls                       >=0.3
+    , http-types                            >=0.8
     , imports
-    , lens >=4.4
-    , lens-aeson >=1.0
-    , metrics-core >=0.2.1
-    , metrics-wai >=0.5.7
-    , mtl >=2.2
-    , network-uri >=2.6
-    , optparse-applicative >=0.10
-    , psqueues >=0.2.2
-    , redis-io >=0.4
-    , resourcet >=1.1
-    , retry >=0.5
+    , lens                                  >=4.4
+    , lens-aeson                            >=1.0
+    , metrics-core                          >=0.2.1
+    , metrics-wai
+    , mtl                                   >=2.2
+    , network-uri                           >=2.6
+    , prometheus-client
+    , psqueues                              >=0.2.2
+    , raw-strings-qq
+    , resourcet                             >=1.1
+    , retry                                 >=0.5
     , safe-exceptions
-    , swagger >=0.1
-    , text >=1.1
-    , time >=1.4
-    , tinylog >=0.10
-    , tls >=1.3.4
-    , types-common >=0.16
-    , unliftio >=0.2
-    , unordered-containers >=0.2
-    , uuid >=1.3
-    , wai >=3.2
-    , wai-extra >=3.0
-    , wai-middleware-gunzip >=0.0.2
-    , wai-predicates >=0.8
-    , wai-routing >=0.12
-    , wai-utilities >=0.16
+    , servant
+    , servant-server
+    , text                                  >=1.1
+    , these
+    , time                                  >=1.4
+    , tinylog                               >=0.10
+    , tls                                   >=1.7.0
+    , types-common                          >=0.16
+    , types-common-aws
+    , unliftio                              >=0.2
+    , unordered-containers                  >=0.2
+    , uuid                                  >=1.3
+    , wai                                   >=3.2
+    , wai-extra                             >=3.0
+    , wai-middleware-gunzip                 >=0.0.2
+    , wai-utilities                         >=0.16
     , wire-api
-    , yaml >=0.8
-  default-language: Haskell2010
+    , wire-otel
+    , yaml                                  >=0.8
+
+  default-language:   GHC2021
 
 executable gundeck
-  main-is: src/Main.hs
-  other-modules:
-      Paths_gundeck
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -rtsopts -with-rtsopts=-T
+  main-is:            exec/Main.hs
+  other-modules:      Paths_gundeck
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -rtsopts -with-rtsopts=-T -Wredundant-constraints
+    -Wunused-packages
+
   build-depends:
-      HsOpenSSL
     , base
-    , extended
     , gundeck
-    , gundeck-types
+    , HsOpenSSL
     , imports
-    , lens
-    , metrics-wai
     , types-common
-    , uuid
+
   if flag(static)
     ld-options: -static
-  default-language: Haskell2010
+
+  default-language:   GHC2021
 
 executable gundeck-integration
-  main-is: Main.hs
+  main-is:            Main.hs
   other-modules:
-      API
-      Metrics
-      TestSetup
-      Paths_gundeck
-  hs-source-dirs:
-      test/integration
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded
+    API
+    Metrics
+    Paths_gundeck
+    TestSetup
+    Util
+
+  hs-source-dirs:     test/integration
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL
     , aeson
     , async
-    , base >=4 && <5
-    , base16-bytestring >=0.1
+    , base                   >=4    && <5
+    , base16-bytestring      >=0.1
     , bilge
     , bytestring
     , bytestring-conversion
     , cassandra-util
     , containers
     , exceptions
-    , extended
     , gundeck
-    , gundeck-types
+    , HsOpenSSL
     , http-client
     , http-client-tls
     , imports
+    , kan-extensions
     , lens
     , lens-aeson
-    , mtl
+    , network
     , network-uri
     , optparse-applicative
     , random
     , retry
     , safe
     , tagged
-    , tasty >=1.0
-    , tasty-hunit >=0.9
+    , tasty                  >=1.0
+    , tasty-ant-xml
+    , tasty-hunit            >=0.9
+    , text
+    , tinylog
+    , types-common
+    , uuid
+    , wai-utilities          >=0.16
+    , websockets             >=0.8
+    , wire-api
+    , yaml
+
+  default-language:   GHC2021
+
+executable gundeck-migrate-data
+  main-is:            ../main.hs
+  hs-source-dirs:     migrate-data/src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -Wredundant-constraints -Wunused-packages
+
+  -- cabal-fmt: expand migrate-data/src
+  other-modules:
+    Gundeck.DataMigration
+    Gundeck.DataMigration.Types
+    Run
+    V1_DeleteApnsVoipTokens
+
+  build-depends:
+    , base
+    , cassandra-util
+    , conduit
+    , exceptions
+    , extended
+    , imports
+    , optparse-applicative
     , text
     , time
     , tinylog
     , types-common
-    , unordered-containers
-    , uuid
-    , websockets >=0.8
-    , yaml
-  default-language: Haskell2010
 
-executable gundeck-schema
-  main-is: Main.hs
-  other-modules:
-      V1
-      V2
-      V3
-      V4
-      V5
-      V6
-      V7
-      V8
-      Paths_gundeck
-  hs-source-dirs:
-      schema/src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded
-  build-depends:
-      base
-    , cassandra-util
-    , extended
-    , imports
-    , optparse-applicative
-    , raw-strings-qq
-    , text
-    , tinylog
-    , types-common
   if flag(static)
     ld-options: -static
-  default-language: Haskell2010
+
+  default-language:   GHC2021
+
+executable gundeck-schema
+  main-is:            Main.hs
+  hs-source-dirs:     schema
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -Wredundant-constraints -Wunused-packages
+
+  build-depends:
+    , gundeck
+    , imports
+
+  if flag(static)
+    ld-options: -static
+
+  default-language:   GHC2021
 
 test-suite gundeck-tests
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
   other-modules:
-      DelayQueue
-      Json
-      MockGundeck
-      Native
-      Push
-      ThreadBudget
-      Paths_gundeck
-  hs-source-dirs:
-      test/unit
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded
+    Aws.Arn
+    DelayQueue
+    Json
+    MockGundeck
+    Native
+    ParseExistsError
+    Paths_gundeck
+    Push
+    ThreadBudget
+
+  hs-source-dirs:     test/unit
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL
-    , MonadRandom
-    , QuickCheck
     , aeson
     , aeson-pretty
     , amazonka
+    , amazonka-core
     , async
     , base
-    , bytestring
+    , bytestring-conversion
     , containers
     , exceptions
-    , extended
     , gundeck
-    , gundeck-types
+    , HsOpenSSL
     , imports
     , lens
-    , metrics-wai
+    , MonadRandom
     , mtl
     , multiset
     , network-uri
+    , QuickCheck
     , quickcheck-instances
     , quickcheck-state-machine
     , scientific
@@ -261,40 +558,76 @@ test-suite gundeck-tests
     , tasty-hunit
     , tasty-quickcheck
     , text
-    , time
     , tinylog
-    , tree-diff
     , types-common
-    , unordered-containers
-    , uuid
-    , wai-utilities
-  default-language: Haskell2010
+    , wire-api
+
+  default-language:   GHC2021
 
 benchmark gundeck-bench
-  type: exitcode-stdio-1.0
-  main-is: Main.hs
-  other-modules:
-      Paths_gundeck
-  hs-source-dirs:
-      test/bench
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+  other-modules:      Paths_gundeck
+  hs-source-dirs:     test/bench
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      HsOpenSSL
-    , aeson
     , amazonka
     , base
-    , bytestring
     , criterion
-    , extended
     , gundeck
-    , gundeck-types
+    , HsOpenSSL
     , imports
     , lens
     , random
     , text
-    , time
     , types-common
-    , unordered-containers
     , uuid
-  default-language: Haskell2010
+    , wire-api
+
+  default-language:   GHC2021

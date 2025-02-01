@@ -6,7 +6,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -34,26 +34,27 @@ module Federator.Run
   )
 where
 
-import qualified Bilge as RPC
 import Control.Concurrent.Async
-import Control.Exception (bracket)
+import Control.Exception (bracket, catch)
 import Control.Lens ((^.))
-import Data.Default (def)
-import qualified Data.Metrics.Middleware as Metrics
-import Data.Text.Encoding (encodeUtf8)
+import Data.Id
+import Data.Metrics.GC
 import Federator.Env
 import Federator.ExternalServer (serveInward)
 import Federator.InternalServer (serveOutward)
 import Federator.Monitor
 import Federator.Options as Opt
 import Imports
-import qualified Network.DNS as DNS
-import qualified Network.HTTP.Client as HTTP
-import qualified System.Logger.Class as Log
-import qualified System.Logger.Extended as LogExt
+import Network.DNS qualified as DNS
+import Network.HTTP.Client qualified as HTTP
+import Prometheus
+import System.Logger qualified as Log
+import System.Logger.Extended qualified as LogExt
+import System.Posix (installHandler)
+import System.Posix.Signals qualified as Sig
 import Util.Options
 import Wire.API.Federation.Component
-import qualified Wire.Network.DNS.Helper as DNS
+import Wire.Network.DNS.Helper qualified as DNS
 
 ------------------------------------------------------------------------------
 -- run/app
@@ -61,47 +62,77 @@ import qualified Wire.Network.DNS.Helper as DNS
 -- FUTUREWORK(federation): Add metrics and status endpoints
 run :: Opts -> IO ()
 run opts = do
+  spawnGCMetricsCollector
   let resolvConf = mkResolvConf (optSettings opts) DNS.defaultResolvConf
-  DNS.withCachingResolver resolvConf $ \res ->
-    bracket (newEnv opts res) closeEnv $ \env -> do
-      let externalServer = serveInward env portExternal
-          internalServer = serveOutward env portInternal
-      withMonitor (env ^. applog) (env ^. tls) (optSettings opts) $ do
+  DNS.withCachingResolver resolvConf $ \res -> do
+    logger <- LogExt.mkLogger (Opt.logLevel opts) (Opt.logNetStrings opts) (Opt.logFormat opts)
+    cleanupActionsRef <- newIORef []
+    bracket (newEnv opts res logger) closeEnv $ \env -> do
+      let externalServer = serveInward env portExternal cleanupActionsRef
+          internalServer = serveOutward env portInternal cleanupActionsRef
+      withMonitor logger (onNewSSLContext env) (optSettings opts) $ do
+        _ <- installHandler Sig.sigINT (Sig.CatchOnce $ cleanup cleanupActionsRef) Nothing
+        _ <- installHandler Sig.sigTERM (Sig.CatchOnce $ cleanup cleanupActionsRef) Nothing
         internalServerThread <- async internalServer
         externalServerThread <- async externalServer
         void $ waitAnyCancel [internalServerThread, externalServerThread]
   where
     endpointInternal = federatorInternal opts
-    portInternal = fromIntegral $ endpointInternal ^. epPort
+    portInternal = fromIntegral $ endpointInternal.port
+
+    cleanup :: IORef [IO ()] -> IO ()
+    cleanup cleanupsRef = do
+      cleanupActions <- readIORef cleanupsRef
+      for_ cleanupActions $ \action ->
+        action `catch` (\(_ :: SomeException) -> pure ())
 
     endpointExternal = federatorExternal opts
-    portExternal = fromIntegral $ endpointExternal ^. epPort
+    portExternal = fromIntegral $ endpointExternal.port
 
     mkResolvConf :: RunSettings -> DNS.ResolvConf -> DNS.ResolvConf
     mkResolvConf settings conf =
       case (dnsHost settings, dnsPort settings) of
-        (Just host, Nothing) ->
-          conf {DNS.resolvInfo = DNS.RCHostName host}
-        (Just host, Just port) ->
-          conf {DNS.resolvInfo = DNS.RCHostPort host (fromIntegral port)}
+        (Just h, Nothing) ->
+          conf {DNS.resolvInfo = DNS.RCHostName h}
+        (Just h, Just p) ->
+          conf {DNS.resolvInfo = DNS.RCHostPort h (fromIntegral p)}
         (_, _) -> conf
 
 -------------------------------------------------------------------------------
 -- Environment
 
-newEnv :: Opts -> DNS.Resolver -> IO Env
-newEnv o _dnsResolver = do
-  _metrics <- Metrics.metrics
-  _applog <- LogExt.mkLogger (Opt.logLevel o) (Opt.logNetStrings o) (Opt.logFormat o)
-  let _requestId = def
-  let _runSettings = Opt.optSettings o
-  let _service Brig = mkEndpoint (Opt.brig o)
-      _service Galley = mkEndpoint (Opt.galley o)
+newEnv :: Opts -> DNS.Resolver -> Log.Logger -> IO Env
+newEnv o _dnsResolver _applog = do
+  let _requestId = RequestId defRequestId
+      _runSettings = o.optSettings
+      _service Brig = o.brig
+      _service Galley = o.galley
+      _service Cargohold = o.cargohold
+      _externalPort = o.federatorExternal.port
+      _internalPort = o.federatorInternal.port
   _httpManager <- initHttpManager
-  _tls <- mkTLSSettingsOrThrow _runSettings >>= newIORef
-  return Env {..}
-  where
-    mkEndpoint s = RPC.host (encodeUtf8 (s ^. epHost)) . RPC.port (s ^. epPort) $ RPC.empty
+  sslContext <- mkTLSSettingsOrThrow _runSettings
+  _http2Manager <- newIORef =<< mkHttp2Manager o.optSettings.tcpConnectionTimeout sslContext
+  _federatorMetrics <- mkFederatorMetrics
+  pure Env {..}
+
+mkFederatorMetrics :: IO FederatorMetrics
+mkFederatorMetrics =
+  FederatorMetrics
+    <$> register
+      ( vector "target_domain" $
+          counter $
+            Prometheus.Info
+              "com_wire_federator_outgoing_requests"
+              "Number of outgoing requests"
+      )
+    <*> register
+      ( vector "origin_domain" $
+          counter $
+            Prometheus.Info
+              "com_wire_federator_incoming_requests"
+              "Number of incoming requests"
+      )
 
 closeEnv :: Env -> IO ()
 closeEnv e = do

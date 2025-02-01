@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,13 +17,14 @@
 
 module Brig.User.Auth.Cookie.Limit where
 
-import Brig.Types.User.Auth
 import Data.Aeson
+import Data.RetryAfter
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
-import qualified Data.Vector as Vector
+import Data.Vector qualified as Vector
 import Imports
-import qualified Statistics.Sample as Stats
+import Statistics.Sample qualified as Stats
+import Wire.API.User.Auth
 
 --------------------------------------------------------------------------------
 -- Quantitive Limiting
@@ -43,17 +44,17 @@ limitCookies :: CookieLimit -> UTCTime -> [Cookie a] -> [Cookie a]
 limitCookies lim now cs
   | freeSlots > 0 = []
   | otherwise =
-    let carry = max 1 (abs freeSlots)
-     in take carry (sortBy preference cs)
+      let carry = max 1 (abs freeSlots)
+       in take carry (sortBy preference cs)
   where
     freeSlots = cookieLimitTotal lim - length cs
     preference a b
       | cookieExpires a < now = LT
       | cookieExpires b < now = GT
       | otherwise = case (cookieSucc a, cookieSucc b) of
-        (Just _, Nothing) -> LT
-        (Nothing, Just _) -> GT
-        (_, _) -> comparing cookieCreated a b
+          (Just _, Nothing) -> LT
+          (Nothing, Just _) -> GT
+          (_, _) -> comparing cookieCreated a b
 
 --------------------------------------------------------------------------------
 -- Temporal Throttling
@@ -70,10 +71,6 @@ data CookieThrottle
 
 newtype StdDev = StdDev Double
   deriving (Eq, Ord, Show, Generic)
-
-newtype RetryAfter = RetryAfter
-  {retryAfterSeconds :: Int64}
-  deriving (Eq, Show)
 
 instance FromJSON StdDev
 

@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- Disabling due to HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -47,15 +49,15 @@ import Control.Exception (ErrorCall (ErrorCall))
 import Control.Lens
 import Control.Monad.Catch
 import Data.Aeson (FromJSON, eitherDecode)
-import qualified Data.ByteString.Char8 as C
+import Data.ByteString.Char8 qualified as C
 import Data.CaseInsensitive (original)
 import Data.EitherR (fmapL)
-import qualified Data.Proxy
+import Data.Proxy qualified
 import Data.Typeable (typeRep)
 import Imports
 import Network.HTTP.Client
 import Network.HTTP.Types (HeaderName, httpMajor, httpMinor)
-import qualified Network.HTTP.Types as HTTP
+import Network.HTTP.Types qualified as HTTP
 import Web.Cookie
 
 statusCode :: Response a -> Int
@@ -129,7 +131,7 @@ responseJsonUnsafe ::
   (HasCallStack, Typeable a, FromJSON a) =>
   ResponseLBS ->
   a
-responseJsonUnsafe = responseJsonUnsafeWithMsg ""
+responseJsonUnsafe resp = responseJsonUnsafeWithMsg (show resp) resp
 
 {-# INLINE responseJsonUnsafeWithMsg #-}
 responseJsonUnsafeWithMsg ::
@@ -140,12 +142,12 @@ responseJsonUnsafeWithMsg ::
 responseJsonUnsafeWithMsg userErr = either err id . responseJsonEither
   where
     err parserErr =
-      error . intercalate " " $
+      error . unwords $
         ["responseJsonUnsafeWithMsg:"]
           <> [userErr | not $ null userErr]
           <> [parserErr]
 
-showResponse :: Show a => Response a -> String
+showResponse :: (Show a) => Response a -> String
 showResponse r =
   showString "HTTP/"
     . shows (httpMajor . responseVersion $ r)

@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,21 +21,21 @@
 
 module Work where
 
-import Brig.Types.Intra (AccountStatus (..))
 import Cassandra
-import Cassandra.Util (Writetime, writeTimeToUTC)
+import Cassandra.Util (Writetime, writetimeToUTC)
 import Conduit
 import Control.Lens (view, _1, _2)
 import Data.Aeson (FromJSON, (.:))
-import qualified Data.Aeson as Aeson
-import qualified Data.Conduit.List as C
-import qualified Data.Set as Set
-import qualified Data.Text as Text
+import Data.Aeson qualified as Aeson
+import Data.Conduit.List qualified as C
+import Data.Set qualified as Set
+import Data.Text qualified as Text
 import Data.UUID
-import qualified Database.Bloodhound as ES
+import Database.Bloodhound qualified as ES
 import Imports
 import System.Logger (Logger)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
+import Wire.API.User (AccountStatus (..))
 
 runCommand :: Logger -> ClientState -> ES.BHEnv -> String -> String -> IO ()
 runCommand l cas es indexStr mappingStr = do
@@ -55,7 +55,7 @@ runCommand l cas es indexStr mappingStr = do
 ----------------------------------------------------------------------------
 -- Queries
 
-logProgress :: MonadIO m => Logger -> [UUID] -> m ()
+logProgress :: (MonadIO m) => Logger -> [UUID] -> m ()
 logProgress l uuids = Log.info l $ Log.field "Progress" (show $ length uuids)
 
 logDifference :: Logger -> ([UUID], [(UUID, Maybe AccountStatus, Maybe (Writetime ()))]) -> ES.BH IO ()
@@ -67,12 +67,12 @@ logDifference l (uuidsFromES, fromCas) = do
   mapM_ (logUUID l "Deleted") deletedUuidsFromCas
   mapM_ (logUUID l "Extra" . (,Nothing,Nothing)) extraUuids
 
-logUUID :: MonadIO m => Logger -> ByteString -> (UUID, Maybe AccountStatus, Maybe (Writetime ())) -> m ()
+logUUID :: (MonadIO m) => Logger -> ByteString -> (UUID, Maybe AccountStatus, Maybe (Writetime ())) -> m ()
 logUUID l f (uuid, _, time) =
   Log.info l $
     Log.msg f
       . Log.field "uuid" (show uuid)
-      . Log.field "write time" (show $ writeTimeToUTC <$> time)
+      . Log.field "write time" (show $ writetimeToUTC <$> time)
 
 getScrolled :: (ES.MonadBH m, MonadThrow m) => ES.IndexName -> ES.MappingName -> ConduitM () [UUID] m ()
 getScrolled index mapping = processRes =<< lift (ES.getInitialScroll index mapping esSearch)
@@ -101,7 +101,7 @@ esSearch = (ES.mkSearch Nothing (Just esFilter)) {ES.size = ES.Size chunkSize}
 extractHits :: ES.SearchResult User -> [User]
 extractHits = mapMaybe ES.hitSource . ES.hits . ES.searchHits
 
-extractScrollId :: MonadThrow m => ES.SearchResult a -> m ES.ScrollId
+extractScrollId :: (MonadThrow m) => ES.SearchResult a -> m ES.ScrollId
 extractScrollId res = maybe (throwM NoScrollId) pure (ES.scrollId res)
 
 usersInCassandra :: [UUID] -> Client [(UUID, Maybe AccountStatus, Maybe (Writetime ()))]
@@ -123,23 +123,3 @@ data WorkError
 instance Exception WorkError
 
 type Name = Text
-
--- FUTUREWORK: you can avoid this by loading brig-the-service as a library:
--- @"services/brig/src/Brig/Data/Instances.hs:165:instance Cql AccountStatus where"@
-instance Cql AccountStatus where
-  ctype = Tagged IntColumn
-
-  toCql Active = CqlInt 0
-  toCql Suspended = CqlInt 1
-  toCql Deleted = CqlInt 2
-  toCql Ephemeral = CqlInt 3
-  toCql PendingInvitation = CqlInt 4
-
-  fromCql (CqlInt i) = case i of
-    0 -> return Active
-    1 -> return Suspended
-    2 -> return Deleted
-    3 -> return Ephemeral
-    4 -> return PendingInvitation
-    n -> Left $ "unexpected account status: " ++ show n
-  fromCql _ = Left "account status: int expected"

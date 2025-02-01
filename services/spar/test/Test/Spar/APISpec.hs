@@ -1,8 +1,6 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -22,14 +20,14 @@ module Test.Spar.APISpec where
 import Arbitrary ()
 import qualified Control.Lens as Lens
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.Aeson.Lens as Aeson
 import qualified Data.Aeson.Types as Aeson
-import qualified Data.HashMap.Strict as HM
 import Data.Metrics.Servant (routesToPaths)
 import Data.Metrics.Test (pathsConsistencyCheck)
 import Data.Proxy (Proxy (Proxy))
 import Imports
-import Servant.Swagger (validateEveryToJSON)
+import Servant.OpenApi (validateEveryToJSON)
 import Spar.API as API
 import Test.Hspec (Spec, describe, it, shouldBe, shouldSatisfy)
 import Test.QuickCheck (property)
@@ -39,9 +37,9 @@ import Wire.API.User.Saml (SsoSettings)
 spec :: Spec
 spec = do
   -- Note: SCIM types are not validated because their content-type is 'SCIM'.
-  validateEveryToJSON (Proxy @API.API)
+  validateEveryToJSON (Proxy @API.SparAPI)
   it "api consistency" $ do
-    pathsConsistencyCheck (routesToPaths @API.API) `shouldBe` mempty
+    pathsConsistencyCheck (routesToPaths @API.SparAPI) `shouldBe` mempty
   it "roundtrip: IdPMetadataInfo" . property $ \(val :: IdPMetadataInfo) -> do
     let withoutRaw (IdPMetadataValue _ x) = x
     (withoutRaw <$> (Aeson.eitherDecode . Aeson.encode) val) `shouldBe` Right (withoutRaw val)
@@ -50,8 +48,8 @@ spec = do
       property $
         \(ssoSettings :: SsoSettings) -> do
           let object = Aeson.toJSON ssoSettings
-          let objectWithoutKey = Lens.over Aeson._Object (HM.delete "default_sso_code") $ object
-          (HM.lookup "default_sso_code" =<< Lens.preview Aeson._Object object)
+          let objectWithoutKey = Lens.over Aeson._Object (KeyMap.delete "default_sso_code") $ object
+          (KeyMap.lookup "default_sso_code" =<< Lens.preview Aeson._Object object)
             `shouldSatisfy` isJust
           Aeson.parseMaybe (Aeson.parseJSON @SsoSettings) objectWithoutKey
             `shouldSatisfy` isNothing

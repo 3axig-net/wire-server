@@ -1,6 +1,9 @@
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,22 +24,26 @@ import Cassandra
 import Control.Lens hiding ((.=))
 import Data.ByteString.Conversion (toByteString')
 import Data.Id
-import Data.Metrics.Middleware
-import Data.Misc (Fingerprint, Rsa)
+import Data.Misc (Fingerprint, HttpsUrl, Rsa)
 import Data.Range
-import qualified Galley.Aws as Aws
+import Data.Time.Clock.DiffTime (millisecondsToDiffTime)
+import Galley.Aws qualified as Aws
 import Galley.Options
-import qualified Galley.Queue as Q
-import qualified Galley.Types.Teams as Teams
+import Galley.Options qualified as O
+import Galley.Queue qualified as Q
+import HTTP2.Client.Manager (Http2Manager)
 import Imports
+import Network.AMQP qualified as Q
 import Network.HTTP.Client
 import Network.HTTP.Client.OpenSSL
 import OpenSSL.EVP.Digest
 import OpenSSL.Session as Ssl
-import qualified OpenSSL.X509.SystemStore as Ssl
 import Ssl.Util
 import System.Logger
 import Util.Options
+import Wire.API.MLS.Keys
+import Wire.API.Team.Member
+import Wire.NotificationSubsystem.Interpreter
 
 data DeleteItem = TeamItem TeamId UserId (Maybe ConnId)
   deriving (Eq, Ord, Show)
@@ -44,16 +51,19 @@ data DeleteItem = TeamItem TeamId UserId (Maybe ConnId)
 -- | Main application environment.
 data Env = Env
   { _reqId :: RequestId,
-    _monitor :: Metrics,
     _options :: Opts,
     _applog :: Logger,
     _manager :: Manager,
+    _http2Manager :: Http2Manager,
     _federator :: Maybe Endpoint, -- FUTUREWORK: should we use a better type here? E.g. to avoid fresh connections all the time?
     _brig :: Endpoint, -- FUTUREWORK: see _federator
     _cstate :: ClientState,
     _deleteQueue :: Q.Queue DeleteItem,
     _extEnv :: ExtEnv,
-    _aEnv :: Maybe Aws.Env
+    _aEnv :: Maybe Aws.Env,
+    _mlsKeys :: Maybe (MLSKeysByPurpose MLSPrivateKeys),
+    _rabbitmqChannel :: Maybe (MVar Q.Channel),
+    _convCodeURI :: Either HttpsUrl (Map Text HttpsUrl)
   }
 
 -- | Environment specific to the communication with external
@@ -75,7 +85,7 @@ initExtEnv = do
   Ssl.contextAddOption ctx SSL_OP_NO_SSLv3
   Ssl.contextAddOption ctx SSL_OP_NO_TLSv1
   Ssl.contextSetCiphers ctx rsaCiphers
-  Ssl.contextLoadSystemCerts ctx
+  Ssl.contextSetDefaultVerifyPaths ctx
   mgr <-
     newManager
       (opensslManagerSettings (pure ctx))
@@ -83,7 +93,7 @@ initExtEnv = do
           managerConnCount = 100
         }
   Just sha <- getDigestByName "SHA256"
-  return $ ExtEnv (mgr, mkVerify sha)
+  pure $ ExtEnv (mgr, mkVerify sha)
   where
     mkVerify sha fprs =
       let pinset = map toByteString' fprs
@@ -93,8 +103,21 @@ reqIdMsg :: RequestId -> Msg -> Msg
 reqIdMsg = ("request" .=) . unRequestId
 {-# INLINE reqIdMsg #-}
 
-currentFanoutLimit :: Opts -> Range 1 Teams.HardTruncationLimit Int32
+currentFanoutLimit :: Opts -> Range 1 HardTruncationLimit Int32
 currentFanoutLimit o = do
-  let optFanoutLimit = fromIntegral . fromRange $ fromMaybe defFanoutLimit (o ^. optSettings ^. setMaxFanoutSize)
-  let maxTeamSize = fromIntegral (o ^. optSettings ^. setMaxTeamSize)
-  unsafeRange (min maxTeamSize optFanoutLimit)
+  let optFanoutLimit = fromIntegral . fromRange $ fromMaybe defaultFanoutLimit (o ^. (O.settings . maxFanoutSize))
+  let maxSize = fromIntegral (o ^. (O.settings . maxTeamSize))
+  unsafeRange (min maxSize optFanoutLimit)
+
+notificationSubsystemConfig :: Env -> NotificationSubsystemConfig
+notificationSubsystemConfig env =
+  NotificationSubsystemConfig
+    { chunkSize = defaultChunkSize,
+      fanoutLimit = currentFanoutLimit env._options,
+      slowPushDelay =
+        maybe
+          defaultSlowPushDelay
+          (millisecondsToDiffTime . toInteger)
+          (env ^. options . O.settings . deleteConvThrottleMillis),
+      requestId = env ^. reqId
+    }

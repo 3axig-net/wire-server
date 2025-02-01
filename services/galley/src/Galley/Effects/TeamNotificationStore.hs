@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -23,14 +25,14 @@ module Galley.Effects.TeamNotificationStore
   )
 where
 
-import qualified Data.Aeson as JSON
+import Data.Aeson qualified as JSON
 import Data.Id
 import Data.List1 (List1)
 import Data.Range
 import Galley.Data.TeamNotifications
-import Gundeck.Types.Notification
 import Imports
 import Polysemy
+import Wire.API.Internal.Notification
 
 data TeamNotificationStore m a where
   CreateTeamNotification ::

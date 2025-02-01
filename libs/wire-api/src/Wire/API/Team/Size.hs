@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,27 +17,24 @@
 
 module Wire.API.Team.Size
   ( TeamSize (TeamSize),
-    modelTeamSize,
   )
 where
 
-import Data.Aeson
-import qualified Data.Swagger.Build.Api as Doc
+import Control.Lens ((?~))
+import Data.Aeson qualified as A
+import Data.OpenApi qualified as S
+import Data.Schema
 import Imports
 import Numeric.Natural
 
 newtype TeamSize = TeamSize Natural
   deriving (Show, Eq)
+  deriving (A.ToJSON, A.FromJSON, S.ToSchema) via (Schema TeamSize)
 
-instance ToJSON TeamSize where
-  toJSON (TeamSize s) = object ["teamSize" .= s]
-
-instance FromJSON TeamSize where
-  parseJSON =
-    withObject "TeamSize" $ \o -> TeamSize <$> o .: "teamSize"
-
-modelTeamSize :: Doc.Model
-modelTeamSize = Doc.defineModel "TeamSize" $ do
-  Doc.description "A simple object with a total number of team members."
-  Doc.property "teamSize" Doc.int32' $ do
-    Doc.description "Team size."
+instance ToSchema TeamSize where
+  schema =
+    objectWithDocModifier "TeamSize" (description ?~ "A simple object with a total number of team members.") $
+      TeamSize <$> (unTeamSize .= fieldWithDocModifier "teamSize" (description ?~ "Team size.") schema)
+    where
+      unTeamSize :: TeamSize -> Natural
+      unTeamSize (TeamSize n) = n

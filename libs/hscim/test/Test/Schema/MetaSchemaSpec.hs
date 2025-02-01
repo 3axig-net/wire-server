@@ -1,11 +1,8 @@
-{-# LANGUAGE QuasiQuotes #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -48,7 +45,7 @@ spec = do
   describe "MetaSchema" $ do
     -- the extra 'decode' in the golden tests is to make attribute order not count for Eq.
     it "`Supported ()` golden test" $ do
-      decode @Value (encode (Supported (ScimBool True) ())) `shouldBe` decode @Value ("{\"supported\":true}")
+      decode @Value (encode (Supported (ScimBool True) ())) `shouldBe` decode @Value "{\"supported\":true}"
     it "`Supported a` golden test" $ do
       decode @Value (encode (Supported (ScimBool True) (FilterConfig 3))) `shouldBe` decode @Value "{\"supported\":true,\"maxResults\":3}"
     it "`Supported ()` roundtrips" $ do
@@ -98,5 +95,6 @@ genAuthenticationSchemeEncoding = do
 
 genSupported :: forall a. Gen a -> Gen (Supported a)
 genSupported gen = do
-  Supported <$> (ScimBool <$> Gen.bool)
+  Supported
+    <$> (ScimBool <$> Gen.bool)
     <*> gen

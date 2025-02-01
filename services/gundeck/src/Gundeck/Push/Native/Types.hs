@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,7 +29,6 @@ module Gundeck.Push.Native.Types
     addrEndpoint,
     addrConn,
     addrClient,
-    addrEqualClient,
     addrPushToken,
 
     -- * Re-Exports
@@ -40,11 +41,12 @@ module Gundeck.Push.Native.Types
   )
 where
 
-import Control.Lens (Lens', makeLenses, view, (^.))
+import Control.Lens (Lens', makeLenses, (^.))
 import Data.Id (ClientId, ConnId, UserId)
 import Gundeck.Aws.Arn
-import Gundeck.Types
 import Imports
+import Wire.API.Internal.Notification
+import Wire.API.Push.V2
 
 -- | Native push address information of a device.
 data Address = Address
@@ -68,11 +70,6 @@ addrToken = addrPushToken . token
 
 addrClient :: Lens' Address ClientId
 addrClient = addrPushToken . tokenClient
-
-addrEqualClient :: Address -> Address -> Bool
-addrEqualClient a a' =
-  view addrConn a == view addrConn a'
-    || view addrClient a == view addrClient a'
 
 instance Show Address where
   show a =
@@ -99,6 +96,7 @@ data Failure
   = PayloadTooLarge
   | EndpointInvalid
   | EndpointDisabled
+  | EndpointUnauthorised
   | PushException !SomeException
   deriving (Show)
 

@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,6 +20,7 @@
 module Galley.Types.Conversations.Members
   ( RemoteMember (..),
     remoteMemberToOther,
+    remoteMemberQualify,
     LocalMember (..),
     localMemberToOther,
     newMember,
@@ -42,15 +43,22 @@ data RemoteMember = RemoteMember
   { rmId :: Remote UserId,
     rmConvRoleName :: RoleName
   }
-  deriving stock (Show)
+  deriving stock (Eq, Show)
+
+instance Ord RemoteMember where
+  compare :: RemoteMember -> RemoteMember -> Ordering
+  compare = compare `on` rmId
 
 remoteMemberToOther :: RemoteMember -> OtherMember
 remoteMemberToOther x =
   OtherMember
-    { omQualifiedId = qUntagged (rmId x),
+    { omQualifiedId = tUntagged (rmId x),
       omService = Nothing,
       omConvRoleName = rmConvRoleName x
     }
+
+remoteMemberQualify :: RemoteMember -> Remote RemoteMember
+remoteMemberQualify m = qualifyAs (rmId m) m
 
 -- | Internal (cassandra) representation of a local conversation member.
 data LocalMember = LocalMember

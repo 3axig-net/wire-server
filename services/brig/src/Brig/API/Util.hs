@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,72 +17,69 @@
 
 module Brig.API.Util
   ( fetchUserIdentity,
-    lookupProfilesMaybeFilterSameTeamOnly,
-    lookupSelfProfile,
     logInvitationCode,
-    validateHandle,
     logEmail,
+    traverseConcurrentlySem,
     traverseConcurrentlyWithErrors,
+    exceptTToMaybe,
+    ensureLocal,
   )
 where
 
-import qualified Brig.API.Error as Error
-import Brig.API.Handler
 import Brig.API.Types
-import Brig.App (AppIO)
-import qualified Brig.Data.User as Data
-import Brig.Types
-import Brig.Types.Intra (accountUser)
+import Brig.App
 import Control.Monad.Catch (throwM)
 import Control.Monad.Trans.Except
-import Data.Handle (Handle, parseHandle)
+import Data.Bifunctor
 import Data.Id
 import Data.Maybe
-import Data.String.Conversions (cs)
+import Data.Text qualified as T
 import Data.Text.Ascii (AsciiText (toText))
 import Imports
+import Polysemy
 import System.Logger (Msg)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 import UnliftIO.Async
 import UnliftIO.Exception (throwIO, try)
 import Util.Logging (sha256String)
+import Wire.API.User
+import Wire.UserSubsystem
 
-lookupProfilesMaybeFilterSameTeamOnly :: UserId -> [UserProfile] -> Handler [UserProfile]
-lookupProfilesMaybeFilterSameTeamOnly self us = do
-  selfTeam <- lift $ Data.lookupUserTeam self
-  return $ case selfTeam of
-    Just team -> filter (\x -> profileTeam x == Just team) us
-    Nothing -> us
-
-fetchUserIdentity :: UserId -> AppIO (Maybe UserIdentity)
-fetchUserIdentity uid =
-  lookupSelfProfile uid
+fetchUserIdentity :: (Member UserSubsystem r) => UserId -> AppT r (Maybe UserIdentity)
+fetchUserIdentity uid = do
+  luid <- qualifyLocal uid
+  liftSem (getSelfProfile luid)
     >>= maybe
       (throwM $ UserProfileNotFound uid)
-      (return . userIdentity . selfUser)
+      (pure . userIdentity . selfUser)
 
--- | Obtain a profile for a user as he can see himself.
-lookupSelfProfile :: UserId -> AppIO (Maybe SelfProfile)
-lookupSelfProfile = fmap (fmap mk) . Data.lookupAccount
-  where
-    mk a = SelfProfile (accountUser a)
-
-validateHandle :: Text -> Handler Handle
-validateHandle = maybe (throwE (Error.StdError Error.invalidHandle)) return . parseHandle
-
-logEmail :: Email -> (Msg -> Msg)
+logEmail :: EmailAddress -> (Msg -> Msg)
 logEmail email =
-  Log.field "email_sha256" (sha256String . cs . show $ email)
+  Log.field "email_sha256" (sha256String . T.pack . show $ email)
 
 logInvitationCode :: InvitationCode -> (Msg -> Msg)
 logInvitationCode code = Log.field "invitation_code" (toText $ fromInvitationCode code)
 
 -- | Traverse concurrently and fail on first error.
 traverseConcurrentlyWithErrors ::
-  (Traversable t, Exception e) =>
-  (a -> ExceptT e AppIO b) ->
+  (Traversable t, Exception e, MonadUnliftIO m) =>
+  (a -> ExceptT e m b) ->
   t a ->
-  ExceptT e AppIO (t b)
+  ExceptT e m (t b)
 traverseConcurrentlyWithErrors f =
-  ExceptT . try . (traverse (either throwIO pure) =<<)
-    . pooledMapConcurrentlyN 8 (runExceptT . f)
+  ExceptT
+    . try
+    . ( traverse (either throwIO pure)
+          <=< pooledMapConcurrentlyN 8 (runExceptT . f)
+      )
+
+traverseConcurrentlySem ::
+  (Traversable t, MonadUnliftIO m) =>
+  (a -> ExceptT e m b) ->
+  t a ->
+  m (t (Either (a, e) b))
+traverseConcurrentlySem f =
+  pooledMapConcurrentlyN 8 $ \a -> first (a,) <$> runExceptT (f a)
+
+exceptTToMaybe :: (Monad m) => ExceptT e m () -> m (Maybe e)
+exceptTToMaybe = (pure . either Just (const Nothing)) <=< runExceptT

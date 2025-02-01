@@ -1,8 +1,9 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,7 +21,9 @@
 module Spar.DataMigration.Types where
 
 import qualified Cassandra as C
+import Cassandra.Options
 import Control.Lens
+import qualified Data.Text as Text
 import Imports
 import Numeric.Natural (Natural)
 import qualified System.Logger as Logger
@@ -61,10 +64,20 @@ data MigratorSettings = MigratorSettings
 data CassandraSettings = CassandraSettings
   { _cHosts :: !String,
     _cPort :: !Word16,
-    _cKeyspace :: !C.Keyspace
+    _cKeyspace :: !C.Keyspace,
+    _cTlsCa :: Maybe FilePath
   }
   deriving (Show)
 
 makeLenses ''MigratorSettings
 
 makeLenses ''CassandraSettings
+
+toCassandraOpts :: CassandraSettings -> CassandraOpts
+toCassandraOpts cas =
+  CassandraOpts
+    { endpoint = Endpoint (Text.pack (cas ^. cHosts)) (cas ^. cPort),
+      keyspace = C.unKeyspace (cas ^. cKeyspace),
+      filterNodesByDatacentre = Nothing,
+      tlsCa = cas ^. cTlsCa
+    }

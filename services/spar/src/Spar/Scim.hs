@@ -1,11 +1,9 @@
-{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -64,28 +62,28 @@ module Spar.Scim
   )
 where
 
-import Data.String.Conversions (cs)
+import Data.ByteString (toStrict)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import Data.Text.Encoding.Error
 import Imports
 import Polysemy
 import Polysemy.Error (Error, fromExceptionSem, runError, throw, try)
 import Polysemy.Input (Input)
 import qualified SAML2.WebSSO as SAML
 import Servant
-import Servant.API.Generic
 import Servant.Server.Generic (AsServerT)
 import Spar.App (sparToServerErrorWithLogging, throwSparSem)
 import Spar.Error
   ( SparCustomError (SparScimError),
     SparError,
   )
+import Spar.Options
 import Spar.Scim.Auth
 import Spar.Scim.User
 import Spar.Sem.BrigAccess (BrigAccess)
 import Spar.Sem.GalleyAccess (GalleyAccess)
-import qualified Spar.Sem.IdP as IdPEffect
-import Spar.Sem.Logger (Logger)
-import Spar.Sem.Now (Now)
-import Spar.Sem.Random (Random)
+import Spar.Sem.IdPConfigStore (IdPConfigStore)
 import Spar.Sem.Reporter (Reporter)
 import Spar.Sem.SAMLUserStore (SAMLUserStore)
 import Spar.Sem.ScimExternalIdStore (ScimExternalIdStore)
@@ -100,8 +98,10 @@ import qualified Web.Scim.Schema.Error as Scim
 import qualified Web.Scim.Schema.Schema as Scim.Schema
 import qualified Web.Scim.Server as Scim
 import Wire.API.Routes.Public.Spar
-import Wire.API.User.Saml (Opts)
 import Wire.API.User.Scim
+import Wire.Sem.Logger (Logger)
+import Wire.Sem.Now (Now)
+import Wire.Sem.Random (Random)
 
 -- | SCIM config for our server.
 --
@@ -112,25 +112,26 @@ configuration = Scim.Meta.empty
 
 apiScim ::
   forall r.
-  Members
-    '[ Random,
-       Input Opts,
-       Logger (Msg -> Msg),
-       Logger String,
-       Now,
-       Error SparError,
-       GalleyAccess,
-       BrigAccess,
-       ScimExternalIdStore,
-       ScimUserTimesStore,
-       ScimTokenStore,
-       Reporter,
-       IdPEffect.IdP,
-       -- TODO(sandy): Only necessary for 'fromExceptionSem'. But can these errors even happen?
-       Final IO,
-       SAMLUserStore
-     ]
-    r =>
+  ( Member Random r,
+    Member (Input Opts) r,
+    Member (Logger (Msg -> Msg)) r,
+    Member (Logger String) r,
+    Member Now r,
+    Member (Error SparError) r,
+    Member GalleyAccess r,
+    Member BrigAccess r,
+    Member ScimExternalIdStore r,
+    Member ScimUserTimesStore r,
+    Member ScimTokenStore r,
+    Member Reporter r,
+    Member IdPConfigStore r,
+    Member
+      ( -- TODO(sandy): Only necessary for 'fromExceptionSem'. But can these errors even happen?
+        Final IO
+      )
+      r,
+    Member SAMLUserStore r
+  ) =>
   ServerT APIScim (Sem r)
 apiScim =
   hoistScim (toServant (server configuration))
@@ -156,7 +157,7 @@ apiScim =
           -- We caught an exception that's not a Spar exception at all. It is wrapped into
           -- Scim.serverError.
           throw . SAML.CustomError . SparScimError $
-            Scim.serverError (cs (displayException someException))
+            Scim.serverError (T.pack (displayException someException))
         Right (Left err@(SAML.CustomError (SparScimError _))) ->
           -- We caught a 'SparScimError' exception. It is left as-is.
           throw err
@@ -169,7 +170,9 @@ apiScim =
               { schemas = [Scim.Schema.Error20],
                 status = Scim.Status $ errHTTPCode err,
                 scimType = Nothing,
-                detail = Just . cs $ errBody err
+                detail =
+                  Just . T.decodeUtf8With lenientDecode . toStrict . errBody $
+                    err
               }
         Right (Right x) -> do
           -- No exceptions! Good.

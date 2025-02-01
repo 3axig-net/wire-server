@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,19 +17,16 @@
 
 module Main where
 
-import qualified Bench as B
-import qualified Cannon.API
+import Data.Metrics.Servant (routesToPaths)
 import Data.Metrics.Test (pathsConsistencyCheck)
-import Data.Metrics.WaiRoute (treeToPaths)
 import Imports
-import Network.Wai.Utilities.Server (compile)
-import qualified Test.Cannon.Dict as D
+import Test.Cannon.Dict qualified as D
 import Test.Tasty
 import Test.Tasty.HUnit
+import Wire.API.Routes.Internal.Cannon qualified as Internal
 
 main :: IO ()
-main = do
-  B.benchmark
+main =
   defaultMain $
     testGroup
       "Tests"
@@ -37,6 +34,6 @@ main = do
           assertEqual
             "inconcistent sitemap"
             mempty
-            (pathsConsistencyCheck . treeToPaths . compile $ Cannon.API.sitemap),
+            (pathsConsistencyCheck $ routesToPaths @Internal.API),
         D.tests
       ]

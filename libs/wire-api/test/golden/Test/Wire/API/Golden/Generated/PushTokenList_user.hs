@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -16,9 +16,10 @@
 --
 -- You should have received a copy of the GNU Affero General Public License along
 -- with this program. If not, see <https://www.gnu.org/licenses/>.
+
 module Test.Wire.API.Golden.Generated.PushTokenList_user where
 
-import Data.Id (ClientId (ClientId, client))
+import Data.Id
 import Wire.API.Push.Token
   ( AppName (AppName, appNameText),
     PushTokenList (..),
@@ -31,7 +32,7 @@ testObject_PushTokenList_user_1 :: PushTokenList
 testObject_PushTokenList_user_1 =
   PushTokenList
     { pushTokens =
-        [ pushToken GCM (AppName {appNameText = "p\DELU2r"}) (Token {tokenText = "MK8p\f"}) (ClientId {client = "4"})
+        [ pushToken GCM (AppName {appNameText = "p\DELU2r"}) (Token {tokenText = "MK8p\f"}) (ClientId 4)
         ]
     }
 

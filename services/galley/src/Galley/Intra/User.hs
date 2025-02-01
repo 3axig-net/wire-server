@@ -1,6 +1,9 @@
+-- Disabling to stop warnings on HasCallStack
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,40 +30,47 @@ module Galley.Intra.User
     getContactList,
     chunkify,
     getRichInfoMultiUser,
-    getAccountFeatureConfigClient,
+    getUserExportData,
+    getAccountConferenceCallingConfigClient,
+    updateSearchVisibilityInbound,
   )
 where
 
-import Bilge hiding (getHeader, options, statusCode)
+import Bilge hiding (getHeader, host, options, port, statusCode)
 import Bilge.RPC
-import Brig.Types.Connection (Relation (..), UpdateConnectionsInternal (..), UserIds (..))
-import qualified Brig.Types.Intra as Brig
-import Brig.Types.User (User)
-import Control.Lens (view, (^.))
-import Control.Monad.Catch (throwM)
+import Control.Error hiding (bool, isRight)
+import Control.Lens (view)
+import Control.Monad.Catch
 import Data.ByteString.Char8 (pack)
-import qualified Data.ByteString.Char8 as BSC
+import Data.ByteString.Char8 qualified as BSC
 import Data.ByteString.Conversion
 import Data.Id
-import Data.Proxy
 import Data.Qualified
-import Data.String.Conversions
+import Data.Text qualified as Text
+import Data.Text.Lazy qualified as Lazy
 import Galley.API.Error
 import Galley.Env
 import Galley.Intra.Util
 import Galley.Monad
 import Imports
 import Network.HTTP.Client (HttpExceptionContent (..))
-import qualified Network.HTTP.Client.Internal as Http
+import Network.HTTP.Client.Internal qualified as Http
 import Network.HTTP.Types.Method
 import Network.HTTP.Types.Status
 import Network.Wai.Utilities.Error
-import Servant.API ((:<|>) ((:<|>)))
-import qualified Servant.Client as Client
+import Network.Wai.Utilities.Error qualified as Wai
+import Servant.Client qualified as Client
 import Util.Options
-import qualified Wire.API.Routes.Internal.Brig as IAPI
+import Wire.API.Connection
+import Wire.API.Error.Galley
+import Wire.API.Routes.Internal.Brig qualified as IAPI
 import Wire.API.Routes.Internal.Brig.Connection
+import Wire.API.Routes.Internal.Galley.TeamFeatureNoConfigMulti qualified as Multi
+import Wire.API.Routes.Named
+import Wire.API.Team.Export
 import Wire.API.Team.Feature
+import Wire.API.User
+import Wire.API.User.Auth.ReAuth
 import Wire.API.User.RichInfo (RichInfo)
 
 -- | Get statuses of all connections between two groups of users (the usual
@@ -135,21 +145,29 @@ deleteBot cid bot = do
 -- | Calls 'Brig.User.API.Auth.reAuthUserH'.
 reAuthUser ::
   UserId ->
-  Brig.ReAuthUser ->
-  App Bool
+  ReAuthUser ->
+  App (Either AuthenticationError ())
 reAuthUser uid auth = do
   let req =
         method GET
           . paths ["/i/users", toByteString' uid, "reauthenticate"]
           . json auth
-  st <- statusCode . responseStatus <$> call Brig (check [status200, status403] . req)
-  return $ st == 200
+  resp <- call Brig (check [status200, status403] . req)
+  pure $ case (statusCode . responseStatus $ resp, errorLabel resp) of
+    (200, _) -> Right ()
+    (403, Just "code-authentication-required") -> Left VerificationCodeRequired
+    (403, Just "code-authentication-failed") -> Left VerificationCodeAuthFailed
+    (403, _) -> Left ReAuthFailed
+    (_, _) -> Left ReAuthFailed
+  where
+    errorLabel :: ResponseLBS -> Maybe Lazy.Text
+    errorLabel = fmap Wai.label . responseJsonMaybe
 
 check :: [Status] -> Request -> Request
 check allowed r =
   r
     { Http.checkResponse = \rq rs ->
-        when (responseStatus rs `notElem` allowed) $
+        unless (responseStatus rs `elem` allowed) $
           let ex = StatusCodeException (rs {responseBody = ()}) mempty
            in throwM $ HttpExceptionRequest rq ex
     }
@@ -170,7 +188,7 @@ lookupActivatedUsers = chunkify $ \uids -> do
 --   URL length limit of ~6500 (determined experimentally). 100 is a
 --   conservative setting. A uid contributes about 36+3 characters (+3 for the
 --   comma separator) to the overall URL length.
-chunkify :: forall m key a. (Monad m, ToByteString key, Monoid a) => ([key] -> m a) -> [key] -> m a
+chunkify :: forall m key a. (Monad m, Monoid a) => ([key] -> m a) -> [key] -> m a
 chunkify doChunk keys = mconcat <$> (doChunk `mapM` chunks keys)
   where
     maxSize :: Int
@@ -181,7 +199,7 @@ chunkify doChunk keys = mconcat <$> (doChunk `mapM` chunks keys)
     chunks uids = case splitAt maxSize uids of (h, t) -> h : chunks t
 
 -- | Calls 'Brig.API.listActivatedAccountsH'.
-getUsers :: [UserId] -> App [Brig.UserAccount]
+getUsers :: [UserId] -> App [User]
 getUsers = chunkify $ \uids -> do
   resp <-
     call Brig $
@@ -191,7 +209,7 @@ getUsers = chunkify $ \uids -> do
         . expect2xx
   pure . fromMaybe [] . responseJsonMaybe $ resp
 
--- | Calls 'Brig.API.deleteUserNoVerifyH'.
+-- | Calls 'Brig.API.deleteUserNoAuthH'.
 deleteUser :: UserId -> App ()
 deleteUser uid = do
   void $
@@ -219,31 +237,39 @@ getRichInfoMultiUser = chunkify $ \uids -> do
         . paths ["/i/users/rich-info"]
         . queryItem "ids" (toByteString' (List uids))
         . expect2xx
-  parseResponse (mkError status502 "server-error") resp
+  parseResponse (mkError status502 "server-error: could not parse response to `GET brig:/i/users/rich-info`") resp
 
-getAccountFeatureConfigClient :: HasCallStack => UserId -> App TeamFeatureStatusNoConfig
-getAccountFeatureConfigClient uid =
-  runHereClientM (getAccountFeatureConfigClientM uid)
-    >>= handleResp
-  where
-    handleResp ::
-      Either Client.ClientError TeamFeatureStatusNoConfig ->
-      App TeamFeatureStatusNoConfig
-    handleResp (Right cfg) = pure cfg
-    handleResp (Left errmsg) = throwM . internalErrorWithDescription . cs . show $ errmsg
+-- | Calls 'Brig.API.Internal.getUserExportDataH'
+getUserExportData :: UserId -> App (Maybe TeamExportUser)
+getUserExportData uid = do
+  resp <-
+    call Brig $
+      method GET
+        . paths ["i/users", toByteString' uid, "export-data"]
+        . expect2xx
+  parseResponse (mkError status502 "server-error: could not parse response to `GET brig:/i/users/:uid/export-data`") resp
 
-getAccountFeatureConfigClientM ::
-  UserId -> Client.ClientM TeamFeatureStatusNoConfig
-( _
-    :<|> getAccountFeatureConfigClientM
-    :<|> _
-    :<|> _
-  ) = Client.client (Proxy @IAPI.API)
+getAccountConferenceCallingConfigClient :: (HasCallStack) => UserId -> App (Feature ConferenceCallingConfig)
+getAccountConferenceCallingConfigClient uid =
+  runHereClientM (namedClient @IAPI.API @"get-account-conference-calling-config" uid)
+    >>= handleServantResp
 
-runHereClientM :: HasCallStack => Client.ClientM a -> App (Either Client.ClientError a)
+updateSearchVisibilityInbound :: Multi.TeamStatus SearchVisibilityInboundConfig -> App ()
+updateSearchVisibilityInbound =
+  handleServantResp
+    <=< runHereClientM
+    . namedClient @IAPI.API @"updateSearchVisibilityInbound"
+
+runHereClientM :: (HasCallStack) => Client.ClientM a -> App (Either Client.ClientError a)
 runHereClientM action = do
   mgr <- view manager
   brigep <- view brig
   let env = Client.mkClientEnv mgr baseurl
-      baseurl = Client.BaseUrl Client.Http (cs $ brigep ^. epHost) (fromIntegral $ brigep ^. epPort) ""
+      baseurl = Client.BaseUrl Client.Http (Text.unpack brigep.host) (fromIntegral brigep.port) ""
   liftIO $ Client.runClientM action env
+
+handleServantResp ::
+  Either Client.ClientError a ->
+  App a
+handleServantResp (Right cfg) = pure cfg
+handleServantResp (Left errmsg) = throwM . internalErrorWithDescription . Lazy.pack . show $ errmsg

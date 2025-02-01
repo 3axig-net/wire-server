@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,8 +20,8 @@ module Common where
 import Cassandra
 import Conduit
 import Data.Aeson
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Conduit.Combinators as C
+import Data.ByteString.Lazy qualified as LBS
+import Data.Conduit.Combinators qualified as C
 import Imports
 import System.IO
 
@@ -31,11 +31,11 @@ sourceJsonLines handle =
     .| C.linesUnboundedAscii
     .| mapC (either error id . eitherDecodeStrict)
 
-sinkJsonLines :: ToJSON a => Handle -> ConduitT [a] Void IO ()
+sinkJsonLines :: (ToJSON a) => Handle -> ConduitT [a] Void IO ()
 sinkJsonLines hd = C.mapM_ (mapM_ (LBS.hPutStr hd . (<> "\n") . encode))
 
 -- FUTUREWORK: this is very slow. Look for alterantives. Maybe `batch` queries are faster.
-sinkTableRows :: Tuple a => PrepQuery W a () -> ConduitM a Void Client ()
+sinkTableRows :: (Tuple a) => PrepQuery W a () -> ConduitM a Void Client ()
 sinkTableRows insertQuery = go
   where
     go = do

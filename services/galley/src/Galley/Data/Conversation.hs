@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,40 +21,38 @@ module Galley.Data.Conversation
     NewConversation,
 
     -- * Utilities
-    isSelfConv,
-    isO2OConv,
-    isTeamConv,
     isConvDeleted,
     selfConv,
     localOne2OneConvId,
-    convMetadata,
+    convAccess,
     convAccessData,
+    convAccessRoles,
+    convMessageTimer,
+    convName,
+    convReceiptMode,
+    convSetName,
+    convType,
+    convSetType,
+    convTeam,
     defRole,
     maybeRole,
-    privateRole,
     defRegularConvAccess,
+    parseAccessRoles,
   )
 where
 
 import Data.Id
-import qualified Data.Set as Set
-import qualified Data.UUID.Tagged as U
+import Data.Misc
+import Data.Set (Set)
+import Data.Set qualified as Set
+import Data.UUID.Tagged qualified as U
 import Galley.Cassandra.Instances ()
 import Galley.Data.Conversation.Types
 import Imports hiding (Set)
 import Wire.API.Conversation hiding (Conversation)
 
-isSelfConv :: Conversation -> Bool
-isSelfConv = (SelfConv ==) . convType
-
-isO2OConv :: Conversation -> Bool
-isO2OConv = (One2OneConv ==) . convType
-
-isTeamConv :: Conversation -> Bool
-isTeamConv = isJust . convTeam
-
 isConvDeleted :: Conversation -> Bool
-isConvDeleted = fromMaybe False . convDeleted
+isConvDeleted = convDeleted
 
 selfConv :: UserId -> ConvId
 selfConv uid = Id (toUUID uid)
@@ -66,36 +64,41 @@ selfConv uid = Id (toUUID uid)
 localOne2OneConvId :: U.UUID U.V4 -> U.UUID U.V4 -> ConvId
 localOne2OneConvId a b = Id . U.unpack $ U.addv4 a b
 
-convMetadata :: Conversation -> ConversationMetadata
-convMetadata c =
-  ConversationMetadata
-    (convType c)
-    (convCreator c)
-    (convAccess c)
-    (convAccessRole c)
-    (convName c)
-    (convTeam c)
-    (convMessageTimer c)
-    (convReceiptMode c)
+convType :: Conversation -> ConvType
+convType = cnvmType . convMetadata
+
+convSetType :: ConvType -> Conversation -> Conversation
+convSetType t c = c {convMetadata = (convMetadata c) {cnvmType = t}}
+
+convTeam :: Conversation -> Maybe TeamId
+convTeam = cnvmTeam . convMetadata
+
+convAccess :: Conversation -> [Access]
+convAccess = cnvmAccess . convMetadata
+
+convAccessRoles :: Conversation -> Set AccessRole
+convAccessRoles = cnvmAccessRoles . convMetadata
 
 convAccessData :: Conversation -> ConversationAccessData
-convAccessData conv =
+convAccessData c =
   ConversationAccessData
-    (Set.fromList (convAccess conv))
-    (convAccessRole conv)
+    (Set.fromList (convAccess c))
+    (convAccessRoles c)
 
-defRole :: AccessRole
-defRole = ActivatedAccessRole
+convName :: Conversation -> Maybe Text
+convName = cnvmName . convMetadata
 
-maybeRole :: ConvType -> Maybe AccessRole -> AccessRole
-maybeRole SelfConv _ = privateRole
-maybeRole ConnectConv _ = privateRole
-maybeRole One2OneConv _ = privateRole
-maybeRole RegularConv Nothing = defRole
-maybeRole RegularConv (Just r) = r
-
-privateRole :: AccessRole
-privateRole = PrivateAccessRole
+convSetName :: Maybe Text -> Conversation -> Conversation
+convSetName n c = c {convMetadata = (convMetadata c) {cnvmName = n}}
 
 defRegularConvAccess :: [Access]
 defRegularConvAccess = [InviteAccess]
+
+parseAccessRoles :: Maybe AccessRoleLegacy -> Maybe (Set AccessRole) -> Maybe (Set AccessRole)
+parseAccessRoles mbLegacy mbAccess = mbAccess <|> fromAccessRoleLegacy <$> mbLegacy
+
+convMessageTimer :: Conversation -> Maybe Milliseconds
+convMessageTimer = cnvmMessageTimer . convMetadata
+
+convReceiptMode :: Conversation -> Maybe ReceiptMode
+convReceiptMode = cnvmReceiptMode . convMetadata

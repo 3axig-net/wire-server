@@ -1,13 +1,10 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,16 +24,13 @@ module Work
   )
 where
 
-import Brig.Types hiding (Client)
 import Cassandra
 import Data.Id
 import Data.List.Extra (nubOrd)
 import Imports
 import System.Logger (Logger)
-import qualified System.Logger as Log
+import System.Logger qualified as Log
 import UnliftIO.Async (pooledMapConcurrentlyN_)
-
-deriving instance Cql Name
 
 runCommand :: Logger -> ClientState -> IO ()
 runCommand l brig = runClient brig $ do
@@ -57,7 +51,7 @@ getServices = retry x5 $ query cql (params LocalQuorum ())
 -- | Check if a service exists
 doesServiceExist :: (ProviderId, ServiceId, a) -> Client Bool
 doesServiceExist (pid, sid, _) =
-  retry x5 $ fmap isJust $ query1 cql (params LocalQuorum (pid, sid))
+  retry x5 $ isJust <$> query1 cql (params LocalQuorum (pid, sid))
   where
     cql :: PrepQuery R (ProviderId, ServiceId) (Identity ServiceId)
     cql =

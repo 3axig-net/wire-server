@@ -3,7 +3,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,162 +20,259 @@
 
 module Wire.API.Federation.Client
   ( FederatorClientEnv (..),
+    FederatorClientVersionedEnv (..),
+    unversionedEnv,
     FederatorClient,
     runFederatorClient,
+    runVersionedFederatorClient,
+    runFederatorClientToCodensity,
+    runVersionedFederatorClientToCodensity,
+    getNegotiatedVersion,
     performHTTP2Request,
+    consumeStreamingResponseWith,
+    streamingResponseStrictBody,
     headersFromTable,
   )
 where
 
-import qualified Control.Exception as E
+import Control.Concurrent.Async
+import Control.Exception qualified as E
 import Control.Monad.Catch
+import Control.Monad.Codensity
 import Control.Monad.Except
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString as BS
+import Control.Monad.Trans.Maybe
+import Data.Aeson qualified as Aeson
+import Data.Bifunctor (first)
+import Data.ByteString qualified as BS
 import Data.ByteString.Builder
 import Data.ByteString.Conversion (toByteString')
-import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Lazy qualified as LBS
 import Data.Domain
-import qualified Data.Sequence as Seq
-import Data.Streaming.Network
-import qualified Data.Text.Encoding as Text
-import qualified Data.Text.Encoding.Error as Text
-import qualified Data.Text.Lazy.Encoding as LText
-import Foreign.Marshal.Alloc
+import Data.Id
+import Data.Sequence (pattern (:<|))
+import Data.Sequence qualified as Seq
+import Data.Set qualified as Set
+import Data.Text.Encoding qualified as Text
+import Data.Text.Encoding.Error qualified as Text
+import Data.Text.Lazy.Encoding qualified as LText
+import HTTP2.Client.Manager (Http2Manager)
+import HTTP2.Client.Manager qualified as H2Manager
 import Imports
-import qualified Network.HPACK as HTTP2
-import qualified Network.HPACK.Token as HTTP2
-import qualified Network.HTTP.Types as HTTP
-import qualified Network.HTTP2.Client as HTTP2
-import qualified Network.Socket as NS
-import Network.TLS as TLS
-import qualified Network.Wai.Utilities.Error as Wai
+import Network.HPACK qualified as HTTP2
+import Network.HPACK.Token qualified as HTTP2
+import Network.HTTP.Media qualified as HTTP
+import Network.HTTP.Types qualified as HTTP
+import Network.HTTP2.Client qualified as HTTP2
+import Network.Wai.Utilities.Error qualified as Wai
+import OpenSSL.Session qualified as SSL
 import Servant.Client
 import Servant.Client.Core
-import qualified System.TimeManager
+import Servant.Types.SourceT
 import Util.Options (Endpoint (..))
 import Wire.API.Federation.Component
 import Wire.API.Federation.Domain (originDomainHeaderName)
 import Wire.API.Federation.Error
+import Wire.API.Federation.Version
+import Wire.API.VersionInfo
 
 data FederatorClientEnv = FederatorClientEnv
   { ceOriginDomain :: Domain,
     ceTargetDomain :: Domain,
-    ceFederator :: Endpoint
+    ceFederator :: Endpoint,
+    ceHttp2Manager :: Http2Manager,
+    ceOriginRequestId :: RequestId
   }
 
+data FederatorClientVersionedEnv = FederatorClientVersionedEnv
+  { cveEnv :: FederatorClientEnv,
+    cveVersion :: Maybe Version
+  }
+
+unversionedEnv :: FederatorClientEnv -> FederatorClientVersionedEnv
+unversionedEnv env = FederatorClientVersionedEnv env Nothing
+
+-- | A request to a remote backend. The API version of the remote backend is in
+-- the environment. The 'MaybeT' layer is used to match endpoint versions (via
+-- the 'Alternative' and 'VersionedMonad' instances).
 newtype FederatorClient (c :: Component) a = FederatorClient
-  {unFederatorClient :: ReaderT FederatorClientEnv (ExceptT FederatorClientError IO) a}
+  { unFederatorClient ::
+      MaybeT
+        ( ReaderT
+            FederatorClientVersionedEnv
+            (ExceptT FederatorClientError (Codensity IO))
+        )
+        a
+  }
   deriving newtype
     ( Functor,
+      Alternative,
       Applicative,
       Monad,
-      MonadReader FederatorClientEnv,
+      MonadReader FederatorClientVersionedEnv,
       MonadError FederatorClientError,
       MonadIO
     )
 
-headersFromTable :: HTTP2.HeaderTable -> [HTTP.Header]
-headersFromTable (headerList, _) = flip map headerList $ \(token, headerValue) ->
-  (HTTP2.tokenKey token, headerValue)
+instance VersionedMonad Version (FederatorClient c) where
+  guardVersion p = do
+    v <- asks cveVersion
+    guard (maybe True p v)
 
-connectSocket :: ByteString -> Int -> IO NS.Socket
-connectSocket hostname port =
-  handle (E.throw . FederatorClientConnectionError)
-    . fmap fst
-    $ getSocketFamilyTCP hostname port NS.AF_UNSPEC
+getNegotiatedVersion :: FederatorClient c (Maybe Version)
+getNegotiatedVersion = asks cveVersion
+
+liftCodensity :: Codensity IO a -> FederatorClient c a
+liftCodensity = FederatorClient . lift . lift . lift
+
+headersFromTable :: HTTP2.TokenHeaderTable -> [HTTP.Header]
+headersFromTable (headerList, _) = flip map headerList $ first HTTP2.tokenKey
+
+-- This opens a new http2 connection. Using a http2-manager leads to this problem https://wearezeta.atlassian.net/browse/WPB-4787
+-- FUTUREWORK: Replace with H2Manager.withHTTP2Request once the bugs are solved.
+withNewHttpRequest :: H2Manager.Target -> HTTP2.Request -> (HTTP2.Response -> IO a) -> IO a
+withNewHttpRequest target req k = do
+  ctx <- SSL.context
+  let cacheLimit = 20
+      sslRemoveTrailingDot = False
+      tcpConnectionTimeout = 30_000_000
+  sendReqMVar <- newEmptyMVar
+  thread <- liftIO . async $ H2Manager.startPersistentHTTP2Connection ctx target cacheLimit sslRemoveTrailingDot tcpConnectionTimeout sendReqMVar
+  let newConn = H2Manager.HTTP2Conn thread (putMVar sendReqMVar H2Manager.CloseConnection) sendReqMVar
+  H2Manager.sendRequestWithConnection newConn req \resp ->
+    k resp `finally` newConn.disconnect
 
 performHTTP2Request ::
-  Maybe TLS.ClientParams ->
+  Http2Manager ->
+  H2Manager.Target ->
   HTTP2.Request ->
-  ByteString ->
-  Int ->
-  IO (Either FederatorClientHTTP2Error (HTTP.Status, [HTTP.Header], Builder))
-performHTTP2Request mtlsConfig req hostname port = do
-  let drainResponse resp = go mempty
-        where
-          go acc = do
-            chunk <- HTTP2.getResponseBodyChunk resp
-            if BS.null chunk
-              then pure acc
-              else go (acc <> byteString chunk)
-  let clientConfig =
-        HTTP2.ClientConfig
-          "https"
-          hostname
-          {- cacheLimit: -} 20
-  flip
-    E.catches
-    [ -- catch FederatorClientHTTP2Error (e.g. connection and TLS errors)
-      E.Handler (pure . Left),
-      -- catch HTTP2 exceptions
-      E.Handler (pure . Left . FederatorClientHTTP2Exception)
-    ]
-    $ bracket (connectSocket hostname port) NS.close $ \sock -> do
-      let withHTTP2Config k = case mtlsConfig of
-            Nothing -> bracket (HTTP2.allocSimpleConfig sock 4096) HTTP2.freeSimpleConfig k
-            -- FUTUREWORK(federation): Use openssl
-            Just tlsConfig -> do
-              ctx <- E.handle (E.throw . FederatorClientTLSException) $ do
-                ctx <- TLS.contextNew sock tlsConfig
-                TLS.handshake ctx
-                pure ctx
-              bracket (allocTLSConfig ctx 4096) freeTLSConfig k
-      withHTTP2Config $ \conf ->
-        HTTP2.run clientConfig conf $ \sendRequest -> do
-          sendRequest req $ \resp -> do
-            result <- drainResponse resp
-            let headers = headersFromTable (HTTP2.responseHeaders resp)
-            pure $ case HTTP2.responseStatus resp of
-              Nothing -> Left FederatorClientNoStatusCode
-              Just status -> Right (status, headers, result)
+  IO (Either FederatorClientHTTP2Error (ResponseF Builder))
+performHTTP2Request _mgr target req = try $ do
+  withNewHttpRequest target req $ consumeStreamingResponseWith $ \resp -> do
+    b <-
+      fmap (fromRight mempty)
+        . runExceptT
+        . runSourceT
+        . responseBody
+        $ resp
+    pure $ resp $> foldMap byteString b
 
-instance KnownComponent c => RunClient (FederatorClient c) where
+consumeStreamingResponseWith :: (StreamingResponse -> a) -> HTTP2.Response -> a
+consumeStreamingResponseWith k resp = do
+  let headers = headersFromTable (HTTP2.responseHeaders resp)
+      result = fromAction BS.null $ HTTP2.getResponseBodyChunk resp
+  case HTTP2.responseStatus resp of
+    Nothing -> E.throw FederatorClientNoStatusCode
+    Just status ->
+      k
+        Response
+          { responseStatusCode = status,
+            responseHeaders = Seq.fromList headers,
+            responseHttpVersion = HTTP.http20,
+            responseBody = result
+          }
+
+instance (KnownComponent c) => RunClient (FederatorClient c) where
   runRequestAcceptStatus expectedStatuses req = do
-    env <- ask
-    let baseUrlPath =
-          HTTP.encodePathSegments
-            [ "rpc",
-              domainText (ceTargetDomain env),
-              componentName (componentVal @c)
-            ]
-    let path = baseUrlPath <> requestPath req
-    body <- case requestBody req of
-      Just (RequestBodyLBS lbs, _) -> pure lbs
-      Just (RequestBodyBS bs, _) -> pure (LBS.fromStrict bs)
-      Just (RequestBodySource _, _) ->
-        throwError FederatorClientStreamingNotSupported
-      Nothing -> pure mempty
-    let req' =
-          HTTP2.requestBuilder
-            (requestMethod req)
-            (LBS.toStrict (toLazyByteString path))
-            (toList (requestHeaders req) <> [(originDomainHeaderName, toByteString' (ceOriginDomain env))])
-            (lazyByteString body)
-    let Endpoint (Text.encodeUtf8 -> hostname) (fromIntegral -> port) = ceFederator env
-    eresp <- liftIO $ performHTTP2Request Nothing req' hostname port
-    case eresp of
-      Left err -> throwError (FederatorClientHTTP2Error err)
-      Right (status, headers, result)
-        | maybe (HTTP.statusIsSuccessful status) (elem status) expectedStatuses ->
-          pure $
-            Response
-              { responseStatusCode = status,
-                responseHeaders = Seq.fromList headers,
-                responseHttpVersion = HTTP.http20,
-                responseBody = toLazyByteString result
-              }
-        | otherwise ->
-          throwError $
-            FederatorClientError
-              ( mkFailureResponse
-                  status
-                  (ceTargetDomain env)
-                  (toLazyByteString (requestPath req))
-                  (toLazyByteString result)
-              )
+    let successfulStatus status =
+          maybe
+            (HTTP.statusIsSuccessful status)
+            (elem status)
+            expectedStatuses
+
+    v <- asks cveVersion
+    let vreq =
+          req
+            { requestHeaders =
+                ( versionHeader,
+                  toByteString'
+                    ( versionInt (fromMaybe V0 v)
+                    )
+                )
+                  :<| requestHeaders req
+            }
+
+    withHTTP2StreamingRequest successfulStatus vreq $ \resp -> do
+      bdy <-
+        fmap (either (const mempty) (toLazyByteString . foldMap byteString))
+          . runExceptT
+          . runSourceT
+          . responseBody
+          $ resp
+      pure $ resp $> bdy
 
   throwClientError = throwError . FederatorClientServantError
+
+instance (KnownComponent c) => RunStreamingClient (FederatorClient c) where
+  withStreamingRequest = withHTTP2StreamingRequest HTTP.statusIsSuccessful
+
+streamingResponseStrictBody :: StreamingResponse -> IO Builder
+streamingResponseStrictBody =
+  fmap (either stringUtf8 (foldMap byteString))
+    . runExceptT
+    . runSourceT
+    . responseBody
+
+-- Perform a streaming request to the local federator.
+withHTTP2StreamingRequest ::
+  forall c a.
+  (KnownComponent c) =>
+  (HTTP.Status -> Bool) ->
+  Request ->
+  (StreamingResponse -> IO a) ->
+  FederatorClient c a
+withHTTP2StreamingRequest successfulStatus req handleResponse = do
+  env <- asks cveEnv
+  let baseUrlPath =
+        HTTP.encodePathSegments
+          [ "rpc",
+            domainText (ceTargetDomain env),
+            componentName (componentVal @c)
+          ]
+  let path = baseUrlPath <> requestPath req
+
+  body <- do
+    case requestBody req of
+      Just (RequestBodyLBS lbs, _) -> pure lbs
+      Just (RequestBodyBS bs, _) -> pure (LBS.fromStrict bs)
+      Just (RequestBodySource _, _) -> throwError FederatorClientStreamingNotSupported
+      Nothing -> pure mempty
+  let headers =
+        toList (requestHeaders req)
+          <> [(originDomainHeaderName, toByteString' (ceOriginDomain env))]
+          <> [(HTTP.hAccept, HTTP.renderHeader (toList $ req.requestAccept))]
+          <> [("Wire-Origin-Request-Id", toByteString' $ ceOriginRequestId env)]
+      req' =
+        HTTP2.requestBuilder
+          (requestMethod req)
+          (LBS.toStrict (toLazyByteString path))
+          headers
+          (lazyByteString body)
+  let Endpoint (Text.encodeUtf8 -> hostname) (fromIntegral -> port) = ceFederator env
+  resp <-
+    either throwError pure
+      <=< liftCodensity
+      $ Codensity
+      $ \k ->
+        E.catches
+          (withNewHttpRequest (False, hostname, port) req' (consumeStreamingResponseWith (k . Right)))
+          [ E.Handler $ k . Left . FederatorClientHTTP2Error,
+            E.Handler $ k . Left . FederatorClientHTTP2Error . FederatorClientConnectionError,
+            E.Handler $ k . Left . FederatorClientHTTP2Error . FederatorClientHTTP2Exception,
+            E.Handler $ k . Left . FederatorClientHTTP2Error . FederatorClientTLSException
+          ]
+  if successfulStatus (responseStatusCode resp)
+    then liftIO $ handleResponse resp
+    else do
+      -- in case of an error status code, read the whole body to construct the error
+      bdy <- liftIO $ streamingResponseStrictBody resp
+      throwError $
+        FederatorClientError
+          ( mkFailureResponse
+              (responseStatusCode resp)
+              (ceTargetDomain env)
+              (toLazyByteString (requestPath req))
+              (toLazyByteString bdy)
+          )
 
 mkFailureResponse :: HTTP.Status -> Domain -> LByteString -> LByteString -> Wai.Error
 mkFailureResponse status domain path body
@@ -185,25 +282,25 @@ mkFailureResponse status domain path body
   -- client, since it is always due to a server issue, so we map it to a 500
   -- error.
   | HTTP.statusCode status == 403 =
-    Wai.mkError
-      HTTP.status500
-      "federation-local-error"
-      ( "Local federator failure: "
-          <> LText.decodeUtf8With Text.lenientDecode body
-      )
+      Wai.mkError
+        HTTP.status500
+        "federation-local-error"
+        ( "Local federator failure: "
+            <> LText.decodeUtf8With Text.lenientDecode body
+        )
   -- Any other error is interpreted as a correctly formatted wai error, and
   -- returned to the client.
   | otherwise =
-    (fromMaybe defaultError (Aeson.decode body))
-      { Wai.errorData =
-          Just
-            Wai.FederationErrorData
-              { Wai.federrDomain = domain,
-                Wai.federrPath =
-                  "/federation"
-                    <> Text.decodeUtf8With Text.lenientDecode (LBS.toStrict path)
-              }
-      }
+      (fromMaybe defaultError (Aeson.decode body))
+        { Wai.errorData =
+            Just
+              Wai.FederationErrorData
+                { Wai.federrDomain = domain,
+                  Wai.federrPath =
+                    "/federation"
+                      <> Text.decodeUtf8With Text.lenientDecode (LBS.toStrict path)
+                }
+        }
   where
     defaultError =
       Wai.mkError
@@ -211,42 +308,71 @@ mkFailureResponse status domain path body
         "unknown-federation-error"
         (LText.decodeUtf8With Text.lenientDecode body)
 
+-- | Run federator client synchronously.
 runFederatorClient ::
-  KnownComponent c =>
   FederatorClientEnv ->
   FederatorClient c a ->
   IO (Either FederatorClientError a)
-runFederatorClient env action = runExceptT (runReaderT (unFederatorClient action) env)
+runFederatorClient env =
+  lowerCodensity
+    . runFederatorClientToCodensity env
 
-freeTLSConfig :: HTTP2.Config -> IO ()
-freeTLSConfig cfg = free (HTTP2.confWriteBuffer cfg)
+runVersionedFederatorClient ::
+  FederatorClientVersionedEnv ->
+  FederatorClient c a ->
+  IO (Either FederatorClientError a)
+runVersionedFederatorClient venv =
+  lowerCodensity
+    . runExceptT
+    . runVersionedFederatorClientToCodensity venv
 
-allocTLSConfig :: TLS.Context -> HTTP2.BufferSize -> IO HTTP2.Config
-allocTLSConfig ctx bufsize = do
-  buf <- mallocBytes bufsize
-  timmgr <- System.TimeManager.initialize $ 30 * 1000000
-  ref <- newIORef mempty
-  let readData :: Int -> IO ByteString
-      readData n = do
-        chunk <- readIORef ref
-        if BS.length chunk >= n
-          then case BS.splitAt n chunk of
-            (result, chunk') -> do
-              writeIORef ref chunk'
-              pure result
-          else do
-            chunk' <- TLS.recvData ctx
-            if BS.null chunk'
-              then pure chunk
-              else do
-                modifyIORef ref (<> chunk')
-                readData n
-  pure
-    HTTP2.Config
-      { HTTP2.confWriteBuffer = buf,
-        HTTP2.confBufferSize = bufsize,
-        HTTP2.confSendAll = TLS.sendData ctx . LBS.fromStrict,
-        HTTP2.confReadN = readData,
-        HTTP2.confPositionReadMaker = HTTP2.defaultPositionReadMaker,
-        HTTP2.confTimeoutManager = timmgr
-      }
+runFederatorClientToCodensity ::
+  forall c a.
+  FederatorClientEnv ->
+  FederatorClient c a ->
+  Codensity IO (Either FederatorClientError a)
+runFederatorClientToCodensity env action = runExceptT $ do
+  v <-
+    runVersionedFederatorClientToCodensity
+      (FederatorClientVersionedEnv env Nothing)
+      (versionNegotiation supportedVersions)
+  runVersionedFederatorClientToCodensity @c
+    (FederatorClientVersionedEnv env (Just v))
+    action
+
+runVersionedFederatorClientToCodensity ::
+  FederatorClientVersionedEnv ->
+  FederatorClient c a ->
+  ExceptT FederatorClientError (Codensity IO) a
+runVersionedFederatorClientToCodensity env =
+  flip runReaderT env
+    . unmaybe
+    . runMaybeT
+    . unFederatorClient
+  where
+    unmaybe = (maybe (E.throw FederatorClientVersionMismatch) pure =<<)
+
+versionNegotiation :: Set Version -> FederatorClient 'Brig Version
+versionNegotiation localVersions =
+  let req =
+        defaultRequest
+          { requestPath = "/api-version",
+            requestBody = Just (RequestBodyLBS (Aeson.encode ()), "application" HTTP.// "json"),
+            requestHeaders = [],
+            requestMethod = HTTP.methodPost
+          }
+   in withHTTP2StreamingRequest @'Brig HTTP.statusIsSuccessful req $ \resp -> do
+        body <- toLazyByteString <$> streamingResponseStrictBody resp
+        allRemoteVersions <- case Aeson.decode body of
+          Nothing -> E.throw (FederatorClientVersionNegotiationError InvalidVersionInfo)
+          Just info -> pure (vinfoSupported info)
+        -- ignore versions that don't even exist locally
+        let remoteVersions = Set.fromList $ Imports.mapMaybe intToVersion allRemoteVersions
+        case Set.lookupMax (Set.intersection remoteVersions localVersions) of
+          Just v -> pure v
+          Nothing ->
+            E.throw
+              . FederatorClientVersionNegotiationError
+              $ if Set.lookupMax localVersions > Set.lookupMax remoteVersions
+                then RemoteTooOld
+                else RemoteTooNew

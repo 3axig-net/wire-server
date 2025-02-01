@@ -1,16 +1,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -28,13 +26,14 @@
 module Test.Brig.Types.User where
 
 import Brig.Types.Connection (UpdateConnectionsInternal (..))
-import Brig.Types.Intra (NewUserScimInvitation (..), ReAuthUser (..))
+import Brig.Types.Intra
 import Brig.Types.User (ManagedByUpdate (..), RichInfoUpdate (..))
 import Imports
 import Test.Brig.Roundtrip (testRoundTrip, testRoundTripWithSwagger)
 import Test.QuickCheck (Arbitrary (arbitrary))
 import Test.Tasty
 import Wire.API.Routes.Internal.Brig.EJPD (EJPDRequestBody (..), EJPDResponseBody (..))
+import Wire.API.User.Auth.ReAuth
 
 tests :: TestTree
 tests = testGroup "User (types vs. aeson)" $ roundtripTests
@@ -50,14 +49,5 @@ roundtripTests =
     testRoundTrip @UpdateConnectionsInternal
   ]
 
-instance Arbitrary ManagedByUpdate where
-  arbitrary = ManagedByUpdate <$> arbitrary
-
-instance Arbitrary RichInfoUpdate where
-  arbitrary = RichInfoUpdate <$> arbitrary
-
 instance Arbitrary ReAuthUser where
-  arbitrary = ReAuthUser <$> arbitrary
-
-instance Arbitrary NewUserScimInvitation where
-  arbitrary = NewUserScimInvitation <$> arbitrary <*> arbitrary <*> arbitrary <*> arbitrary
+  arbitrary = ReAuthUser <$> arbitrary <*> arbitrary <*> arbitrary

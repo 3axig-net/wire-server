@@ -5,7 +5,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -30,7 +30,7 @@ module Data.Metrics.Types
   )
 where
 
-import qualified Data.ByteString.Char8 as BS
+import Data.ByteString.Char8 qualified as BS
 import Data.Tree as Tree
 import Imports
 
@@ -41,6 +41,7 @@ newtype PathTemplate = PathTemplate Text
 -- (e.g. user id).
 newtype Paths = Paths (Forest PathSegment)
   deriving (Eq, Show)
+  deriving newtype (Semigroup)
 
 type PathSegment = Either ByteString ByteString
 

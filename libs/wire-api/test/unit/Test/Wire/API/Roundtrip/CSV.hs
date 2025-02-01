@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,17 +19,32 @@ module Test.Wire.API.Roundtrip.CSV where
 
 import Control.Arrow ((>>>))
 import Data.Csv
-import qualified Data.Vector as V
+import Data.Time.Clock
+import Data.Vector qualified as V
 import Imports
-import qualified Test.Tasty as T
-import Test.Tasty.QuickCheck (Arbitrary, counterexample, testProperty, (===))
+import Test.Tasty qualified as T
+import Test.Tasty.QuickCheck
 import Type.Reflection (typeRep)
-import qualified Wire.API.Team.Export as Team.Export
+import Wire.API.Team.Export
+
+newtype ValidTeamExportUser = ValidTeamExportUser
+  {unValidTeamExportUser :: TeamExportUser}
+  deriving newtype (FromNamedRecord, ToNamedRecord, DefaultOrdered, Eq, Show)
+
+instance Arbitrary ValidTeamExportUser where
+  arbitrary = do
+    u <- arbitrary
+    let resetTime (UTCTime d _) = UTCTime d 0
+    pure $
+      ValidTeamExportUser
+        u
+          { tExportLastActive = fmap resetTime (tExportLastActive u)
+          }
 
 tests :: T.TestTree
 tests =
   T.localOption (T.Timeout (60 * 1000000) "60s") . T.testGroup "CSV roundtrip tests" $
-    [testRoundTrip @Team.Export.TeamExportUser]
+    [testRoundTrip @ValidTeamExportUser]
 
 testRoundTrip ::
   forall a.
@@ -43,8 +58,8 @@ testRoundTrip = testProperty msg trip
       counterexample (show $ encodeCSV v) $
         Right v === (decodeCSV . encodeCSV) v
 
-    encodeCSV :: (DefaultOrdered a, ToNamedRecord a) => [a] -> LByteString
+    encodeCSV :: [a] -> LByteString
     encodeCSV = encodeDefaultOrderedByName
 
-    decodeCSV :: FromNamedRecord a => LByteString -> Either String [a]
+    decodeCSV :: LByteString -> Either String [a]
     decodeCSV bstr = decodeByName bstr <&> (snd >>> V.toList)

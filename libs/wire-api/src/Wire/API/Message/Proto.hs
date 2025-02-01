@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,7 +24,6 @@ module Wire.API.Message.Proto
     userId,
     fromUserId,
     ClientId,
-    clientId,
     newClientId,
     fromClientId,
     toClientId,
@@ -49,10 +48,8 @@ module Wire.API.Message.Proto
   )
 where
 
-import qualified Data.Id as Id
+import Data.Id qualified as Id
 import Data.ProtocolBuffers
-import qualified Data.Text.Lazy as Text
-import Data.Text.Lazy.Read (hexadecimal)
 import Imports
 
 --------------------------------------------------------------------------------
@@ -70,7 +67,7 @@ instance Decode UserId
 fromUserId :: Id.UserId -> UserId
 fromUserId u = UserId {_user = putField u}
 
-userId :: Functor f => (Id.UserId -> f Id.UserId) -> UserId -> f UserId
+userId :: (Functor f) => (Id.UserId -> f Id.UserId) -> UserId -> f UserId
 userId f c = (\x -> c {_user = x}) <$> field f (_user c)
 
 --------------------------------------------------------------------------------
@@ -88,18 +85,11 @@ instance Decode ClientId
 newClientId :: Word64 -> ClientId
 newClientId c = ClientId {_client = putField c}
 
-clientId :: Functor f => (Word64 -> f Word64) -> ClientId -> f ClientId
-clientId f c = (\x -> c {_client = x}) <$> field f (_client c)
-
 toClientId :: ClientId -> Id.ClientId
-toClientId c = Id.newClientId $ getField (_client c)
+toClientId c = Id.ClientId $ getField (_client c)
 
 fromClientId :: Id.ClientId -> ClientId
-fromClientId c =
-  either
-    (error "Invalid client ID")
-    (newClientId . fst)
-    (hexadecimal (Text.fromStrict $ Id.client c))
+fromClientId = newClientId . Id.clientToWord64
 
 --------------------------------------------------------------------------------
 -- ClientEntry
@@ -121,10 +111,10 @@ clientEntry c t =
       _clientVal = putField t
     }
 
-clientEntryId :: Functor f => (ClientId -> f ClientId) -> ClientEntry -> f ClientEntry
+clientEntryId :: (Functor f) => (ClientId -> f ClientId) -> ClientEntry -> f ClientEntry
 clientEntryId f c = (\x -> c {_clientId = x}) <$> field f (_clientId c)
 
-clientEntryMessage :: Functor f => (ByteString -> f ByteString) -> ClientEntry -> f ClientEntry
+clientEntryMessage :: (Functor f) => (ByteString -> f ByteString) -> ClientEntry -> f ClientEntry
 clientEntryMessage f c = (\x -> c {_clientVal = x}) <$> field f (_clientVal c)
 
 --------------------------------------------------------------------------------
@@ -147,15 +137,16 @@ userEntry u c =
       _userVal = putField c
     }
 
-userEntryId :: Functor f => (UserId -> f UserId) -> UserEntry -> f UserEntry
+userEntryId :: (Functor f) => (UserId -> f UserId) -> UserEntry -> f UserEntry
 userEntryId f c = (\x -> c {_userId = x}) <$> field f (_userId c)
 
-userEntryClients :: Functor f => ([ClientEntry] -> f [ClientEntry]) -> UserEntry -> f UserEntry
+userEntryClients :: (Functor f) => ([ClientEntry] -> f [ClientEntry]) -> UserEntry -> f UserEntry
 userEntryClients f c = (\x -> c {_userVal = x}) <$> field f (_userVal c)
 
 --------------------------------------------------------------------------------
 -- Priority
 
+-- | See also `Wire.API.Message.Priority`
 data Priority = LowPriority | HighPriority
   deriving stock (Eq, Show, Ord, Generic)
 
@@ -205,27 +196,27 @@ newOtrMessage c us =
       _newOtrReportMissing = putField []
     }
 
-newOtrMessageSender :: Functor f => (ClientId -> f ClientId) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageSender :: (Functor f) => (ClientId -> f ClientId) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageSender f c = (\x -> c {_newOtrSender = x}) <$> field f (_newOtrSender c)
 
-newOtrMessageRecipients :: Functor f => ([UserEntry] -> f [UserEntry]) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageRecipients :: (Functor f) => ([UserEntry] -> f [UserEntry]) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageRecipients f c = (\x -> c {_newOtrRecipients = x}) <$> field f (_newOtrRecipients c)
 
-newOtrMessageNativePush :: Functor f => (Bool -> f Bool) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageNativePush :: (Functor f) => (Bool -> f Bool) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageNativePush f c =
   let g x = Just <$> f (fromMaybe True x)
    in (\x -> c {_newOtrNativePush = x}) <$> field g (_newOtrNativePush c)
 
-newOtrMessageTransient :: Functor f => (Bool -> f Bool) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageTransient :: (Functor f) => (Bool -> f Bool) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageTransient f c =
   let g x = Just <$> f (fromMaybe False x)
    in (\x -> c {_newOtrTransient = x}) <$> field g (_newOtrTransient c)
 
-newOtrMessageData :: Functor f => (Maybe ByteString -> f (Maybe ByteString)) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageData :: (Functor f) => (Maybe ByteString -> f (Maybe ByteString)) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageData f c = (\x -> c {_newOtrData = x}) <$> field f (_newOtrData c)
 
-newOtrMessageNativePriority :: Functor f => (Maybe Priority -> f (Maybe Priority)) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageNativePriority :: (Functor f) => (Maybe Priority -> f (Maybe Priority)) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageNativePriority f c = (\x -> c {_newOtrNativePriority = x}) <$> field f (_newOtrNativePriority c)
 
-newOtrMessageReportMissing :: Functor f => ([UserId] -> f [UserId]) -> NewOtrMessage -> f NewOtrMessage
+newOtrMessageReportMissing :: (Functor f) => ([UserId] -> f [UserId]) -> NewOtrMessage -> f NewOtrMessage
 newOtrMessageReportMissing f c = (\x -> c {_newOtrReportMissing = x}) <$> field f (_newOtrReportMissing c)

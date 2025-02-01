@@ -43,7 +43,11 @@ uninstall:
 	rm -f $(PREFIX_INSTALL)/lib/libzauth.$(LIB_TYPE)
 	rm -f $(PREFIX_INSTALL)/lib/pkgconfig/libzauth.pc
 
-dist: build-release
+.PHONY: test
+test:
+	cd ../libzauth && cargo test --release
+
+dist: test build-release
 	mkdir -p deb$(PREFIX_PACKAGE)/include
 	mkdir -p deb$(PREFIX_PACKAGE)/lib/pkgconfig
 	cp src/zauth.h deb$(PREFIX_PACKAGE)/include/
@@ -51,12 +55,3 @@ dist: build-release
 		-e "s~<<PREFIX>>~$(PREFIX_PACKAGE)~" \
 		src/libzauth.pc > deb$(PREFIX_PACKAGE)/lib/pkgconfig/libzauth.pc
 	cp target/release/libzauth.$(LIB_TYPE) deb$(PREFIX_PACKAGE)/lib/
-ifeq ($(OS), linux)
-	makedeb --name=libzauth        \
-			--version=$(VERSION)   \
-			--debian-dir=deb       \
-			--build=$(BUILD)       \
-			--architecture=$(ARCH) \
-			--output-dir=target/release
-endif
-

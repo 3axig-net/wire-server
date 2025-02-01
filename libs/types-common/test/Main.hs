@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,11 +21,13 @@ module Main
 where
 
 import Imports
-import qualified Test.Domain as Domain
-import qualified Test.Handle as Handle
-import qualified Test.Properties as Properties
-import qualified Test.Qualified as Qualified
-import qualified Test.SizedHashMap as SizedHashMap
+import Test.Data.Mailbox qualified as Mailbox
+import Test.Data.PEMKeys qualified as PEMKeys
+import Test.Domain qualified as Domain
+import Test.Handle qualified as Handle
+import Test.Properties qualified as Properties
+import Test.Qualified qualified as Qualified
+import Test.SizedHashMap qualified as SizedHashMap
 import Test.Tasty
 
 main :: IO ()
@@ -37,5 +39,7 @@ main =
         SizedHashMap.tests,
         Domain.tests,
         Handle.tests,
-        Qualified.tests
+        Qualified.tests,
+        PEMKeys.tests,
+        Mailbox.tests
       ]

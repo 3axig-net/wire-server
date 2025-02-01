@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -17,24 +19,32 @@
 
 module Wire.Network.DNS.Effect where
 
+import Data.IP qualified as IP
 import Imports
 import Network.DNS (Domain, Resolver)
-import qualified Network.DNS as DNS
+import Network.DNS qualified as DNS
 import Polysemy
-import Wire.Network.DNS.SRV
+import Wire.Network.DNS.SRV qualified as SRV
 
 data DNSLookup m a where
-  LookupSRV :: Domain -> DNSLookup m SrvResponse
+  LookupSRV :: Domain -> DNSLookup m SRV.SrvResponse
+  LookupA :: Domain -> DNSLookup m (Either DNS.DNSError [IP.IPv4])
 
 makeSem ''DNSLookup
 
-runDNSLookupDefault :: Member (Embed IO) r => Sem (DNSLookup ': r) a -> Sem r a
+runDNSLookupDefault :: (Member (Embed IO) r) => Sem (DNSLookup ': r) a -> Sem r a
 runDNSLookupDefault =
-  interpret $ \(LookupSRV domain) -> embed $ do
+  interpret $ \action -> embed $ do
     rs <- DNS.makeResolvSeed DNS.defaultResolvConf
-    DNS.withResolver rs $ \resolver ->
-      interpretResponse <$> DNS.lookupSRV resolver domain
+    DNS.withResolver rs $ flip runLookupIO action
 
-runDNSLookupWithResolver :: Member (Embed IO) r => Resolver -> Sem (DNSLookup ': r) a -> Sem r a
-runDNSLookupWithResolver resolver =
-  interpret $ \(LookupSRV domain) -> embed (interpretResponse <$> DNS.lookupSRV resolver domain)
+runDNSLookupWithResolver :: (Member (Embed IO) r) => Resolver -> Sem (DNSLookup ': r) a -> Sem r a
+runDNSLookupWithResolver resolver = interpret $ embed . runLookupIO resolver
+
+runLookupIO :: Resolver -> DNSLookup m a -> IO a
+runLookupIO resolver action =
+  case action of
+    LookupSRV domain -> do
+      SRV.interpretResponse <$> DNS.lookupSRV resolver domain
+    LookupA domain ->
+      DNS.lookupA resolver domain

@@ -4,7 +4,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -38,100 +38,137 @@ module Data.Id
     ScimTokenId,
     parseIdFromText,
     idToText,
+    idObjectSchema,
     IdObject (..),
 
     -- * Client IDs
     ClientId (..),
-    newClientId,
+    clientToText,
 
     -- * Other IDs
     ConnId (..),
     RequestId (..),
+    defRequestId,
     BotId (..),
     NoId,
+    OAuthClientId,
+    OAuthRefreshTokenId,
+    ChallengeId,
+
+    -- * Utils
+    uuidSchema,
   )
 where
 
 import Cassandra hiding (S)
 import Control.Lens ((?~))
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Aeson as A
-import qualified Data.Aeson.Encoding as A
-import qualified Data.Aeson.Types as A
+import Data.Aeson qualified as A
+import Data.Aeson.Encoding qualified as A
+import Data.Aeson.Key qualified as Key
+import Data.Aeson.Types qualified as A
 import Data.Attoparsec.ByteString ((<?>))
-import qualified Data.Attoparsec.ByteString.Char8 as Atto
+import Data.Attoparsec.ByteString.Char8 qualified as Atto
+import Data.Bifunctor (first)
+import Data.Binary
+import Data.Binary.Builder qualified as Builder
 import Data.ByteString.Builder (byteString)
+import Data.ByteString.Char8 qualified as B8
 import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy as L
-import qualified Data.Char as Char
-import Data.Default (Default (..))
+import Data.ByteString.Lazy qualified as L
+import Data.Char qualified as Char
 import Data.Hashable (Hashable)
+import Data.OpenApi qualified as S
+import Data.OpenApi.Internal.ParamSchema (ToParamSchema (..))
 import Data.ProtocolBuffers.Internal
+import Data.Proxy
 import Data.Schema
-import Data.String.Conversions (cs)
-import qualified Data.Swagger as S
-import Data.Swagger.Internal.ParamSchema (ToParamSchema (..))
-import qualified Data.Text as T
+import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
 import Data.Text.Lazy (toStrict)
 import Data.Text.Lazy.Builder
 import Data.Text.Lazy.Builder.Int
 import Data.UUID (UUID)
-import qualified Data.UUID as UUID
+import Data.UUID qualified as UUID
 import Data.UUID.V4
 import Imports
 import Servant (FromHttpApiData (..), ToHttpApiData (..))
+import System.Logger (ToBytes)
 import Test.QuickCheck
 import Test.QuickCheck.Instances ()
 
-data IdTag = A | C | I | U | P | S | T | STo
+data IdTag
+  = Asset
+  | Conversation
+  | Invitation
+  | User
+  | Provider
+  | Service
+  | Team
+  | ScimToken
+  | OAuthClient
+  | OAuthRefreshToken
+  | Challenge
 
 idTagName :: IdTag -> Text
-idTagName A = "Asset"
-idTagName C = "Conv"
-idTagName I = "Invitation"
-idTagName U = "User"
-idTagName P = "Provider"
-idTagName S = "Service"
-idTagName T = "Team"
-idTagName STo = "ScimToken"
+idTagName Asset = "Asset"
+idTagName Conversation = "Conv"
+idTagName Invitation = "Invitation"
+idTagName User = "User"
+idTagName Provider = "Provider"
+idTagName Service = "Service"
+idTagName Team = "Team"
+idTagName ScimToken = "ScimToken"
+idTagName OAuthClient = "OAuthClient"
+idTagName OAuthRefreshToken = "OAuthRefreshToken"
+idTagName Challenge = "Challenge"
 
 class KnownIdTag (t :: IdTag) where
   idTagValue :: IdTag
 
-instance KnownIdTag 'A where idTagValue = A
+instance KnownIdTag 'Asset where idTagValue = Asset
 
-instance KnownIdTag 'C where idTagValue = C
+instance KnownIdTag 'Conversation where idTagValue = Conversation
 
-instance KnownIdTag 'I where idTagValue = I
+instance KnownIdTag 'Invitation where idTagValue = Invitation
 
-instance KnownIdTag 'U where idTagValue = U
+instance KnownIdTag 'User where idTagValue = User
 
-instance KnownIdTag 'P where idTagValue = P
+instance KnownIdTag 'Provider where idTagValue = Provider
 
-instance KnownIdTag 'S where idTagValue = S
+instance KnownIdTag 'Service where idTagValue = Service
 
-instance KnownIdTag 'T where idTagValue = T
+instance KnownIdTag 'Team where idTagValue = Team
 
-instance KnownIdTag 'STo where idTagValue = STo
+instance KnownIdTag 'ScimToken where idTagValue = ScimToken
 
-type AssetId = Id 'A
+instance KnownIdTag 'OAuthClient where idTagValue = OAuthClient
 
-type InvitationId = Id 'I
+instance KnownIdTag 'OAuthRefreshToken where idTagValue = OAuthRefreshToken
+
+type AssetId = Id 'Asset
+
+type InvitationId = Id 'Invitation
 
 -- | A local conversation ID
-type ConvId = Id 'C
+type ConvId = Id 'Conversation
 
 -- | A local user ID
-type UserId = Id 'U
+type UserId = Id 'User
 
-type ProviderId = Id 'P
+type ProviderId = Id 'Provider
 
-type ServiceId = Id 'S
+type ServiceId = Id 'Service
 
-type TeamId = Id 'T
+type TeamId = Id 'Team
 
-type ScimTokenId = Id 'STo
+type ScimTokenId = Id 'ScimToken
+
+type OAuthClientId = Id 'OAuthClient
+
+type OAuthRefreshTokenId = Id 'OAuthRefreshToken
+
+type ChallengeId = Id 'Challenge
 
 -- Id -------------------------------------------------------------------------
 
@@ -143,27 +180,27 @@ newtype Id a = Id
   { toUUID :: UUID
   }
   deriving stock (Eq, Ord, Generic)
-  deriving newtype (Hashable, NFData, ToParamSchema)
+  deriving newtype (Hashable, NFData, ToParamSchema, Binary)
   deriving (ToJSON, FromJSON, S.ToSchema) via Schema (Id a)
 
 instance ToSchema (Id a) where
-  schema = Id <$> toUUID .= uuid
-    where
-      uuid :: ValueSchema NamedSwaggerDoc UUID
-      uuid =
-        mkSchema
-          (addExample (swaggerDoc @UUID))
-          ( A.withText
-              "UUID"
-              ( maybe (fail "Invalid UUID") pure
-                  . UUID.fromText
-              )
-          )
-          (pure . A.toJSON . UUID.toText)
+  schema = Id <$> toUUID .= uuidSchema
 
-      addExample =
-        S.schema . S.example
-          ?~ toJSON ("99db9768-04e3-4b5d-9268-831b6a25c4ab" :: Text)
+uuidSchema :: ValueSchema NamedSwaggerDoc UUID
+uuidSchema =
+  mkSchema
+    (addExample (swaggerDoc @UUID))
+    ( A.withText
+        "UUID"
+        ( maybe (fail "Invalid UUID") pure
+            . UUID.fromText
+        )
+    )
+    (pure . A.toJSON . UUID.toText)
+  where
+    addExample =
+      S.schema . S.example
+        ?~ toJSON ("99db9768-04e3-4b5d-9268-831b6a25c4ab" :: Text)
 
 -- REFACTOR: non-derived, custom show instances break pretty-show and violate the law
 -- that @show . read == id@.  can we derive Show here?
@@ -171,7 +208,7 @@ instance Show (Id a) where
   show = UUID.toString . toUUID
 
 instance Read (Id a) where
-  readsPrec n = map (\(a, x) -> (Id a, x)) . readsPrec n
+  readsPrec n = map (first Id) . readsPrec n
 
 instance FromByteString (Id a) where
   parser = do
@@ -187,7 +224,7 @@ instance FromByteString (Id a) where
         void $ Atto.count 12 hexDigit
     case UUID.fromASCIIBytes match of
       Nothing -> fail "Invalid UUID"
-      Just ui -> return (Id ui)
+      Just ui -> pure (Id ui)
     where
       matching = fmap fst . Atto.match
       hexDigit = Atto.satisfy Char.isHexDigit <?> "hexadecimal digit"
@@ -202,12 +239,12 @@ instance ToHttpApiData (Id a) where
   toUrlPiece = toUrlPiece . show
 
 instance A.ToJSONKey (Id a) where
-  toJSONKey = A.ToJSONKeyText idToText (A.text . idToText)
+  toJSONKey = A.ToJSONKeyText (Key.fromText . idToText) (A.text . idToText)
 
 instance A.FromJSONKey (Id a) where
   fromJSONKey = A.FromJSONKeyTextParser idFromText
 
-randomId :: (Functor m, MonadIO m) => m (Id a)
+randomId :: (MonadIO m) => m (Id a)
 randomId = Id <$> liftIO nextRandom
 
 idFromText :: Text -> A.Parser (Id a)
@@ -262,15 +299,19 @@ newtype ConnId = ConnId
       NFData,
       Generic
     )
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema ConnId
 
-instance ToJSON ConnId where
-  toJSON (ConnId c) = A.String (decodeUtf8 c)
+instance ToSchema ConnId where
+  schema = (decodeUtf8 . fromConnId) .= fmap (ConnId . encodeUtf8) (text "ConnId")
 
-instance FromJSON ConnId where
-  parseJSON x = ConnId . encodeUtf8 <$> A.withText "ConnId" pure x
+instance S.ToParamSchema ConnId where
+  toParamSchema _ = S.toParamSchema (Proxy @Text)
 
 instance FromHttpApiData ConnId where
   parseUrlPiece = Right . ConnId . encodeUtf8
+
+instance Arbitrary ConnId where
+  arbitrary = ConnId . B8.pack <$> resize 10 (listOf arbitraryPrintableChar)
 
 -- ClientId --------------------------------------------------------------------
 
@@ -278,42 +319,66 @@ instance FromHttpApiData ConnId where
 -- only together with a 'UserId', stored in C*, and used as a handle for end-to-end encryption.  It
 -- lives as long as the device is registered.  See also: 'ConnId'.
 newtype ClientId = ClientId
-  { client :: Text
+  { clientToWord64 :: Word64
   }
-  deriving (Eq, Ord, Show, ToByteString, Hashable, NFData, A.ToJSONKey, Generic)
-  deriving newtype (ToParamSchema, FromHttpApiData, ToHttpApiData)
+  deriving (Eq, Ord, Show)
   deriving (FromJSON, ToJSON, S.ToSchema) via Schema ClientId
 
+instance ToParamSchema ClientId where
+  toParamSchema _ = toParamSchema (Proxy @Text)
+
+instance FromHttpApiData ClientId where
+  parseUrlPiece = first T.pack . runParser parser . encodeUtf8
+
+instance ToHttpApiData ClientId where
+  toUrlPiece = clientToText
+
+clientToText :: ClientId -> Text
+clientToText = toStrict . toLazyText . hexadecimal . clientToWord64
+
 instance ToSchema ClientId where
-  schema = client .= parsedText "ClientId" clientIdFromByteString
+  schema = withParser s parseClientId
+    where
+      s :: ValueSchemaP NamedSwaggerDoc ClientId Text
+      s =
+        clientToText .= schema
+          & doc . S.description
+            ?~ "A 64-bit unsigned integer, represented as a hexadecimal numeral. \
+               \Any valid hexadecimal numeral is accepted, but the backend will only \
+               \produce representations with lowercase digits and no leading zeros"
 
-newClientId :: Word64 -> ClientId
-newClientId = ClientId . toStrict . toLazyText . hexadecimal
-
-clientIdFromByteString :: Text -> Either String ClientId
-clientIdFromByteString txt =
-  if T.length txt <= 20 && T.all isHexDigit txt
-    then Right $ ClientId txt
-    else Left "Invalid ClientId"
+parseClientId :: Text -> A.Parser ClientId
+parseClientId = either fail pure . runParser parser . encodeUtf8
 
 instance FromByteString ClientId where
   parser = do
-    bs <- Atto.takeByteString
-    either fail pure $ clientIdFromByteString (cs bs)
+    num :: Integer <- Atto.hexadecimal
+    guard $ num <= fromIntegral (maxBound :: Word64)
+    pure (ClientId (fromIntegral num))
+
+instance ToByteString ClientId where
+  builder = Builder.fromByteString . encodeUtf8 . clientToText
 
 instance A.FromJSONKey ClientId where
-  fromJSONKey = A.FromJSONKeyTextParser $ either fail pure . clientIdFromByteString
+  fromJSONKey = A.FromJSONKeyTextParser parseClientId
 
-deriving instance Cql ClientId
+instance A.ToJSONKey ClientId where
+  toJSONKey = A.toJSONKeyText clientToText
+
+instance Cql ClientId where
+  ctype = Tagged TextColumn
+  toCql = CqlText . clientToText
+  fromCql (CqlText t) = runParser parser (encodeUtf8 t)
+  fromCql _ = Left "ClientId: expected CqlText"
 
 instance Arbitrary ClientId where
-  arbitrary = newClientId <$> arbitrary
+  arbitrary = ClientId <$> arbitrary
 
 instance EncodeWire ClientId where
-  encodeWire t = encodeWire t . client
+  encodeWire t = encodeWire t . clientToText
 
 instance DecodeWire ClientId where
-  decodeWire (DelimitedField _ x) = either fail return (runParser parser x)
+  decodeWire (DelimitedField _ x) = either fail pure (runParser parser x)
   decodeWire _ = fail "Invalid ClientId"
 
 -- BotId -----------------------------------------------------------------------
@@ -325,18 +390,20 @@ newtype BotId = BotId
       Ord,
       FromByteString,
       ToByteString,
+      FromHttpApiData,
       Hashable,
       NFData,
-      FromJSON,
-      ToJSON,
-      Generic
+      Generic,
+      ToParamSchema
     )
+  deriving newtype (ToSchema)
+  deriving (FromJSON, ToJSON, S.ToSchema) via Schema BotId
 
 instance Show BotId where
   show = show . botUserId
 
 instance Read BotId where
-  readsPrec n = map (\(a, x) -> (BotId a, x)) . readsPrec n
+  readsPrec n = map (first BotId) . readsPrec n
 
 deriving instance Cql BotId
 
@@ -356,17 +423,17 @@ newtype RequestId = RequestId
       ToByteString,
       Hashable,
       NFData,
-      Generic
+      Generic,
+      ToBytes
     )
+
+defRequestId :: (IsString s) => s
+defRequestId = "N/A"
 
 instance ToSchema RequestId where
   schema =
     RequestId . encodeUtf8
       <$> (decodeUtf8 . unRequestId) .= text "RequestId"
-
--- | Returns "N/A"
-instance Default RequestId where
-  def = RequestId "N/A"
 
 instance ToJSON RequestId where
   toJSON (RequestId r) = A.String (decodeUtf8 r)
@@ -380,14 +447,17 @@ instance EncodeWire RequestId where
 instance DecodeWire RequestId where
   decodeWire = fmap RequestId . decodeWire
 
+instance FromHttpApiData RequestId where
+  parseUrlPiece = Right . RequestId . encodeUtf8
+
 -- Rendering Id values in JSON objects -----------------------------------------
 
 newtype IdObject a = IdObject {fromIdObject :: a}
   deriving (Eq, Show, Generic)
   deriving (ToJSON, FromJSON, S.ToSchema) via Schema (IdObject a)
 
-instance ToSchema a => ToSchema (IdObject a) where
-  schema =
-    object "Id" $
-      IdObject
-        <$> fromIdObject .= field "id" schema
+instance (ToSchema a) => ToSchema (IdObject a) where
+  schema = idObjectSchema (IdObject <$> fromIdObject .= schema)
+
+idObjectSchema :: ValueSchemaP NamedSwaggerDoc a b -> ValueSchemaP NamedSwaggerDoc a b
+idObjectSchema sch = object "Id" (field "id" sch)

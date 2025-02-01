@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,17 +18,20 @@
 module Web.Scim.Schema.PatchOp where
 
 import Control.Applicative
+import Control.Monad (guard)
 import Control.Monad.Except
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Aeson.Types (FromJSON (parseJSON), ToJSON (toJSON), Value (String), object, withObject, withText, (.:), (.:?), (.=))
 import qualified Data.Aeson.Types as Aeson
 import Data.Attoparsec.ByteString (Parser, endOfInput, parseOnly)
 import Data.Bifunctor (first)
 import qualified Data.CaseInsensitive as CI
-import qualified Data.HashMap.Strict as HashMap
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
 import Web.Scim.AttrName (AttrName (..))
 import Web.Scim.Filter (AttrPath (..), SubAttr (..), ValuePath (..), pAttrPath, pSubAttr, pValuePath, rAttrPath, rSubAttr, rValuePath)
+import Web.Scim.Schema.Common (lowerKey)
 import Web.Scim.Schema.Error
 import Web.Scim.Schema.Schema (Schema (PatchOp20))
 import Web.Scim.Schema.UserTypes (UserTypes (supportedSchemas))
@@ -83,9 +86,9 @@ rPath (IntoValuePath valuePath subAttr) = rValuePath valuePath <> maybe "" rSubA
 -- TODO(arianvp): According to the SCIM spec we should throw an InvalidPath
 -- error when the path is invalid syntax. this is a bit hard to do though as we
 -- can't control what errors FromJSON throws :/
-instance UserTypes tag => FromJSON (PatchOp tag) where
+instance (UserTypes tag) => FromJSON (PatchOp tag) where
   parseJSON = withObject "PatchOp" $ \v -> do
-    let o = HashMap.fromList . map (first CI.foldCase) . HashMap.toList $ v
+    let o = KeyMap.fromList . map (first lowerKey) . KeyMap.toList $ v
     schemas' :: [Schema] <- o .: "schemas"
     guard $ PatchOp20 `elem` schemas'
     operations <- Aeson.explicitParseField (Aeson.listParser $ operationFromJSON (supportedSchemas @tag)) o "operations"
@@ -100,19 +103,19 @@ instance ToJSON (PatchOp tag) where
 operationFromJSON :: [Schema] -> Value -> Aeson.Parser Operation
 operationFromJSON schemas' =
   withObject "Operation" $ \v -> do
-    let o = HashMap.fromList . map (first CI.foldCase) . HashMap.toList $ v
+    let o = KeyMap.fromList . map (first lowerKey) . KeyMap.toList $ v
     Operation
       <$> (o .: "op")
-      <*> (Aeson.explicitParseFieldMaybe (pathFromJSON schemas') o "path")
+      <*> Aeson.explicitParseFieldMaybe (pathFromJSON schemas') o "path"
       <*> (o .:? "value")
 
 pathFromJSON :: [Schema] -> Value -> Aeson.Parser Path
 pathFromJSON schemas' =
-  withText "Path" $ either fail pure . (parsePath schemas')
+  withText "Path" $ either fail pure . parsePath schemas'
 
 instance ToJSON Operation where
   toJSON (Operation op' path' value') =
-    object $ ("op" .= op') : concat [optionalField "path" path', optionalField "value" value']
+    object $ ("op" .= op') : optionalField "path" path' ++ optionalField "value" value'
     where
       optionalField fname = \case
         Nothing -> []
@@ -139,9 +142,9 @@ instance ToJSON Path where
 class Patchable a where
   applyOperation :: (MonadError ScimError m) => a -> Operation -> m a
 
-instance Patchable (HashMap.HashMap Text Text) where
+instance Patchable (KeyMap.KeyMap Text) where
   applyOperation theMap (Operation Remove (Just (NormalPath (AttrPath _schema (AttrName attrName) _subAttr))) _) =
-    pure $ HashMap.delete attrName theMap
+    pure $ KeyMap.delete (Key.fromText attrName) theMap
   applyOperation theMap (Operation _AddOrReplace (Just (NormalPath (AttrPath _schema (AttrName attrName) _subAttr))) (Just (String val))) =
-    pure $ HashMap.insert attrName val theMap
+    pure $ KeyMap.insert (Key.fromText attrName) val theMap
   applyOperation _ _ = throwError $ badRequest InvalidValue $ Just "Unsupported operation"

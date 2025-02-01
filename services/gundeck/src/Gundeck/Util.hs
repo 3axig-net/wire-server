@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,23 +21,20 @@ import Control.Monad.Catch
 import Control.Retry
 import Data.Id
 import Data.UUID.V1
-import Gundeck.Types.Notification
 import Imports
 import Network.HTTP.Types.Status
-import Network.Wai.Predicate.MediaType (Media)
 import Network.Wai.Utilities
 import UnliftIO (async, waitCatch)
-
-type JSON = Media "application" "json"
+import Wire.API.Internal.Notification
 
 -- | 'Data.UUID.V1.nextUUID' is sometimes unsuccessful, so we try a few times.
 mkNotificationId :: (MonadIO m, MonadThrow m) => m NotificationId
 mkNotificationId = do
   ni <- fmap Id <$> retrying x10 fun (const (liftIO nextUUID))
-  maybe (throwM err) return ni
+  maybe (throwM err) pure ni
   where
     x10 = limitRetries 10 <> exponentialBackoff 10
-    fun = const (return . isNothing)
+    fun = const (pure . isNothing)
     err = mkError status500 "internal-error" "unable to generate notification ID"
 
 mapAsync ::
@@ -47,8 +44,3 @@ mapAsync ::
   m (t (Either SomeException b))
 mapAsync f = mapM waitCatch <=< mapM (async . f)
 {-# INLINE mapAsync #-}
-
-maybeEqual :: Eq a => Maybe a -> Maybe a -> Bool
-maybeEqual (Just x) (Just y) = x == y
-maybeEqual _ _ = False
-{-# INLINE maybeEqual #-}

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -32,18 +32,18 @@ import URI.ByteString
 download :: UserId -> ConvId -> AssetId -> Handler (Maybe URI)
 download _ _ ast = S3.getMetadata ast >>= maybe notFound found
   where
-    notFound = return Nothing
+    notFound = pure Nothing
     found public =
       if not public
-        then return Nothing
+        then pure Nothing
         else do
-          url <- genSignedURL (S3.plainKey ast)
-          return $! Just $! url
+          url <- genSignedURL (S3.plainKey ast) Nothing
+          pure $! Just $! url
 
 downloadOtr :: UserId -> ConvId -> AssetId -> Handler (Maybe URI)
 downloadOtr _ cnv ast = S3.getOtrMetadata cnv ast >>= maybe notFound found
   where
-    notFound = return Nothing
+    notFound = pure Nothing
     found _ = do
-      url <- genSignedURL (S3.otrKey cnv ast)
-      return $! Just $! url
+      url <- genSignedURL (S3.otrKey cnv ast) Nothing
+      pure $! Just $! url

@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -18,7 +18,7 @@
 module Web.Scim.Schema.Meta where
 
 import Data.Aeson
-import qualified Data.HashMap.Lazy as HML
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as Text
 import Data.Time.Clock
@@ -33,6 +33,8 @@ data ETag = Weak Text | Strong Text
 
 instance ToJSON ETag where
   toJSON (Weak tag) = String $ "W/" <> pack (show tag)
+  -- (if a strong tag contains a "W/" prefix by accident, it will be parsed as weak tag.  this
+  -- is mildly confusing, but should do no harm.)
   toJSON (Strong tag) = String $ pack (show tag)
 
 instance FromJSON ETag where
@@ -67,7 +69,7 @@ instance ToJSON Meta where
   toJSON = genericToJSON serializeOptions
 
 instance FromJSON Meta where
-  parseJSON = genericParseJSON parseOptions . jsonLower
+  parseJSON = either (fail . show) (genericParseJSON parseOptions) . jsonLower
 
 data WithMeta a = WithMeta
   { meta :: Meta,
@@ -77,7 +79,7 @@ data WithMeta a = WithMeta
 
 instance (ToJSON a) => ToJSON (WithMeta a) where
   toJSON (WithMeta m v) = case toJSON v of
-    (Object o) -> Object (HML.insert "meta" (toJSON m) o)
+    (Object o) -> Object (KeyMap.insert "meta" (toJSON m) o)
     other -> other
 
 instance (FromJSON a) => FromJSON (WithMeta a) where

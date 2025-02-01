@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -26,22 +26,24 @@ import Control.Arrow
 import Control.Lens
 import Data.Id
 import Data.List.Split (chunksOf)
-import qualified Galley.Cassandra.Queries as Cql
+import Galley.Cassandra.Queries qualified as Cql
 import Galley.Cassandra.Store
+import Galley.Cassandra.Util
 import Galley.Effects.ClientStore (ClientStore (..))
 import Galley.Env
 import Galley.Monad
 import Galley.Options
 import Galley.Types.Clients (Clients)
-import qualified Galley.Types.Clients as Clients
+import Galley.Types.Clients qualified as Clients
 import Imports
 import Polysemy
 import Polysemy.Input
-import qualified UnliftIO
+import Polysemy.TinyLog
+import UnliftIO qualified
 
 updateClient :: Bool -> UserId -> ClientId -> Client ()
 updateClient add usr cls = do
-  let q = if add then Cql.addMemberClient else Cql.rmMemberClient
+  let q = if add then Cql.upsertMemberAddClient else Cql.upsertMemberRmClient
   retry x5 $ write (q cls) (params LocalQuorum (Identity usr))
 
 -- Do, at most, 16 parallel lookups of up to 128 users each
@@ -58,12 +60,26 @@ eraseClients :: UserId -> Client ()
 eraseClients user = retry x5 (write Cql.rmClients (params LocalQuorum (Identity user)))
 
 interpretClientStoreToCassandra ::
-  Members '[Embed IO, Input ClientState, Input Env] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member (Input Env) r,
+    Member TinyLog r
+  ) =>
   Sem (ClientStore ': r) a ->
   Sem r a
 interpretClientStoreToCassandra = interpret $ \case
-  GetClients uids -> embedClient $ lookupClients uids
-  CreateClient uid cid -> embedClient $ updateClient True uid cid
-  DeleteClient uid cid -> embedClient $ updateClient False uid cid
-  DeleteClients uid -> embedClient $ eraseClients uid
-  UseIntraClientListing -> embedApp . view $ options . optSettings . setIntraListing
+  GetClients uids -> do
+    logEffect "ClientStore.GetClients"
+    embedClient $ lookupClients uids
+  CreateClient uid cid -> do
+    logEffect "ClientStore.CreateClient"
+    embedClient $ updateClient True uid cid
+  DeleteClient uid cid -> do
+    logEffect "ClientStore.DeleteClient"
+    embedClient $ updateClient False uid cid
+  DeleteClients uid -> do
+    logEffect "ClientStore.DeleteClients"
+    embedClient $ eraseClients uid
+  UseIntraClientListing -> do
+    logEffect "ClientStore.UseIntraClientListing"
+    embedApp . view $ options . settings . intraListing

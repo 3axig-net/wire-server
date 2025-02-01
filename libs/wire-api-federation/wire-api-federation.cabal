@@ -1,133 +1,211 @@
 cabal-version: 1.12
+name:          wire-api-federation
+version:       0.1.0
+synopsis:      The Wire server-to-server API for federation
+description:
+  Servant endpoints and types for implementing a Wire backend that can federate with others
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
---
--- see: https://github.com/sol/hpack
---
--- hash: 8aa2d2b311b92915ab23a4fb07be411b474f2819936b62f46e15b64c31d027fe
-
-name:           wire-api-federation
-version:        0.1.0
-synopsis:       The Wire server-to-server API for federation
-description:    Servant endpoints and types for implementing a Wire backend that can federate with others
-category:       Web
-author:         Wire Swiss GmbH
-maintainer:     Wire Swiss GmbH <backend@wire.com>
-copyright:      (c) 2020 Wire Swiss GmbH
-license:        AGPL-3
-license-file:   LICENSE
-build-type:     Simple
+category:      Web
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2020 Wire Swiss GmbH
+license:       AGPL-3
+license-file:  LICENSE
+build-type:    Simple
 
 library
+  -- cabal-fmt: expand src
   exposed-modules:
-      Wire.API.Federation.API
-      Wire.API.Federation.API.Brig
-      Wire.API.Federation.API.Common
-      Wire.API.Federation.API.Galley
-      Wire.API.Federation.Client
-      Wire.API.Federation.Component
-      Wire.API.Federation.Domain
-      Wire.API.Federation.Error
-      Wire.API.Federation.Event
-  other-modules:
-      Paths_wire_api_federation
-  hs-source-dirs:
-      src
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    Wire.API.Federation.API
+    Wire.API.Federation.API.Brig
+    Wire.API.Federation.API.Brig.Notifications
+    Wire.API.Federation.API.Cargohold
+    Wire.API.Federation.API.Common
+    Wire.API.Federation.API.Galley
+    Wire.API.Federation.API.Galley.Notifications
+    Wire.API.Federation.API.Util
+    Wire.API.Federation.BackendNotifications
+    Wire.API.Federation.Client
+    Wire.API.Federation.Component
+    Wire.API.Federation.Domain
+    Wire.API.Federation.Endpoint
+    Wire.API.Federation.Error
+    Wire.API.Federation.HasNotificationEndpoint
+    Wire.API.Federation.Version
+
+  other-modules:      Paths_wire_api_federation
+  hs-source-dirs:     src
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    BlockArguments
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -Wredundant-constraints -Wunused-packages
+
   build-depends:
-      QuickCheck >=2.13
-    , aeson >=1.4
+      aeson                  >=2.0.1.0
+    , amqp
     , async
-    , base >=4.6 && <5.0
+    , base                   >=4.6     && <5.0
     , bytestring
     , bytestring-conversion
-    , case-insensitive
     , containers
-    , either
-    , errors
+    , dns-util
     , exceptions
+    , HsOpenSSL
+    , http-media
     , http-types
     , http2
+    , http2-manager
     , imports
-    , lifted-base
+    , kan-extensions
+    , lens
     , metrics-wai
     , mtl
-    , network
-    , servant >=0.16
+    , openapi3
+    , QuickCheck             >=2.13
+    , schema-profunctor
+    , servant                >=0.16
     , servant-client
     , servant-client-core
+    , servant-openapi3
     , servant-server
-    , sop-core
-    , streaming-commons
-    , template-haskell
-    , text >=0.11
-    , time >=1.8
-    , time-manager
-    , tls
+    , singletons-base
+    , text                   >=0.11
+    , time                   >=1.8
+    , transformers
     , types-common
     , wai-utilities
     , wire-api
-  default-language: Haskell2010
+
+  default-language:   GHC2021
 
 test-suite spec
-  type: exitcode-stdio-1.0
-  main-is: Spec.hs
+  type:               exitcode-stdio-1.0
+  main-is:            Main.hs
+
+  -- cabal-fmt: expand test
   other-modules:
-      Test.Wire.API.Federation.API.BrigSpec
-      Test.Wire.API.Federation.Golden.ConversationUpdate
-      Test.Wire.API.Federation.Golden.GoldenSpec
-      Test.Wire.API.Federation.Golden.LeaveConversationRequest
-      Test.Wire.API.Federation.Golden.LeaveConversationResponse
-      Test.Wire.API.Federation.Golden.MessageSendResponse
-      Test.Wire.API.Federation.Golden.NewConnectionRequest
-      Test.Wire.API.Federation.Golden.NewConnectionResponse
-      Test.Wire.API.Federation.Golden.NewRemoteConversation
-      Test.Wire.API.Federation.Golden.Runner
-      Paths_wire_api_federation
-  hs-source-dirs:
-      test
-  default-extensions: AllowAmbiguousTypes BangPatterns ConstraintKinds DataKinds DefaultSignatures DerivingStrategies DerivingVia DeriveFunctor DeriveGeneric DeriveLift DeriveTraversable EmptyCase FlexibleContexts FlexibleInstances FunctionalDependencies GADTs InstanceSigs KindSignatures LambdaCase MultiParamTypeClasses MultiWayIf NamedFieldPuns NoImplicitPrelude OverloadedStrings PackageImports PatternSynonyms PolyKinds QuasiQuotes RankNTypes ScopedTypeVariables StandaloneDeriving TemplateHaskell TupleSections TypeApplications TypeFamilies TypeFamilyDependencies TypeOperators UndecidableInstances ViewPatterns
-  ghc-options: -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path -threaded -rtsopts -with-rtsopts=-N
-  build-tool-depends:
-      hspec-discover:hspec-discover
+    Main
+    Test.Wire.API.Federation.API.BrigSpec
+    Test.Wire.API.Federation.Golden.ConversationCreated
+    Test.Wire.API.Federation.Golden.ConversationUpdate
+    Test.Wire.API.Federation.Golden.GetOne2OneConversationResponse
+    Test.Wire.API.Federation.Golden.GoldenSpec
+    Test.Wire.API.Federation.Golden.LeaveConversationRequest
+    Test.Wire.API.Federation.Golden.LeaveConversationResponse
+    Test.Wire.API.Federation.Golden.MessageSendResponse
+    Test.Wire.API.Federation.Golden.MLSMessageSendingStatus
+    Test.Wire.API.Federation.Golden.NewConnectionRequest
+    Test.Wire.API.Federation.Golden.NewConnectionResponse
+    Test.Wire.API.Federation.Golden.Runner
+
+  hs-source-dirs:     test
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+  ghc-options:
+    -O2 -Wall -Wincomplete-uni-patterns -Wincomplete-record-updates
+    -Wpartial-fields -fwarn-tabs -optP-Wno-nonportable-include-path
+    -threaded -rtsopts -with-rtsopts=-N -Wredundant-constraints
+    -Wunused-packages
+
+  build-tool-depends: hspec-discover:hspec-discover
   build-depends:
-      HUnit
-    , QuickCheck >=2.13
-    , aeson >=1.4
+      aeson                >=2.0.1.0
     , aeson-pretty
-    , async
-    , base >=4.6 && <5.0
+    , base                 >=4.6     && <5.0
     , bytestring
-    , bytestring-conversion
-    , case-insensitive
     , containers
-    , either
-    , errors
-    , exceptions
     , hspec
-    , http-types
-    , http2
+    , HUnit
     , imports
-    , lifted-base
-    , metrics-wai
-    , mtl
-    , network
-    , retry
-    , servant >=0.16
-    , servant-client
-    , servant-client-core
-    , servant-server
-    , sop-core
-    , streaming-commons
-    , template-haskell
-    , text >=0.11
-    , time >=1.8
-    , time-manager
-    , tls
+    , QuickCheck           >=2.13
+    , singletons
+    , time
     , types-common
     , uuid
-    , wai-utilities
     , wire-api
     , wire-api-federation
-  default-language: Haskell2010
+
+  default-language:   GHC2021

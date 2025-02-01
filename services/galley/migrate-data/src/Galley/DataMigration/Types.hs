@@ -2,7 +2,7 @@
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,11 +19,11 @@
 
 module Galley.DataMigration.Types where
 
-import qualified Cassandra as C
+import Cassandra qualified as C
 import Control.Monad.Catch (MonadThrow)
 import Imports
 import Numeric.Natural (Natural)
-import qualified System.Logger as Logger
+import System.Logger qualified as Logger
 import System.Logger.Class (MonadLogger (..))
 
 data Migration = Migration
@@ -42,7 +42,8 @@ newtype MigrationActionT m a = MigrationActionT {unMigrationAction :: ReaderT En
       Monad,
       MonadIO,
       MonadThrow,
-      MonadReader Env
+      MonadReader Env,
+      MonadUnliftIO
     )
 
 instance MonadTrans MigrationActionT where
@@ -52,7 +53,7 @@ instance (MonadIO m, MonadThrow m) => C.MonadClient (MigrationActionT m) where
   liftClient = liftCassandra
   localState f = local (\env -> env {cassandraClientState = f $ cassandraClientState env})
 
-instance MonadIO m => MonadLogger (MigrationActionT m) where
+instance (MonadIO m) => MonadLogger (MigrationActionT m) where
   log level f = do
     env <- ask
     Logger.log (logger env) level f
@@ -66,7 +67,7 @@ runMigrationAction :: Env -> MigrationActionT m a -> m a
 runMigrationAction env action =
   runReaderT (unMigrationAction action) env
 
-liftCassandra :: MonadIO m => C.Client a -> MigrationActionT m a
+liftCassandra :: (MonadIO m) => C.Client a -> MigrationActionT m a
 liftCassandra m = do
   env <- ask
   lift $ C.runClient (cassandraClientState env) m

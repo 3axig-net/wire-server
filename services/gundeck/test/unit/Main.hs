@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,33 +20,27 @@ module Main
   )
 where
 
-import Data.Metrics.Test (pathsConsistencyCheck)
-import Data.Metrics.WaiRoute (treeToPaths)
-import qualified DelayQueue
-import qualified Gundeck.API
+import Aws.Arn qualified
+import DelayQueue qualified
 import Imports
-import qualified Json
-import qualified Native
-import Network.Wai.Utilities.Server (compile)
+import Json qualified
+import Native qualified
 import OpenSSL (withOpenSSL)
-import qualified Push
+import ParseExistsError qualified
+import Push qualified
 import Test.Tasty
-import Test.Tasty.HUnit
-import qualified ThreadBudget
+import ThreadBudget qualified
 
 main :: IO ()
 main =
   withOpenSSL . defaultMain $
     testGroup
       "Main"
-      [ testCase "sitemap" $
-          assertEqual
-            "inconcistent sitemap"
-            mempty
-            (pathsConsistencyCheck . treeToPaths . compile $ Gundeck.API.sitemap),
-        DelayQueue.tests,
+      [ DelayQueue.tests,
         Json.tests,
         Native.tests,
         Push.tests,
-        ThreadBudget.tests
+        ThreadBudget.tests,
+        ParseExistsError.tests,
+        Aws.Arn.tests
       ]

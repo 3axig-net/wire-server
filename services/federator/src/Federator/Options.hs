@@ -1,9 +1,8 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -21,50 +20,20 @@
 module Federator.Options where
 
 import Data.Aeson
-import Data.Domain (Domain ())
 import Imports
 import System.Logger.Extended (Level, LogFormat)
 import Util.Options
 
-newtype AllowedDomains = AllowedDomains {allowedDomains :: [Domain]}
-  deriving (Eq, Show, Generic)
-  deriving newtype (FromJSON, ToJSON)
-
-data FederationStrategy
-  = -- | This backend allows federating with any other Wire-Server backend
-    AllowAll
-  | -- | Any backend explicitly configured in a FederationAllowList
-    AllowList AllowedDomains
-  deriving (Eq, Show, Generic)
-
-instance ToJSON FederationStrategy where
-  toJSON AllowAll =
-    object
-      [ "allowAll" .= object []
-      ]
-  toJSON (AllowList domains) =
-    object
-      [ "allowedDomains" .= domains
-      ]
-
-instance FromJSON FederationStrategy where
-  parseJSON = withObject "FederationStrategy" $ \o -> do
-    -- Only inspect field content once we committed to one, for better error messages.
-    allowAll :: Maybe Value <- o .:! "allowAll"
-    allowList :: Maybe Value <- o .:! "allowedDomains"
-    case (allowAll, allowList) of
-      (Just _, Nothing) -> pure AllowAll -- accept any content
-      (Nothing, Just l) -> AllowList <$> parseJSON l
-      _ -> fail "invalid FederationStrategy: expected either allowAll or allowedDomains"
-
 -- | Options that persist as runtime settings.
 data RunSettings = RunSettings
   { -- | Would you like to federate with everyone or only with a select set of other wire-server installations?
-    federationStrategy :: FederationStrategy,
     useSystemCAStore :: Bool,
     remoteCAStore :: Maybe FilePath,
     clientCertificate :: FilePath,
     clientPrivateKey :: FilePath,
+    -- | Timeout for making TCP connections (for http2) with remote federators
+    -- and local components. In microseconds.
+    tcpConnectionTimeout :: Int,
     dnsHost :: Maybe String,
     dnsPort :: Maybe Word16
   }
@@ -83,6 +52,8 @@ data Opts = Opts
     brig :: Endpoint,
     -- | Host and port of galley
     galley :: Endpoint,
+    -- | Host and port of cargohold
+    cargohold :: Endpoint,
     -- | Log level (Debug, Info, etc)
     logLevel :: Level,
     -- | Use netstrings encoding (see <http://cr.yp.to/proto/netstrings.txt>)

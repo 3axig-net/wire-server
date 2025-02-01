@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -19,7 +19,7 @@ module Test.Wire.API.Federation.Golden.LeaveConversationRequest where
 
 import Data.Id (Id (Id))
 import Data.Maybe (fromJust)
-import qualified Data.UUID as UUID
+import Data.UUID qualified as UUID
 import Wire.API.Federation.API.Galley (LeaveConversationRequest (LeaveConversationRequest))
 
 testObject_LeaveConversationRequest1 :: LeaveConversationRequest

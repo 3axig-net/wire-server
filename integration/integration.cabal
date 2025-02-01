@@ -1,0 +1,293 @@
+cabal-version: 3.0
+name:          integration
+version:       0.1.0
+description:   Wire integration tests
+category:      Network
+author:        Wire Swiss GmbH
+maintainer:    Wire Swiss GmbH <backend@wire.com>
+copyright:     (c) 2023 Wire Swiss GmbH
+license:       AGPL-3.0-only
+license-file:  LICENSE
+build-type:    Custom
+
+custom-setup
+  setup-depends:
+    , base
+    , Cabal             >=3.12
+    , containers
+    , directory
+    , filepath
+    , haskell-src-exts
+
+common common-all
+  default-language:   GHC2021
+  ghc-options:
+    -Wall -Wpartial-fields -fwarn-tabs -Wno-incomplete-uni-patterns
+
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    BlockArguments
+    ConstraintKinds
+    DataKinds
+    DefaultSignatures
+    DeriveFunctor
+    DeriveGeneric
+    DeriveLift
+    DeriveTraversable
+    DerivingStrategies
+    DerivingVia
+    DuplicateRecordFields
+    EmptyCase
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    InstanceSigs
+    KindSignatures
+    LambdaCase
+    MultiParamTypeClasses
+    MultiWayIf
+    NamedFieldPuns
+    NoImplicitPrelude
+    NoImportQualifiedPost
+    OverloadedLabels
+    OverloadedRecordDot
+    PackageImports
+    PatternSynonyms
+    PolyKinds
+    QuasiQuotes
+    RankNTypes
+    RecordWildCards
+    ScopedTypeVariables
+    StandaloneDeriving
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeFamilyDependencies
+    TypeOperators
+    UndecidableInstances
+    ViewPatterns
+
+executable integration
+  import:        common-all
+  main-is:       ./main.hs
+  ghc-options:   -threaded -with-rtsopts=-N
+  build-depends: integration
+
+executable run-services
+  import:        common-all
+  main-is:       ./run-services.hs
+  ghc-options:   -threaded -with-rtsopts=-N
+  build-depends: integration
+
+library
+  import:          common-all
+  hs-source-dirs:  test
+
+  -- cabal-fmt: expand test
+  exposed-modules:
+    API.Brig
+    API.BrigCommon
+    API.BrigInternal
+    API.Cargohold
+    API.Common
+    API.Federator
+    API.Galley
+    API.GalleyInternal
+    API.Gundeck
+    API.GundeckInternal
+    API.Nginz
+    API.Spar
+    API.SparInternal
+    MLS.Util
+    Notifications
+    RunAllTests
+    SetupHelpers
+    Test.AccessUpdate
+    Test.AssetDownload
+    Test.AssetUpload
+    Test.B2B
+    Test.Bot
+    Test.Brig
+    Test.Cargohold.API
+    Test.Cargohold.API.Federation
+    Test.Cargohold.API.Util
+    Test.Cargohold.API.V3
+    Test.Cargohold.Metrics
+    Test.Client
+    Test.Connection
+    Test.Conversation
+    Test.Demo
+    Test.DNSMock
+    Test.DomainVerification
+    Test.EJPD
+    Test.EnterpriseLogin
+    Test.Errors
+    Test.Events
+    Test.ExternalPartner
+    Test.FeatureFlags
+    Test.FeatureFlags.AppLock
+    Test.FeatureFlags.ClassifiedDomains
+    Test.FeatureFlags.ConferenceCalling
+    Test.FeatureFlags.DigitalSignatures
+    Test.FeatureFlags.DomainRegistration
+    Test.FeatureFlags.EnforceFileDownloadLocation
+    Test.FeatureFlags.FileSharing
+    Test.FeatureFlags.GuestLinks
+    Test.FeatureFlags.Initialisation
+    Test.FeatureFlags.LegalHold
+    Test.FeatureFlags.Mls
+    Test.FeatureFlags.MlsE2EId
+    Test.FeatureFlags.MlsMigration
+    Test.FeatureFlags.OutlookCalIntegration
+    Test.FeatureFlags.SearchVisibilityAvailable
+    Test.FeatureFlags.SearchVisibilityInbound
+    Test.FeatureFlags.SelfDeletingMessages
+    Test.FeatureFlags.SndFactorPasswordChallenge
+    Test.FeatureFlags.SSO
+    Test.FeatureFlags.User
+    Test.FeatureFlags.Util
+    Test.FeatureFlags.ValidateSAMLEmails
+    Test.Federation
+    Test.Federator
+    Test.LegalHold
+    Test.Login
+    Test.MessageTimer
+    Test.MLS
+    Test.MLS.KeyPackage
+    Test.MLS.Keys
+    Test.MLS.Message
+    Test.MLS.Notifications
+    Test.MLS.One2One
+    Test.MLS.Services
+    Test.MLS.SubConversation
+    Test.MLS.Unreachable
+    Test.Notifications
+    Test.OAuth
+    Test.PasswordReset
+    Test.Presence
+    Test.Property
+    Test.Provider
+    Test.PushToken
+    Test.Roles
+    Test.Search
+    Test.Services
+    Test.Spar
+    Test.Spar.STM
+    Test.Swagger
+    Test.Teams
+    Test.TeamSettings
+    Test.User
+    Test.Version
+    Testlib.App
+    Testlib.Assertions
+    Testlib.Cannon
+    Testlib.Certs
+    Testlib.Env
+    Testlib.HTTP
+    Testlib.JSON
+    Testlib.Mock
+    Testlib.MockIntegrationService
+    Testlib.ModService
+    Testlib.One2One
+    Testlib.Options
+    Testlib.Ports
+    Testlib.Prekeys
+    Testlib.Prelude
+    Testlib.Printing
+    Testlib.PTest
+    Testlib.ResourcePool
+    Testlib.Run
+    Testlib.RunServices
+    Testlib.Types
+    Testlib.VersionedFed
+    Testlib.XML
+
+  build-depends:
+    , aeson
+    , aeson-diff
+    , aeson-pretty
+    , array
+    , asn1-encoding
+    , asn1-types
+    , async
+    , attoparsec
+    , base
+    , base16-bytestring
+    , base64-bytestring
+    , bytestring
+    , bytestring-conversion
+    , case-insensitive
+    , containers
+    , cookie
+    , cql
+    , cql-io
+    , criterion
+    , cryptobox-haskell
+    , crypton
+    , crypton-x509
+    , cryptostore
+    , data-default
+    , data-timeout
+    , deriving-aeson
+    , directory
+    , dns
+    , errors
+    , exceptions
+    , extended
+    , extra
+    , filepath
+    , hex
+    , hourglass
+    , HsOpenSSL
+    , http-client
+    , http-types
+    , kan-extensions
+    , lens
+    , lens-aeson
+    , memory
+    , mime
+    , monad-control
+    , mtl
+    , network
+    , network-uri
+    , optparse-applicative
+    , pem
+    , process
+    , proto-lens
+    , random
+    , raw-strings-qq
+    , regex-base
+    , regex-tdfa
+    , retry
+    , saml2-web-sso
+    , scientific
+    , servant
+    , servant-client
+    , split
+    , stm
+    , streaming-commons
+    , string-conversions
+    , system-linux-proc
+    , tagged
+    , temporary
+    , text
+    , time
+    , transformers
+    , transformers-base
+    , unix
+    , unliftio
+    , uuid
+    , vector
+    , wai
+    , wai-route
+    , warp
+    , warp-tls
+    , websockets
+    , wire-message-proto-lens
+    , wreq
+    , xml
+    , xml-conduit
+    , yaml

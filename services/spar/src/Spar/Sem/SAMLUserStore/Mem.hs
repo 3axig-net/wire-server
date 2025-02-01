@@ -1,9 +1,29 @@
 {-# OPTIONS_GHC -fplugin=Polysemy.Plugin #-}
 
-module Spar.Sem.SAMLUserStore.Mem where
+-- This file is part of the Wire Server implementation.
+--
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
+--
+-- This program is free software: you can redistribute it and/or modify it under
+-- the terms of the GNU Affero General Public License as published by the Free
+-- Software Foundation, either version 3 of the License, or (at your option) any
+-- later version.
+--
+-- This program is distributed in the hope that it will be useful, but WITHOUT
+-- ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+-- FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+-- details.
+--
+-- You should have received a copy of the GNU Affero General Public License along
+-- with this program. If not, see <https://www.gnu.org/licenses/>.
+
+module Spar.Sem.SAMLUserStore.Mem
+  ( samlUserStoreToMem,
+    UserRefOrd,
+  )
+where
 
 import Control.Lens (view)
-import Data.Coerce (coerce)
 import Data.Id
 import qualified Data.Map as M
 import Imports
@@ -14,7 +34,7 @@ import qualified SAML2.WebSSO as SAML
 import Spar.Sem.SAMLUserStore
 
 newtype UserRefOrd = UserRefOrd {unUserRefOrd :: SAML.UserRef}
-  deriving (Eq)
+  deriving (Eq, Show)
 
 instance Ord UserRefOrd where
   compare (UserRefOrd (SAML.UserRef is ni)) (UserRefOrd (SAML.UserRef is' ni')) =
@@ -25,10 +45,12 @@ samlUserStoreToMem = (runState @(Map UserRefOrd UserId) mempty .) $
   reinterpret $ \case
     Insert ur uid -> modify $ M.insert (UserRefOrd ur) uid
     Get ur -> gets $ M.lookup $ UserRefOrd ur
-    GetAnyByIssuer is -> gets $ fmap snd . find (eqIssuer is . fst) . M.toList
-    GetSomeByIssuer is -> gets $ coerce . filter (eqIssuer is . fst) . M.toList
     DeleteByIssuer is -> modify $ M.filterWithKey (\ref _ -> not $ eqIssuer is ref)
     Delete _uid ur -> modify $ M.delete $ UserRefOrd ur
+    -- 'GetAllByIssuerPaginated' and 'NextPage' are workarounds, please also see docs at
+    -- 'Spar.Sem.SAMLUserStore.Cassandra.getAllSAMLUsersByIssuerPaginated'
+    GetAllByIssuerPaginated _is -> error "not implemented as this has a dependency to Cassandra"
+    NextPage _ -> error "not implemented as this has a dependency to Cassandra"
   where
     eqIssuer :: SAML.Issuer -> UserRefOrd -> Bool
     eqIssuer is = (== is) . view uidTenant . unUserRefOrd

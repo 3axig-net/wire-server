@@ -1,9 +1,13 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# OPTIONS_GHC -Wno-ambiguous-fields #-}
+-- Disabling to stop errors on Getters
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -20,50 +24,45 @@
 
 module Brig.Options where
 
-import Brig.Queue.Types (Queue (..))
-import Brig.SMTP (SMTPConnType (..))
-import Brig.Types
+import Brig.Queue.Types (QueueOpts (..))
 import Brig.User.Auth.Cookie.Limit
-import Brig.Whitelist (Whitelist (..))
-import qualified Brig.ZAuth as ZAuth
-import qualified Control.Lens as Lens
-import Data.Aeson (withText)
-import qualified Data.Aeson as Aeson
-import Data.Aeson.Types (typeMismatch)
-import qualified Data.Char as Char
+import Brig.ZAuth qualified as ZAuth
+import Control.Applicative
+import Control.Lens hiding (Level, element, enum)
+import Data.Aeson
+import Data.Aeson.Types qualified as A
+import Data.Char qualified as Char
+import Data.Code qualified as Code
+import Data.Default
 import Data.Domain (Domain (..))
 import Data.Id
+import Data.LanguageCodes (ISO639_1 (EN))
 import Data.Misc (HttpsUrl)
+import Data.Nonce
 import Data.Range
-import Data.Scientific (toBoundedInteger)
-import qualified Data.Text as Text
-import qualified Data.Text.Encoding as Text
-import Data.Time.Clock (DiffTime, NominalDiffTime, secondsToDiffTime)
-import Data.Yaml (FromJSON (..), ToJSON (..), (.:), (.:?))
-import qualified Data.Yaml as Y
+import Data.Schema
+import Data.Text qualified as Text
+import Data.Text.Encoding qualified as Text
+import Database.Bloodhound.Types qualified as ES
 import Imports
-import qualified Network.DNS as DNS
+import Network.AMQP.Extended
+import Network.DNS qualified as DNS
 import System.Logger.Extended (Level, LogFormat)
 import Util.Options
-import Wire.API.Arbitrary (Arbitrary, GenericUniform (GenericUniform))
-import qualified Wire.API.Team.Feature as ApiFT
-
-newtype Timeout = Timeout
-  { timeoutDiff :: NominalDiffTime
-  }
-  deriving newtype (Eq, Enum, Ord, Num, Real, Fractional, RealFrac, Show)
-
-instance Read Timeout where
-  readsPrec i s =
-    case readsPrec i s of
-      [(x :: Int, s')] -> [(Timeout (fromIntegral x), s')]
-      _ -> []
+import Util.SuffixNamer
+import Util.Timeout
+import Wire.API.Allowlists (AllowlistEmailDomains (..))
+import Wire.API.Routes.FederationDomainConfig
+import Wire.API.Routes.Version
+import Wire.API.Team.Feature
+import Wire.API.User
+import Wire.EmailSending.SMTP (SMTPConnType (..))
 
 data ElasticSearchOpts = ElasticSearchOpts
   { -- | ElasticSearch URL
-    url :: !Text,
+    url :: !ES.Server,
     -- | The name of the ElasticSearch user index
-    index :: !Text,
+    index :: !ES.IndexName,
     -- | An additional index to write user data, useful while migrating to a new
     -- index.
     -- There is a bug hidden when using this option. Sometimes a user won't get
@@ -72,7 +71,20 @@ data ElasticSearchOpts = ElasticSearchOpts
     -- tools/db/find-undead which can be used to find the undead users right
     -- after the migration, if they exist, we can run the reindexing to get data
     -- in elasticsearch in a consistent state.
-    additionalWriteIndex :: !(Maybe Text)
+    additionalWriteIndex :: !(Maybe ES.IndexName),
+    -- | An additional ES URL to write user data, useful while migrating to a
+    -- new instance of ES. It is necessary to provide 'additionalWriteIndex' for
+    -- this to be used. If this is 'Nothing' and 'additionalWriteIndex' is
+    -- configured, the 'url' field will be used.
+    additionalWriteIndexUrl :: !(Maybe ES.Server),
+    -- | Elasticsearch credentials
+    credentials :: !(Maybe FilePathSecrets),
+    -- | Credentials for additional ES index (maily used for migrations)
+    additionalCredentials :: !(Maybe FilePathSecrets),
+    insecureSkipVerifyTls :: Bool,
+    caCert :: Maybe FilePath,
+    additionalInsecureSkipVerifyTls :: Bool,
+    additionalCaCert :: Maybe FilePath
   }
   deriving (Show, Generic)
 
@@ -129,28 +141,26 @@ data EmailSMTPOpts = EmailSMTPOpts
 instance FromJSON EmailSMTPOpts
 
 data StompOpts = StompOpts
-  { stompHost :: !Text,
-    stompPort :: !Int,
-    stompTls :: !Bool
+  { host :: !Text,
+    port :: !Int,
+    tls :: !Bool
   }
   deriving (Show, Generic)
 
-instance FromJSON StompOpts
-
 data InternalEventsOpts = InternalEventsOpts
-  { internalEventsQueue :: !Queue
+  { internalEventsQueue :: !QueueOpts
   }
   deriving (Show)
 
 instance FromJSON InternalEventsOpts where
-  parseJSON = Y.withObject "InternalEventsOpts" $ \o ->
-    InternalEventsOpts <$> parseJSON (Y.Object o)
+  parseJSON = withObject "InternalEventsOpts" $ \o ->
+    InternalEventsOpts <$> parseJSON (Object o)
 
 data EmailSMSGeneralOpts = EmailSMSGeneralOpts
   { -- | Email, SMS, ... template directory
     templateDir :: !FilePath,
     -- | Email sender address
-    emailSender :: !Email,
+    emailSender :: !EmailAddress,
     -- | Twilio sender identifier (sender phone number in E.104 format)
     --   or twilio messaging sender ID - see
     --   https://www.twilio.com/docs/sms/send-messages#use-an-alphanumeric-sender-id
@@ -202,7 +212,7 @@ data ProviderOpts = ProviderOpts
     -- | Approval URL template
     approvalUrl :: !Text,
     -- | Approval email recipient
-    approvalTo :: !Email,
+    approvalTo :: !EmailAddress,
     -- | Password reset URL template
     providerPwResetUrl :: !Text
   }
@@ -213,6 +223,8 @@ instance FromJSON ProviderOpts
 data TeamOpts = TeamOpts
   { -- | Team Invitation URL template
     tInvitationUrl :: !Text,
+    -- | Existing User Invitation URL template
+    tExistingUserInvitationUrl :: !Text,
     -- | Team Activation URL template
     tActivationUrl :: !Text,
     -- | Team Creator Welcome URL
@@ -286,13 +298,8 @@ instance FromJSON ZAuthOpts
 
 -- | TURN server options
 data TurnOpts = TurnOpts
-  { -- | Line separated file with IP addresses of
-    --   available TURN servers supporting UDP
-    servers :: !FilePath,
-    -- | Line separated file with hostnames of all
-    --   available TURN servers with all protocols
-    --   and transports
-    serversV2 :: !FilePath,
+  { -- | Where to get list of turn servers from
+    serversSource :: !TurnServersSource,
     -- | TURN shared secret file path
     secret :: !FilePath,
     -- | For how long TURN credentials should be
@@ -302,37 +309,63 @@ data TurnOpts = TurnOpts
     --   should be fetched, in seconds
     configTTL :: !Word32
   }
-  deriving (Show, Generic)
+  deriving (Show)
 
-instance FromJSON TurnOpts
+instance FromJSON TurnOpts where
+  parseJSON = withObject "TurnOpts" $ \o -> do
+    sourceName <- o .: "serversSource"
+    source <-
+      case sourceName of
+        "files" -> TurnSourceFiles <$> parseJSON (Object o)
+        "dns" -> TurnSourceDNS <$> parseJSON (Object o)
+        _ -> fail $ "TurnOpts: Invalid sourceType, expected one of [files, dns] but got: " <> Text.unpack sourceName
+    TurnOpts source
+      <$> o .: "secret"
+      <*> o .: "tokenTTL"
+      <*> o .: "configTTL"
 
--- | Configurations for whether to show a user's email to others.
-data EmailVisibility
-  = -- | Anyone can see the email of someone who is on ANY team.
-    --         This may sound strange; but certain on-premise hosters have many different teams
-    --         and still want them to see each-other's emails.
-    EmailVisibleIfOnTeam
-  | -- | Anyone on your team with at least 'Member' privileges can see your email address.
-    EmailVisibleIfOnSameTeam
-  | -- | Show your email only to yourself
-    EmailVisibleToSelf
-  deriving (Eq, Show, Bounded, Enum)
+data TurnServersSource
+  = TurnSourceDNS TurnDnsOpts
+  | TurnSourceFiles TurnServersFiles
+  deriving (Show)
 
-instance FromJSON EmailVisibility where
-  parseJSON = withText "EmailVisibility" $ \case
-    "visible_if_on_team" -> pure EmailVisibleIfOnTeam
-    "visible_if_on_same_team" -> pure EmailVisibleIfOnSameTeam
-    "visible_to_self" -> pure EmailVisibleToSelf
-    _ ->
-      fail $
-        "unexpected value for EmailVisibility settings: "
-          <> "expected one of "
-          <> show (Aeson.encode <$> [(minBound :: EmailVisibility) ..])
+data TurnServersFiles = TurnServersFiles
+  { tsfServers :: !FilePath,
+    tsfServersV2 :: !FilePath
+  }
+  deriving (Show)
 
-instance ToJSON EmailVisibility where
-  toJSON EmailVisibleIfOnTeam = "visible_if_on_team"
-  toJSON EmailVisibleIfOnSameTeam = "visible_if_on_same_team"
-  toJSON EmailVisibleToSelf = "visible_to_self"
+instance FromJSON TurnServersFiles where
+  parseJSON = withObject "TurnServersFiles" $ \o ->
+    TurnServersFiles
+      <$> o .: "servers"
+      <*> o .: "serversV2"
+
+data TurnDnsOpts = TurnDnsOpts
+  { tdoBaseDomain :: DNS.Domain,
+    tdoDiscoveryIntervalSeconds :: !(Maybe DiffTime)
+  }
+  deriving (Show)
+
+instance FromJSON TurnDnsOpts where
+  parseJSON = withObject "TurnDnsOpts" $ \o ->
+    TurnDnsOpts
+      <$> (asciiOnly =<< o .: "baseDomain")
+      <*> o .:? "discoveryIntervalSeconds"
+
+data ListAllSFTServers
+  = ListAllSFTServers
+  | HideAllSFTServers
+  deriving (Show, Eq, Ord)
+  deriving (FromJSON) via Schema ListAllSFTServers
+
+instance ToSchema ListAllSFTServers where
+  schema =
+    enum @Text "ListSFTServers" $
+      mconcat
+        [ element "enabled" ListAllSFTServers,
+          element "disabled" HideAllSFTServers
+        ]
 
 -- | Options that are consumed on startup
 data Opts = Opts
@@ -343,22 +376,30 @@ data Opts = Opts
     cargohold :: !Endpoint,
     -- | Galley address
     galley :: !Endpoint,
+    -- | Spar address
+    spar :: !Endpoint,
     -- | Gundeck address
     gundeck :: !Endpoint,
     -- | Federator address
     federatorInternal :: !(Maybe Endpoint),
+    -- | Wire Server Enterprise address
+    wireServerEnterprise :: !(Maybe Endpoint),
     -- external
 
     -- | Cassandra settings
     cassandra :: !CassandraOpts,
     -- | ElasticSearch settings
     elasticsearch :: !ElasticSearchOpts,
+    -- | SFT Federation
+    multiSFT :: !(Maybe Bool),
+    -- | RabbitMQ settings, required when federation is enabled.
+    rabbitmq :: !(Maybe AmqpEndpoint),
     -- | AWS settings
     aws :: !AWSOpts,
     -- | Enable Random Prekey Strategy
     randomPrekeys :: !(Maybe Bool),
     -- | STOMP broker settings
-    stomp :: !(Maybe StompOpts),
+    stompOptions :: !(Maybe StompOpts),
     -- Email & SMS
 
     -- | Email and SMS settings
@@ -371,8 +412,6 @@ data Opts = Opts
 
     -- | Disco URL
     discoUrl :: !(Maybe Text),
-    -- | GeoDB file path
-    geoDb :: !(Maybe FilePath),
     -- | Event queue for
     --   Brig-generated events (e.g.
     --   user deletion)
@@ -392,176 +431,290 @@ data Opts = Opts
     -- | SFT Settings
     sft :: !(Maybe SFTOptions),
     -- | Runtime settings
-    optSettings :: !Settings
+    settings :: !Settings
   }
   deriving (Show, Generic)
 
 -- | Options that persist as runtime settings.
 data Settings = Settings
   { -- | Activation timeout, in seconds
-    setActivationTimeout :: !Timeout,
+    activationTimeout :: !Timeout,
+    -- | Default verification code timeout, in seconds
+    -- use `verificationTimeout` as the getter function which always provides a default value
+    verificationCodeTimeoutInternal :: !(Maybe Code.Timeout),
     -- | Team invitation timeout, in seconds
-    setTeamInvitationTimeout :: !Timeout,
+    teamInvitationTimeout :: !Timeout,
     -- | Check for expired users every so often, in seconds
-    setExpiredUserCleanupTimeout :: !(Maybe Timeout),
-    -- | Twilio credentials
-    setTwilio :: !FilePathSecrets,
-    -- | Nexmo credentials
-    setNexmo :: !FilePathSecrets,
+    expiredUserCleanupTimeout :: !(Maybe Timeout),
     -- | STOMP broker credentials
-    setStomp :: !(Maybe FilePathSecrets),
+    stomp :: !(Maybe FilePathSecrets),
     -- | Whitelist of allowed emails/phones
-    setWhitelist :: !(Maybe Whitelist),
+    allowlistEmailDomains :: !(Maybe AllowlistEmailDomains),
     -- | Max. number of sent/accepted
     --   connections per user
-    setUserMaxConnections :: !Int64,
+    userMaxConnections :: !Int64,
     -- | Max. number of permanent clients per user
-    setUserMaxPermClients :: !(Maybe Int),
+    userMaxPermClients :: !(Maybe Int),
     -- | Whether to allow plain HTTP transmission
     --   of cookies (for testing purposes only)
-    setCookieInsecure :: !Bool,
+    cookieInsecure :: !Bool,
     -- | Minimum age of a user cookie before
     --   it is renewed during token refresh
-    setUserCookieRenewAge :: !Integer,
+    userCookieRenewAge :: !Integer,
     -- | Max. # of cookies per user and cookie type
-    setUserCookieLimit :: !Int,
-    -- | Throttling settings (not to be confused
+    userCookieLimit :: !Int,
+    -- | Throttling tings (not to be confused
     -- with 'LoginRetryOpts')
-    setUserCookieThrottle :: !CookieThrottle,
+    userCookieThrottle :: !CookieThrottle,
     -- | Block user from logging in
     -- for m minutes after n failed
     -- logins
-    setLimitFailedLogins :: !(Maybe LimitFailedLogins),
+    limitFailedLogins :: !(Maybe LimitFailedLogins),
     -- | If last cookie renewal is too long ago,
     -- suspend the user.
-    setSuspendInactiveUsers :: !(Maybe SuspendInactiveUsers),
+    suspendInactiveUsers :: !(Maybe SuspendInactiveUsers),
     -- | Max size of rich info (number of chars in
     --   field names and values), should be in sync
     --   with Spar
-    setRichInfoLimit :: !Int,
-    -- | Default locale to use
-    --   (e.g. when selecting templates)
-    setDefaultLocale :: !Locale,
+    richInfoLimit :: !Int,
+    -- | Default locale to use when selecting templates
+    -- use `defaultTemplateLocale` as the getter function which always provides a default value
+    defaultTemplateLocaleInternal :: !(Maybe Locale),
+    -- | Default locale to use for users
+    -- use `defaultUserLocale` as the getter function which always provides a default value
+    defaultUserLocaleInternal :: !(Maybe Locale),
     -- | Max. # of members in a team.
     --   NOTE: This must be in sync with galley
-    setMaxTeamSize :: !Word32,
+    maxTeamSize :: !Word32,
     -- | Max. # of members in a conversation.
     --   NOTE: This must be in sync with galley
-    setMaxConvSize :: !Word16,
+    maxConvSize :: !Word16,
     -- | Filter ONLY services with
     --   the given provider id
-    setProviderSearchFilter :: !(Maybe ProviderId),
+    providerSearchFilter :: !(Maybe ProviderId),
     -- | Whether to expose user emails and to whom
-    setEmailVisibility :: !EmailVisibility,
-    setPropertyMaxKeyLen :: !(Maybe Int64),
-    setPropertyMaxValueLen :: !(Maybe Int64),
+    emailVisibility :: !EmailVisibilityConfig,
+    propertyMaxKeyLen :: !(Maybe Int64),
+    propertyMaxValueLen :: !(Maybe Int64),
     -- | How long, in milliseconds, to wait
     -- in between processing delete events
     -- from the internal delete queue
-    setDeleteThrottleMillis :: !(Maybe Int),
+    deleteThrottleMillis :: !(Maybe Int),
     -- | When true, search only
     -- returns users from the same team
-    setSearchSameTeamOnly :: !(Maybe Bool),
+    searchSameTeamOnly :: !(Maybe Bool),
     -- | FederationDomain is required, even when not wanting to federate with other backends
-    -- (in that case the 'setFederationAllowedDomains' can be set to empty in Federator)
+    -- (in that case the 'federationStrategy' can be set to `allowNone` below, or to
+    -- `allowDynamic` while keeping the list of allowed domains empty, see
+    -- https://docs.wire.com/understand/federation/backend-communication.html#configuring-remote-connections)
     -- Federation domain is used to qualify local IDs and handles,
     -- e.g. 0c4d8944-70fa-480e-a8b7-9d929862d18c@wire.com and somehandle@wire.com.
     -- It should also match the SRV DNS records under which other wire-server installations can find this backend:
-    --    _wire-server-federator._tcp.<federationDomain>
-    -- Once set, DO NOT change it: if you do, existing users may have a broken experience and/or stop working
-    -- Remember to keep it the same in Galley.
-    -- Example:
-    --   setFederationAllowedDomains:
-    --     - wire.com
-    --     - example.com
-    setFederationDomain :: !(Domain),
+    -- >>>   _wire-server-federator._tcp.<federationDomain>
+    -- Once set, DO NOT change it: if you do, existing users may have a broken experience and/or stop working.
+    -- Remember to keep it the same in all services.
+    federationDomain :: !Domain,
+    -- | See https://docs.wire.com/understand/federation/backend-communication.html#configuring-remote-connections
+    -- default: AllowNone
+    federationStrategy :: !(Maybe FederationStrategy),
+    -- | 'federationDomainConfigs' is introduced in
+    -- https://github.com/wireapp/wire-server/pull/3260 for the sole purpose of transitioning
+    -- to dynamic federation remote configuration.  See
+    -- https://docs.wire.com/understand/federation/backend-communication.html#configuring-remote-connections
+    -- for details.
+    -- default: []
+    federationDomainConfigs :: !(Maybe [ImplicitNoFederationRestriction]),
+    -- | In seconds.  Default: 10 seconds.  Values <1 are silently replaced by 1.  See
+    -- https://docs.wire.com/understand/federation/backend-communication.html#configuring-remote-connections
+    federationDomainConfigsUpdateFreq :: !(Maybe Int),
     -- | The amount of time in milliseconds to wait after reading from an SQS queue
     -- returns no message, before asking for messages from SQS again.
     -- defaults to 'defSqsThrottleMillis'.
     -- When using real SQS from AWS, throttling isn't needed as much, since using
-    --   SQS.rmWaitTimeSeconds (Just 20) in Brig.AWS.listen
+    -- >>> SQS.rmWaitTimeSeconds (Just 20) in Brig.AWS.listen
     -- ensures that there is only one request every 20 seconds.
     -- However, that parameter is not honoured when using fake-sqs
     -- (where throttling can thus make sense)
-    setSqsThrottleMillis :: !(Maybe Int),
+    sqsThrottleMillis :: !(Maybe Int),
     -- | Do not allow certain user creation flows.
     -- docs/reference/user/registration.md {#RefRestrictRegistration}.
-    setRestrictUserCreation :: !(Maybe Bool),
-    -- | The analog to `Galley.Options.setFeatureFlags`.  See 'AccountFeatureConfigs'.
-    setFeatureFlags :: !(Maybe AccountFeatureConfigs),
+    restrictUserCreation :: !(Maybe Bool),
+    -- | The analog to `Galley.Options.featureFlags`.  See 'AccountFeatureConfigs'.
+    featureFlags :: !(Maybe UserFeatureFlags),
     -- | Customer extensions.  Read 'CustomerExtensions' docs carefully!
-    setCustomerExtensions :: !(Maybe CustomerExtensions),
+    customerExtensions :: !(Maybe CustomerExtensions),
     -- | When set; instead of using SRV lookups to discover SFTs the calls
     -- config will always return this entry. This is useful in Kubernetes
     -- where SFTs are deployed behind a load-balancer.  In the long-run the SRV
     -- fetching logic can go away completely
-    setSftStaticUrl :: !(Maybe HttpsUrl)
+    sftStaticUrl :: !(Maybe HttpsUrl),
+    -- | When set the /calls/config/v2 endpoint will include all the
+    -- loadbalanced servers of `sftStaticUrl` under the @sft_servers_all@
+    -- field. The default ting is to exclude and omit the field from the
+    -- response.
+    sftListAllServers :: Maybe ListAllSFTServers,
+    enableMLS :: Maybe Bool,
+    keyPackageMaximumLifetime :: Maybe NominalDiffTime,
+    -- | Disabled versions are not advertised and are completely disabled.
+    disabledAPIVersions :: !(Set VersionExp),
+    -- | Minimum delay in seconds between consecutive attempts to generate a new verification code.
+    -- use `2FACodeGenerationDelaySecs` as the getter function which always provides a default value
+    twoFACodeGenerationDelaySecsInternal :: !(Maybe Int),
+    -- | The time-to-live of a nonce in seconds.
+    -- use `nonceTtlSecs` as the getter function which always provides a default value
+    nonceTtlSecsInternal :: !(Maybe NonceTtlSecs),
+    -- | The maximum number of seconds of clock skew the implementation of generate_dpop_access_token in jwt-tools will allow
+    -- use `dpopMaxSkewSecs` as the getter function which always provides a default value
+    dpopMaxSkewSecsInternal :: !(Maybe Word16),
+    -- | The expiration time of a JWT DPoP token in seconds.
+    -- use `dpopTokenExpirationTimeSecs` as the getter function which always provides a default value
+    dpopTokenExpirationTimeSecsInternal :: !(Maybe Word64),
+    -- | Path to a .pem file containing the server's public key and private key
+    -- e.g. to sign JWT tokens
+    publicKeyBundle :: !(Maybe FilePath),
+    -- | Path to the public and private JSON web key pair used to sign OAuth access tokens
+    oAuthJwkKeyPair :: !(Maybe FilePath),
+    -- | The expiration time of an OAuth access token in seconds.
+    -- use `oAuthAccessTokenExpirationTimeSecs` as the getter function which always provides a default value
+    oAuthAccessTokenExpirationTimeSecsInternal :: !(Maybe Word64),
+    -- | The expiration time of an OAuth authorization code in seconds.
+    -- use `oAuthAuthorizationCodeExpirationTimeSecs` as the getter function which always provides a default value
+    oAuthAuthorizationCodeExpirationTimeSecsInternal :: !(Maybe Word64),
+    -- | En-/Disable OAuth
+    -- use `oAuthEnabled` as the getter function which always provides a default value
+    oAuthEnabledInternal :: !(Maybe Bool),
+    -- | The expiration time of an OAuth refresh token in seconds.
+    -- use `oAuthRefreshTokenExpirationTimeSecs` as the getter function which always provides a default value
+    oAuthRefreshTokenExpirationTimeSecsInternal :: !(Maybe Word64),
+    -- | The maximum number of active OAuth refresh tokens a user is allowed to have.
+    -- use `oAuthMaxActiveRefreshTokens` as the getter function which always provides a default value
+    oAuthMaxActiveRefreshTokensInternal :: !(Maybe Word32),
+    -- | Options to override the default Argon2id settings for specific operators.
+    passwordHashingOptions :: !(PasswordHashingOptions),
+    -- | Optional recipient email address for email domain registration audit logs
+    auditLogEmailRecipient :: !(Maybe EmailAddress),
+    -- | Time-to-live for new domain verification challenges, in seconds
+    challengeTTL :: !Timeout
   }
   deriving (Show, Generic)
 
--- | The analog to `GT.FeatureFlags`.  This type tracks only the things that we need to
--- express our current cloud business logic.
---
--- FUTUREWORK: it would be nice to have a system of feature configs that allows to coherently
--- express arbitrary logic accross personal and team accounts, teams, and instances; including
--- default values for new records, default for records that have a NULL value (eg., because
--- they are grandfathered), and feature-specific extra data (eg., TLL for self-deleting
--- messages).  For now, we have something quick & simple.
-data AccountFeatureConfigs = AccountFeatureConfigs
-  { afcConferenceCallingDefNew :: !(ApiFT.TeamFeatureStatus 'ApiFT.TeamFeatureConferenceCalling),
-    afcConferenceCallingDefNull :: !(ApiFT.TeamFeatureStatus 'ApiFT.TeamFeatureConferenceCalling)
-  }
+newtype ImplicitNoFederationRestriction = ImplicitNoFederationRestriction
+  {federationDomainConfig :: FederationDomainConfig}
   deriving (Show, Eq, Generic)
-  deriving (Arbitrary) via (GenericUniform AccountFeatureConfigs)
 
-instance FromJSON AccountFeatureConfigs where
+instance FromJSON ImplicitNoFederationRestriction where
   parseJSON =
-    Aeson.withObject
-      "AccountFeatureConfigs"
+    withObject
+      "ImplicitNoFederationRestriction"
       ( \obj -> do
-          confCallInit <- obj Aeson..: "conferenceCalling"
-          Aeson.withObject
-            "conferenceCalling"
-            ( \obj' -> do
-                AccountFeatureConfigs
-                  <$> obj' Aeson..: "defaultForNew"
-                  <*> obj' Aeson..: "defaultForNull"
-            )
-            confCallInit
+          domain <- obj .: "domain"
+          searchPolicy <- obj .: "search_policy"
+          pure . ImplicitNoFederationRestriction $
+            FederationDomainConfig domain searchPolicy FederationRestrictionAllowAll
       )
 
-instance ToJSON AccountFeatureConfigs where
-  toJSON
-    AccountFeatureConfigs
-      { afcConferenceCallingDefNew,
-        afcConferenceCallingDefNull
-      } =
-      Aeson.object
-        [ "conferenceCalling"
-            Aeson..= Aeson.object
-              [ "defaultForNew" Aeson..= afcConferenceCallingDefNew,
-                "defaultForNull" Aeson..= afcConferenceCallingDefNull
-              ]
-        ]
+defaultLocale :: Locale
+defaultLocale = Locale (Language EN) Nothing
 
-getAfcConferenceCallingDefNewMaybe :: Lens.Getter Settings (Maybe ApiFT.TeamFeatureStatusNoConfig)
-getAfcConferenceCallingDefNewMaybe = Lens.to (Lens.^? (Lens.to setFeatureFlags . Lens._Just . Lens.to afcConferenceCallingDefNew))
+defaultUserLocale :: Settings -> Locale
+defaultUserLocale = fromMaybe defaultLocale . defaultUserLocaleInternal
 
-getAfcConferenceCallingDefNullMaybe :: Lens.Getter Settings (Maybe ApiFT.TeamFeatureStatusNoConfig)
-getAfcConferenceCallingDefNullMaybe = Lens.to (Lens.^? (Lens.to setFeatureFlags . Lens._Just . Lens.to afcConferenceCallingDefNull))
+defaultTemplateLocale :: Settings -> Locale
+defaultTemplateLocale = fromMaybe defaultLocale . defaultTemplateLocaleInternal
 
-getAfcConferenceCallingDefNew :: Lens.Getter Settings ApiFT.TeamFeatureStatusNoConfig
-getAfcConferenceCallingDefNew = Lens.to (afcConferenceCallingDefNew . fromMaybe defAccountFeatureConfigs . setFeatureFlags)
+verificationTimeout :: Settings -> Code.Timeout
+verificationTimeout = fromMaybe defVerificationTimeout . verificationCodeTimeoutInternal
+  where
+    defVerificationTimeout :: Code.Timeout
+    defVerificationTimeout = Code.Timeout (60 * 10) -- 10 minutes
 
-getAfcConferenceCallingDefNull :: Lens.Getter Settings ApiFT.TeamFeatureStatusNoConfig
-getAfcConferenceCallingDefNull = Lens.to (afcConferenceCallingDefNull . fromMaybe defAccountFeatureConfigs . setFeatureFlags)
+twoFACodeGenerationDelaySecs :: Settings -> Int
+twoFACodeGenerationDelaySecs = fromMaybe def2FACodeGenerationDelaySecs . twoFACodeGenerationDelaySecsInternal
+  where
+    def2FACodeGenerationDelaySecs :: Int
+    def2FACodeGenerationDelaySecs = 5 * 60 -- 5 minutes
 
-defAccountFeatureConfigs :: AccountFeatureConfigs
-defAccountFeatureConfigs =
-  AccountFeatureConfigs
-    { afcConferenceCallingDefNew = ApiFT.TeamFeatureStatusNoConfig ApiFT.TeamFeatureEnabled,
-      afcConferenceCallingDefNull = ApiFT.TeamFeatureStatusNoConfig ApiFT.TeamFeatureEnabled
-    }
+nonceTtlSecs :: Settings -> NonceTtlSecs
+nonceTtlSecs = fromMaybe defaultNonceTtlSecs . nonceTtlSecsInternal
+  where
+    defaultNonceTtlSecs :: NonceTtlSecs
+    defaultNonceTtlSecs = NonceTtlSecs $ 5 * 60 -- 5 minutes
+
+setDpopMaxSkewSecs :: Settings -> Word16
+setDpopMaxSkewSecs = fromMaybe defaultDpopMaxSkewSecs . dpopMaxSkewSecsInternal
+  where
+    defaultDpopMaxSkewSecs :: Word16
+    defaultDpopMaxSkewSecs = 1
+
+dpopTokenExpirationTimeSecs :: Settings -> Word64
+dpopTokenExpirationTimeSecs = fromMaybe defaultDpopTokenExpirationTimeSecs . dpopTokenExpirationTimeSecsInternal
+  where
+    defaultDpopTokenExpirationTimeSecs :: Word64
+    defaultDpopTokenExpirationTimeSecs = 30
+
+oAuthAccessTokenExpirationTimeSecs :: Settings -> Word64
+oAuthAccessTokenExpirationTimeSecs = fromMaybe defaultOAuthAccessTokenExpirationTimeSecs . oAuthAccessTokenExpirationTimeSecsInternal
+  where
+    defaultOAuthAccessTokenExpirationTimeSecs :: Word64
+    defaultOAuthAccessTokenExpirationTimeSecs = 60 * 60 * 24 * 7 * 3 -- 3 weeks
+
+oAuthAuthorizationCodeExpirationTimeSecs :: Settings -> Word64
+oAuthAuthorizationCodeExpirationTimeSecs = fromMaybe defaultOAuthAuthorizationCodeExpirationTimeSecs . oAuthAuthorizationCodeExpirationTimeSecsInternal
+  where
+    defaultOAuthAuthorizationCodeExpirationTimeSecs :: Word64
+    defaultOAuthAuthorizationCodeExpirationTimeSecs = 300 -- 5 minutes
+
+oAuthEnabled :: Settings -> Bool
+oAuthEnabled = fromMaybe defaultOAuthEnabled . oAuthEnabledInternal
+  where
+    defaultOAuthEnabled :: Bool
+    defaultOAuthEnabled = False
+
+oAuthRefreshTokenExpirationTimeSecs :: Settings -> Word64
+oAuthRefreshTokenExpirationTimeSecs = fromMaybe defaultOAuthRefreshTokenExpirationTimeSecs . oAuthRefreshTokenExpirationTimeSecsInternal
+  where
+    defaultOAuthRefreshTokenExpirationTimeSecs :: Word64
+    defaultOAuthRefreshTokenExpirationTimeSecs = 60 * 60 * 24 * 7 * 4 * 6 -- 24 weeks
+
+oAuthMaxActiveRefreshTokens :: Settings -> Word32
+oAuthMaxActiveRefreshTokens = fromMaybe defaultOAuthMaxActiveRefreshTokens . oAuthMaxActiveRefreshTokensInternal
+  where
+    defaultOAuthMaxActiveRefreshTokens :: Word32
+    defaultOAuthMaxActiveRefreshTokens = 10
+
+-- | The analog to `FeatureFlags`. At the moment, only status flags for
+-- conferenceCalling are stored.
+data UserFeatureFlags = UserFeatureFlags
+  { conferenceCalling :: UserFeature ConferenceCallingConfig
+  }
+  deriving (Eq, Ord, Show)
+
+instance FromJSON UserFeatureFlags where
+  parseJSON = withObject "UserFeatureFlags" $ \obj -> do
+    UserFeatureFlags
+      <$> obj .:? "conferenceCalling" .!= def
+
+data family UserFeature cfg
+
+data instance UserFeature ConferenceCallingConfig = ConferenceCallingUserStatus
+  { -- | This will be set as the status of the feature for newly created users.
+    forNew :: Maybe FeatureStatus,
+    -- | How an unset status for this feature should be interpreted.
+    forNull :: FeatureStatus
+  }
+  deriving (Eq, Ord, Show)
+
+instance Default (UserFeature ConferenceCallingConfig) where
+  def = ConferenceCallingUserStatus Nothing FeatureStatusEnabled
+
+instance FromJSON (UserFeature ConferenceCallingConfig) where
+  parseJSON = withObject "UserFeatureConferenceCalling" $ \obj -> do
+    ConferenceCallingUserStatus
+      <$> A.explicitParseFieldMaybe parseUserFeatureStatus obj "defaultForNew"
+      <*> A.explicitParseFieldMaybe parseUserFeatureStatus obj "defaultForNull" .!= forNull def
+
+parseUserFeatureStatus :: A.Value -> A.Parser FeatureStatus
+parseUserFeatureStatus = withObject "UserFeatureStatus" $ \obj -> obj .: "status"
 
 -- | Customer extensions naturally are covered by the AGPL like everything else, but use them
 -- at your own risk!  If you use the default server config and do not set
@@ -612,23 +765,37 @@ data SFTOptions = SFTOptions
   { sftBaseDomain :: !DNS.Domain,
     sftSRVServiceName :: !(Maybe ByteString), -- defaults to defSftServiceName if unset
     sftDiscoveryIntervalSeconds :: !(Maybe DiffTime), -- defaults to defSftDiscoveryIntervalSeconds
-    sftListLength :: !(Maybe (Range 1 100 Int)) -- defaults to defSftListLength
+    sftListLength :: !(Maybe (Range 1 100 Int)), -- defaults to defSftListLength
+    sftTokenOptions :: !(Maybe SFTTokenOptions)
   }
   deriving (Show, Generic)
 
 instance FromJSON SFTOptions where
-  parseJSON = Y.withObject "SFTOptions" $ \o ->
+  parseJSON = withObject "SFTOptions" $ \o ->
     SFTOptions
       <$> (asciiOnly =<< o .: "sftBaseDomain")
       <*> (mapM asciiOnly =<< o .:? "sftSRVServiceName")
       <*> (secondsToDiffTime <$$> o .:? "sftDiscoveryIntervalSeconds")
       <*> (o .:? "sftListLength")
-    where
-      asciiOnly :: Text -> Y.Parser ByteString
-      asciiOnly t =
-        if Text.all Char.isAscii t
-          then pure $ Text.encodeUtf8 t
-          else fail $ "Expected ascii string only, found: " <> Text.unpack t
+      <*> (o .:? "sftToken")
+
+data SFTTokenOptions = SFTTokenOptions
+  { sttTTL :: !Word32,
+    sttSecret :: !FilePath
+  }
+  deriving (Show, Generic)
+
+instance FromJSON SFTTokenOptions where
+  parseJSON = withObject "SFTTokenOptions" $ \o ->
+    SFTTokenOptions
+      <$> (o .: "ttl")
+      <*> (o .: "secret")
+
+asciiOnly :: Text -> A.Parser ByteString
+asciiOnly t =
+  if Text.all Char.isAscii t
+    then pure $ Text.encodeUtf8 t
+    else fail $ "Expected ascii string only, found: " <> Text.unpack t
 
 defMaxKeyLen :: Int64
 defMaxKeyLen = 1024
@@ -648,51 +815,61 @@ defUserMaxPermClients = 7
 defSftServiceName :: ByteString
 defSftServiceName = "_sft"
 
-defSftDiscoveryIntervalSeconds :: DiffTime
-defSftDiscoveryIntervalSeconds = secondsToDiffTime 10
+defSrvDiscoveryIntervalSeconds :: DiffTime
+defSrvDiscoveryIntervalSeconds = secondsToDiffTime 10
 
 defSftListLength :: Range 1 100 Int
 defSftListLength = unsafeRange 5
 
-instance FromJSON Timeout where
-  parseJSON (Y.Number n) =
-    let defaultV = 3600
-        bounded = toBoundedInteger n :: Maybe Int64
-     in pure $
-          Timeout $
-            fromIntegral @Int $
-              maybe defaultV fromIntegral bounded
-  parseJSON v = typeMismatch "activationTimeout" v
+-- | Convert a word to title case by capitalising the first letter
+capitalise :: String -> String
+capitalise [] = []
+capitalise (c : cs) = toUpper c : cs
 
-instance FromJSON Settings
+instance FromJSON Settings where
+  parseJSON = genericParseJSON customOptions
+    where
+      customOptions =
+        defaultOptions
+          { fieldLabelModifier = \case
+              "defaultUserLocaleInternal" -> "setDefaultUserLocale"
+              "defaultTemplateLocaleInternal" -> "setDefaultTemplateLocale"
+              "verificationCodeTimeoutInternal" -> "setVerificationTimeout"
+              "twoFACodeGenerationDelaySecsInternal" -> "set2FACodeGenerationDelaySecs"
+              "nonceTtlSecsInternal" -> "setNonceTtlSecs"
+              "dpopMaxSkewSecsInternal" -> "setDpopMaxSkewSecs"
+              "dpopTokenExpirationTimeSecsInternal" -> "setDpopTokenExpirationTimeSecs"
+              "oAuthAuthorizationCodeExpirationTimeSecsInternal" -> "setOAuthAuthorizationCodeExpirationTimeSecs"
+              "oAuthAccessTokenExpirationTimeSecsInternal" -> "setOAuthAccessTokenExpirationTimeSecs"
+              "oAuthEnabledInternal" -> "setOAuthEnabled"
+              "oAuthRefreshTokenExpirationTimeSecsInternal" -> "setOAuthRefreshTokenExpirationTimeSecs"
+              "oAuthMaxActiveRefreshTokensInternal" -> "setOAuthMaxActiveRefreshTokens"
+              other -> "set" <> capitalise other
+          }
 
-instance FromJSON Opts
+instance FromJSON Opts where
+  parseJSON = genericParseJSON customOptions
+    where
+      customOptions =
+        defaultOptions
+          { fieldLabelModifier = \case
+              "settings" -> "optSettings"
+              "stompOptions" -> "stomp"
+              other -> other
+          }
 
--- TODO: Does it make sense to generate lens'es for all?
-Lens.makeLensesFor
-  [ ("optSettings", "optionSettings"),
-    ("elasticsearch", "elasticsearchL"),
-    ("sft", "sftL")
-  ]
-  ''Opts
+instance FromJSON StompOpts where
+  parseJSON = genericParseJSON customOptions
+    where
+      customOptions =
+        defaultOptions
+          { fieldLabelModifier = \a -> "stom" <> capitalise a
+          }
 
-Lens.makeLensesFor
-  [ ("setEmailVisibility", "emailVisibility"),
-    ("setPropertyMaxKeyLen", "propertyMaxKeyLen"),
-    ("setPropertyMaxValueLen", "propertyMaxValueLen"),
-    ("setSearchSameTeamOnly", "searchSameTeamOnly"),
-    ("setUserMaxPermClients", "userMaxPermClients"),
-    ("setFederationDomain", "federationDomain"),
-    ("setSqsThrottleMillis", "sqsThrottleMillis"),
-    ("setSftStaticUrl", "sftStaticUrl")
-  ]
-  ''Settings
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''Opts
 
-Lens.makeLensesFor
-  [ ("url", "urlL"),
-    ("index", "indexL"),
-    ("additionalWriteIndex", "additionalWriteIndexL")
-  ]
-  ''ElasticSearchOpts
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''Settings
 
-Lens.makeLensesFor [("sftBaseDomain", "sftBaseDomainL")] ''SFTOptions
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''ElasticSearchOpts
+
+makeLensesWith (lensRules & lensField .~ suffixNamer) ''TurnOpts

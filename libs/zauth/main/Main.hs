@@ -1,9 +1,10 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -27,14 +28,14 @@ import Control.Error
 import Control.Lens
 import Data.ByteString.Base64.URL
 import Data.ByteString.Conversion
-import qualified Data.ByteString.Lazy.Char8 as L
+import Data.ByteString.Lazy.Char8 qualified as L
 import Data.UUID (UUID, fromASCIIBytes)
 import Data.ZAuth.Creation as C
 import Data.ZAuth.Token
 import Data.ZAuth.Validation as V
 import Imports
 import Options.Applicative hiding (header)
-import qualified Options.Applicative as O
+import Options.Applicative qualified as O
 import Options.Applicative.Types
 import Sodium.Crypto.Sign
 import System.Exit
@@ -81,35 +82,35 @@ go CreateSession o = do
   let u = uuid . head $ o ^. dat
   case fromByteString ((o ^. dat) !! 1) of
     Nothing -> error "invalid random int"
-    Just rn -> runCreate' o $ toByteString <$> sessionToken (o ^. dur) u rn
+    Just rn -> runCreate' o $ toByteString <$> sessionToken (o ^. dur) u Nothing rn
 go CreateUser o = do
   when (length (o ^. dat) /= 2) $
     error "invalid --data, must have 2 elements"
   let u = uuid . head $ o ^. dat
   case fromByteString ((o ^. dat) !! 1) of
     Nothing -> error "invalid random int"
-    Just rn -> runCreate' o $ toByteString <$> userToken (o ^. dur) u rn
+    Just rn -> runCreate' o $ toByteString <$> userToken (o ^. dur) u Nothing rn
 go CreateAccess o = do
   when (null (o ^. dat)) $
     error "invalid --data, must have 1 or 2 elements"
   let u = uuid . head $ o ^. dat
   case length (o ^. dat) of
-    1 -> runCreate' o $ toByteString <$> accessToken1 (o ^. dur) u
+    1 -> runCreate' o $ toByteString <$> accessToken1 (o ^. dur) u Nothing
     2 -> case fromByteString ((o ^. dat) !! 1) of
       Nothing -> error "invalid connection"
-      Just c -> runCreate' o $ toByteString <$> accessToken (o ^. dur) u c
+      Just c -> runCreate' o $ toByteString <$> accessToken (o ^. dur) u Nothing c
     _ -> error "invalid --data, must have 1 or 2 elements"
 go CreateBot o = do
   when (length (o ^. dat) /= 3) $
     error "invalid --data, must have 3 elements"
-  let p = uuid $ (o ^. dat) !! 0
+  let p = uuid $ head (o ^. dat)
       b = uuid $ (o ^. dat) !! 1
       c = uuid $ (o ^. dat) !! 2
   runCreate' o $ toByteString <$> botToken p b c
 go CreateProvider o = do
   when (length (o ^. dat) /= 1) $
     error "missing --data"
-  let p = uuid $ (o ^. dat) !! 0
+  let p = uuid $ head (o ^. dat)
   runCreate' o $ toByteString <$> providerToken (o ^. dur) p
 go GenKeyPair _ = do
   (p, s) <- newKeyPair
@@ -122,8 +123,8 @@ tkn xs f = fromMaybe (error "Failed to read token") . f $ headDef "missing token
 uuid :: ByteString -> UUID
 uuid s = fromMaybe (error $ "Invalid UUID: " ++ show s) $ fromASCIIBytes s
 
-check' :: ToByteString a => ByteString -> Token a -> IO ()
-check' k t = exceptT (\e -> putStrLn e >> exitFailure) (const $ return ()) $ do
+check' :: (ToByteString a) => ByteString -> Token a -> IO ()
+check' k t = exceptT (\e -> putStrLn e >> exitFailure) (const $ pure ()) $ do
   p <- hoistEither $ PublicKey <$> decode k
   e <- liftIO $ runValidate (V.mkEnv p (replicate (t ^. header . key) p)) (check t)
   hoistEither $ fmapL show e
@@ -180,15 +181,15 @@ options =
           <> metavar "STRING"
           <> help "token data"
     toMode =
-      readerAsk >>= \s -> case s of
-        "create-user" -> return CreateUser
-        "create-session" -> return CreateSession
-        "create-access" -> return CreateAccess
-        "create-bot" -> return CreateBot
-        "create-provider" -> return CreateProvider
-        "verify-user" -> return VerifyUser
-        "verify-access" -> return VerifyAccess
-        "verify-bot" -> return VerifyBot
-        "verify-provider" -> return VerifyProvider
-        "gen-keypair" -> return GenKeyPair
+      readerAsk >>= \case
+        "create-user" -> pure CreateUser
+        "create-session" -> pure CreateSession
+        "create-access" -> pure CreateAccess
+        "create-bot" -> pure CreateBot
+        "create-provider" -> pure CreateProvider
+        "verify-user" -> pure VerifyUser
+        "verify-access" -> pure VerifyAccess
+        "verify-bot" -> pure VerifyBot
+        "verify-provider" -> pure VerifyProvider
+        "gen-keypair" -> pure GenKeyPair
         other -> readerError $ "invalid mode: " <> other

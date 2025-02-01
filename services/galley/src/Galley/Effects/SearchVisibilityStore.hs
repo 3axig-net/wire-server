@@ -1,6 +1,8 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2021 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -24,8 +26,8 @@ module Galley.Effects.SearchVisibilityStore
 where
 
 import Data.Id
-import Galley.Types.Teams.SearchVisibility
 import Polysemy
+import Wire.API.Team.SearchVisibility
 
 data SearchVisibilityStore m a where
   GetSearchVisibility :: TeamId -> SearchVisibilityStore m TeamSearchVisibility

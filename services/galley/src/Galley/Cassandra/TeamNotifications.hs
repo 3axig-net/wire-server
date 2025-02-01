@@ -1,6 +1,6 @@
 -- This file is part of the Wire Server implementation.
 --
--- Copyright (C) 2020 Wire Swiss GmbH <opensource@wire.com>
+-- Copyright (C) 2022 Wire Swiss GmbH <opensource@wire.com>
 --
 -- This program is free software: you can redistribute it and/or modify it under
 -- the terms of the GNU Affero General Public License as published by the Free
@@ -29,41 +29,53 @@ where
 import Cassandra
 import Control.Monad.Catch
 import Control.Retry (exponentialBackoff, limitRetries, retrying)
-import qualified Data.Aeson as JSON
+import Data.Aeson qualified as JSON
 import Data.Id
 import Data.List1 (List1)
 import Data.Range (Range, fromRange)
 import Data.Sequence (Seq, ViewL (..), ViewR (..), (<|), (><))
-import qualified Data.Sequence as Seq
-import qualified Data.UUID.V1 as UUID
+import Data.Sequence qualified as Seq
+import Data.Time (nominalDay, nominalDiffTimeToSeconds)
+import Data.UUID.V1 qualified as UUID
 import Galley.Cassandra.Store
+import Galley.Cassandra.Util
 import Galley.Data.TeamNotifications
 import Galley.Effects
 import Galley.Effects.TeamNotificationStore (TeamNotificationStore (..))
-import Gundeck.Types.Notification
 import Imports
 import Network.HTTP.Types
 import Network.Wai.Utilities hiding (Error)
 import Polysemy
 import Polysemy.Input
+import Polysemy.TinyLog hiding (err)
+import Wire.API.Internal.Notification
 
 interpretTeamNotificationStoreToCassandra ::
-  Members '[Embed IO, Input ClientState] r =>
+  ( Member (Embed IO) r,
+    Member (Input ClientState) r,
+    Member TinyLog r
+  ) =>
   Sem (TeamNotificationStore ': r) a ->
   Sem r a
 interpretTeamNotificationStoreToCassandra = interpret $ \case
-  CreateTeamNotification tid nid objs -> embedClient $ add tid nid objs
-  GetTeamNotifications tid mnid lim -> embedClient $ fetch tid mnid lim
-  MkNotificationId -> embed mkNotificationId
+  CreateTeamNotification tid nid objs -> do
+    logEffect "TeamNotificationStore.CreateTeamNotification"
+    embedClient $ add tid nid objs
+  GetTeamNotifications tid mnid lim -> do
+    logEffect "TeamNotificationStore.GetTeamNotifications"
+    embedClient $ fetch tid mnid lim
+  MkNotificationId -> do
+    logEffect "TeamNotificationStore.MkNotificationId"
+    embed mkNotificationId
 
 -- | 'Data.UUID.V1.nextUUID' is sometimes unsuccessful, so we try a few times.
 mkNotificationId :: IO NotificationId
 mkNotificationId = do
   ni <- fmap Id <$> retrying x10 fun (const (liftIO UUID.nextUUID))
-  maybe (throwM err) return ni
+  maybe (throwM err) pure ni
   where
     x10 = limitRetries 10 <> exponentialBackoff 10
-    fun = const (return . isNothing)
+    fun = const (pure . isNothing)
     err = mkError status500 "internal-error" "unable to generate notification ID"
 
 -- FUTUREWORK: the magic 32 should be made configurable, so it can be tuned
@@ -82,8 +94,13 @@ add tid nid (Blob . JSON.encode -> payload) =
       \(?, ?, ?) \
       \USING TTL ?"
 
+-- |
+--
+-- >>> import Data.Time
+-- >>> formatTime defaultTimeLocale "%d days, %H hours, %M minutes, %S seconds" (secondsToNominalDiffTime (fromIntegral notificationTTLSeconds))
+-- "28 days, 0 hours, 0 minutes, 0 seconds"
 notificationTTLSeconds :: Int32
-notificationTTLSeconds = 24192200
+notificationTTLSeconds = round $ nominalDiffTimeToSeconds $ 28 * nominalDay
 
 fetch :: TeamId -> Maybe NotificationId -> Range 1 10000 Int32 -> Client ResultPage
 fetch tid since (fromRange -> size) = do
@@ -102,7 +119,7 @@ fetch tid since (fromRange -> size) = do
   -- This can probably simplified a lot further, but we need to understand
   -- 'Seq' in order to do that.  If you find a bug, this may be a good
   -- place to start looking.
-  return $! case Seq.viewl (trim (isize - 1) ns) of
+  pure $! case Seq.viewl (trim (isize - 1) ns) of
     EmptyL -> ResultPage Seq.empty False
     (x :< xs) -> ResultPage (x <| xs) more
   where
@@ -118,14 +135,14 @@ fetch tid since (fromRange -> size) = do
           num' = num - Seq.length nseq
           acc' = acc >< nseq
        in if not more || num' == 0
-            then return (acc', more || not (null (snd ns)))
+            then pure (acc', more || not (null (snd ns)))
             else liftClient (nextPage page) >>= collect acc' num'
     trim :: Int -> Seq a -> Seq a
     trim l ns
       | Seq.length ns <= l = ns
       | otherwise = case Seq.viewr ns of
-        EmptyR -> ns
-        xs :> _ -> xs
+          EmptyR -> ns
+          xs :> _ -> xs
     cqlStart :: PrepQuery R (Identity TeamId) (TimeUuid, Blob)
     cqlStart =
       "SELECT id, payload \
